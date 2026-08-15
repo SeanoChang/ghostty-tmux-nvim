@@ -1,0 +1,11 @@
+eval "$(/opt/homebrew/bin/brew shellenv)"
+
+# Python 3.12 (python.org framework build)
+PATH="/Library/Frameworks/Python.framework/Versions/3.12/bin:${PATH}"
+export PATH
+
+# pipx
+export PATH="$PATH:$HOME/.local/bin"
+
+# Obsidian CLI
+export PATH="$PATH:/Applications/Obsidian.app/Contents/MacOS"

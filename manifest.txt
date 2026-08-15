@@ -1,0 +1,40 @@
+# mode   source (repo-relative)              destination
+#
+# mode=link  symlink dest -> source. Edits flow back to the repo.
+# mode=copy  copy source to dest, ONLY if dest does not exist. Use for files
+#            you edit per-machine (credentials, identity) that must never be
+#            tracked. Never overwrites.
+#
+# A .tmpl source is rendered first: __HOME__ is replaced with $HOME.
+# Rendered link-mode files land in ~/.dotfiles-rendered/ and dest links there.
+#
+# The group name for `--only <group>` is the path segment after config/.
+
+# ── ghostty ──────────────────────────────────────────────────────────────────
+link   config/ghostty/config                 ~/.config/ghostty/config
+
+# ── tmux ─────────────────────────────────────────────────────────────────────
+link   config/tmux/tmux.conf                 ~/.config/tmux/tmux.conf
+
+# ── nvim (LazyVim) ───────────────────────────────────────────────────────────
+link   config/nvim                           ~/.config/nvim
+
+# ── mermaid theme (used by nvim snacks.image) ────────────────────────────────
+link   config/mermaid/tokyonight.json        ~/.config/mermaid/tokyonight.json
+
+# ── zsh ──────────────────────────────────────────────────────────────────────
+link   config/zsh/zshrc                      ~/.zshrc
+link   config/zsh/zprofile                   ~/.zprofile
+link   config/zsh/zshenv                     ~/.zshenv
+link   config/zsh/p10k.zsh                   ~/.p10k.zsh
+
+# ── git ──────────────────────────────────────────────────────────────────────
+link   config/git/ignore                     ~/.config/git/ignore
+copy   config/git/gitconfig.tmpl             ~/.gitconfig
+
+# ── claude code ──────────────────────────────────────────────────────────────
+link   config/claude/CLAUDE.md               ~/.claude/CLAUDE.md
+link   config/claude/settings.json.tmpl      ~/.claude/settings.json
+link   config/claude/statusline-command.sh   ~/.claude/statusline-command.sh
+link   config/claude/commands                ~/.claude/commands
+link   config/claude/skills                  ~/.claude/skills

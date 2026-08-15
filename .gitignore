@@ -1,0 +1,48 @@
+# ── never commit credentials ─────────────────────────────────────────────────
+# These patterns are a safety net, not the primary defence: nothing under these
+# names is ever copied into the repo in the first place. They exist so that an
+# accidental `cp -R` of a config directory cannot leak a token.
+*auth.json
+*credentials*
+*oauth*
+*.pem
+*.key
+*.p12
+*_rsa
+*_ed25519
+.env
+.env.*
+**/.aws/**
+**/.ssh/**
+**/.kube/**
+**/gcloud/**
+**/github-copilot/**
+**/raycast/config.json
+
+# ── claude code runtime state (never config) ─────────────────────────────────
+**/.claude.json
+**/history.jsonl
+**/sessions/
+**/projects/
+**/telemetry/
+**/shell-snapshots/
+**/paste-cache/
+**/file-history/
+**/daemon*.log
+**/daemon*.json
+**/*.sqlite
+**/stats-cache.json
+**/security_warnings_state_*.json
+settings.local.json
+
+# ── rendered / generated ─────────────────────────────────────────────────────
+# install.sh writes rendered templates here, outside the repo, but ignore the
+# name anyway in case someone points RENDER_DIR inward.
+.dotfiles-rendered/
+.dotfiles-backup/
+
+# ── noise ────────────────────────────────────────────────────────────────────
+.DS_Store
+__pycache__/
+*.pyc
+*.log

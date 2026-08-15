@@ -1,0 +1,31 @@
+{
+  "theme": "base",
+  "themeVariables": {
+    "background": "transparent",
+    "primaryColor": "#2f334d",
+    "primaryTextColor": "#c8d3f5",
+    "primaryBorderColor": "#82aaff",
+    "secondaryColor": "#444a73",
+    "secondaryTextColor": "#c8d3f5",
+    "secondaryBorderColor": "#c099ff",
+    "tertiaryColor": "#1e2030",
+    "tertiaryTextColor": "#c8d3f5",
+    "tertiaryBorderColor": "#ff966c",
+    "lineColor": "#ff966c",
+    "textColor": "#c8d3f5",
+    "fontFamily": "MesloLGS NF, Menlo, monospace",
+    "fontSize": "16px",
+    "edgeLabelBackground": "#1e2030",
+    "clusterBkg": "#1e2030",
+    "clusterBorder": "#444a73",
+    "noteBkgColor": "#444a73",
+    "noteTextColor": "#c8d3f5",
+    "actorBkg": "#2f334d",
+    "actorTextColor": "#c8d3f5",
+    "actorBorder": "#82aaff",
+    "signalColor": "#ff966c",
+    "signalTextColor": "#c8d3f5"
+  },
+  "themeCSS": ".edgePath .path, .flowchart-link, .messageLine0, .messageLine1 { stroke-width: 2.5px; } .node rect, .node circle, .node ellipse, .node polygon, .node path { stroke-width: 2px; } .marker { fill: #ff966c; stroke: #ff966c; }",
+  "flowchart": { "curve": "basis", "padding": 14, "nodeSpacing": 50, "rankSpacing": 55 }
+}
