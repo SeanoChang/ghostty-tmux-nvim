@@ -165,7 +165,7 @@ cat <<'EOF'
 Next steps
   1. exec zsh                                  reload the shell
   2. git clone https://github.com/tmux-plugins/tpm ~/.config/tmux/plugins/tpm
-     then inside tmux: prefix (C-a) + I        install tmux plugins
+     then inside tmux: prefix (C-b) + I        install tmux plugins
   3. nvim                                      lazy.nvim bootstraps on first run
   4. edit ~/.gitconfig                         set user.name and user.email
   5. see README.md § Authentication            everything that needs a login

@@ -83,7 +83,7 @@ git clone https://github.com/Aloxaf/fzf-tab ~/.zsh/fzf-tab
 git clone https://github.com/ohmyzsh/ohmyzsh ~/.oh-my-zsh
 npm install -g @mermaid-js/mermaid-cli      # `mmdc`, for inline diagram rendering
 
-tmux                       # then: prefix (Ctrl-a) + I   → installs tmux plugins
+tmux                       # then: prefix (Ctrl-b) + I   → installs tmux plugins
 nvim                       # lazy.nvim bootstraps itself on first launch
 ```
 
@@ -96,8 +96,8 @@ nvim                       # lazy.nvim bootstraps itself on first launch
 | Tool | What it's doing here |
 |---|---|
 | **[Ghostty](https://ghostty.org)** | GPU-accelerated terminal. Custom palette, 80% opacity with blur, global dropdown hotkey, and splits/tabs bound to macOS muscle memory |
-| **[tmux](https://github.com/tmux/tmux)** | `Ctrl-a` prefix, floating popups for lazygit/yazi/sessions, seamless `Ctrl-hjkl` movement between tmux panes and Neovim splits, session persistence across reboots |
-| **[Neovim](https://neovim.io) + [LazyVim](https://lazyvim.github.io)** | 21 LazyVim extras, 51 plugins, a full macOS keybinding layer (`Cmd+S`, `Cmd+/`, `Alt+↑↓`), and inline image/diagram rendering |
+| **[tmux](https://github.com/tmux/tmux)** | Default `Ctrl-b` prefix kept, floating popups for lazygit/yazi/sessions, seamless `Ctrl-hjkl` movement between tmux panes and Neovim splits, session persistence across reboots |
+| **[Neovim](https://neovim.io) + [LazyVim](https://lazyvim.github.io)** | 21 LazyVim extras, 51 plugins. `Space` leader with which-key, `g` goto family, plus an optional macOS layer (`Cmd+S`, `Cmd+/`, `Alt+↑↓`) and inline image/diagram rendering |
 | **[zsh](https://www.zsh.org)** | [powerlevel10k](https://github.com/romkatv/powerlevel10k) instant prompt, [fzf-tab](https://github.com/Aloxaf/fzf-tab) fuzzy completion with previews, [zoxide](https://github.com/ajeetdsouza/zoxide), [eza](https://github.com/eza-community/eza) |
 | **[Claude Code](https://claude.com/claude-code)** | Global working rules, a custom statusline showing model + context usage + rate limits, and two custom slash commands |
 
@@ -174,8 +174,10 @@ Keybindings follow macOS conventions rather than terminal ones:
 
 ## tmux
 
-Prefix is **`Ctrl-a`** (not `Ctrl-b`) — `Ctrl-Space` collides with macOS input
-source switching, which matters if you type in more than one language.
+Prefix stays the **default `Ctrl-b`**, and the default bindings you already know
+keep working — `%` and `"` still split (they just inherit the current directory
+now), and `prefix + ←↑↓→` still moves between panes. Nothing you've built muscle
+memory for is taken away; everything below is additive.
 
 The best part is the popups. `display-popup` floats a real terminal over your
 layout, so tools appear and vanish without disturbing your panes:
@@ -208,10 +210,16 @@ survive reboots via [resurrect](https://github.com/tmux-plugins/tmux-resurrect) 
 [LazyVim](https://lazyvim.github.io) as the base, with 21 extras enabled and 51
 plugins pinned in `lazy-lock.json`.
 
-**A macOS keybinding layer over vim.** `lua/config/keymaps.lua` maps the
-shortcuts your hands already know — `Cmd+S` save, `Cmd+/` comment, `Cmd+Z` undo,
-`Alt+↑↓` move lines, `Alt+Shift+↑↓` duplicate, `jk` to escape insert mode — while
-leaving normal vim motions untouched.
+**The LazyVim workflow, unchanged.** `Space` is the leader, and
+[which-key](https://github.com/folke/which-key.nvim) pops up the command list as
+soon as you press it — so you discover bindings by using them rather than by
+memorising them. `g` prefixes the goto family (`gd` definition, `gr` references,
+`gc` comment). If you know LazyVim, you already know this config.
+
+**Plus a macOS layer on top,** for the times your hands reach for the OS
+shortcut instead: `Cmd+S` save, `Cmd+/` comment, `Cmd+Z` undo, `Alt+↑↓` move
+lines, `Alt+Shift+↑↓` duplicate, `jk` to escape insert mode. Additive — normal
+vim motions are untouched.
 
 **Markdown that actually looks like markdown.** LazyVim's default renderer is
 swapped for [markview.nvim](https://github.com/OXY2DEV/markview.nvim), prose is
@@ -284,7 +292,6 @@ safe to read, fork and publish. After installing, log in to whatever you use:
 | Claude Code | `claude` — browser OAuth on first run; MCP connectors via `/mcp` |
 | AWS | `aws configure` |
 | Google Cloud | `gcloud auth login && gcloud auth application-default login` |
-| Fly.io | `flyctl auth login` |
 | GitHub Copilot | `:Copilot auth` inside Neovim |
 
 `~/.gitconfig` is created from a template with placeholders. Set your identity:
