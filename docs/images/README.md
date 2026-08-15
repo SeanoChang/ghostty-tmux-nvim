@@ -12,8 +12,16 @@ block with the single markdown line the banner gives you.
 | 2 | `inline-images.gif` | GIF | A mermaid code block in Neovim rendering into a real diagram. 10–15s loop. | **Highest** — the headline feature |
 | 3 | `fzf-tab.gif` | GIF | `cd ` + Tab, scrolling directories with the eza preview updating live; then `nvim ` + Tab for the bat file preview. ~10s. | High |
 | 4 | `tmux-popups.gif` | GIF | `prefix+g` floats lazygit over a working layout, close it, `prefix+s` fuzzy-jumps to another session. ~12s. | High |
-| 5 | `nvim-markdown.png` | PNG | Markdown file with headings, a wide table, a code block and a task list, rendered by markview.nvim. | Medium |
-| 6 | `claude-code.png` | PNG | `prefix+a` splitting Claude Code beside Neovim, custom statusline visible. | Medium |
+| 5 | `nvim-markdown.png` | PNG | Markdown file with headings, a wide table, a code block and a task list, rendered by markview.nvim. | ✅ **done** |
+| 6 | `claude-code.png` | PNG | `prefix+a` splitting Claude Code beside Neovim, custom statusline visible. | ✅ **done** |
+
+Slots 5 and 6 are filled. The remaining four (1–4) are still comment banners in
+the README.
+
+> Both existing shots were cropped to remove the macOS menu bar, the Ghostty tab
+> bar and the Dock — the tab bar in particular showed live tmux session names.
+> The statusline username and hostname in `claude-code.png` were replaced with
+> `you@macbook`. Do the same to anything you add.
 
 ## Capture tips
 

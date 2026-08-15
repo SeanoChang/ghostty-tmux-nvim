@@ -235,16 +235,7 @@ TokyoNight mermaid theme. Requires a kitty-graphics terminal (Ghostty qualifies)
 plus `imagemagick`, `ghostscript`, `tectonic` — all in the Brewfile — and
 `mermaid-cli` from npm.
 
-<!-- ══════════════════════════════════════════════════════════════════════════
-     📸 IMAGE SLOT 5 of 6 — NEOVIM MARKDOWN
-     Replace this whole comment block with:
-
-     ![Neovim rendering markdown with markview.nvim](docs/images/nvim-markdown.png)
-
-     Suggested capture: a markdown file with headings, a wide table, a code
-     block and a task list, showing markview's rendering. Side-by-side with the
-     raw source would be even better if you can manage it.
-     ══════════════════════════════════════════════════════════════════════ -->
+![Neovim rendering markdown with markview.nvim — headings, inline code, fenced code blocks and a linked table of contents](docs/images/nvim-markdown.png)
 
 ## zsh
 
@@ -271,15 +262,7 @@ sean@host | ~/dev/project | git:main*+2 | model:Opus | ctx:38% used / 62% left
 (76k/200k tokens) | 5h:12% used, resets in 2h 14m
 ```
 
-<!-- ══════════════════════════════════════════════════════════════════════════
-     📸 IMAGE SLOT 6 of 6 — CLAUDE CODE IN TMUX
-     Replace this whole comment block with:
-
-     ![Claude Code running in a tmux pane beside Neovim](docs/images/claude-code.png)
-
-     Suggested capture: prefix+a to split Claude Code beside an open Neovim
-     buffer, with the custom statusline visible at the bottom of the pane.
-     ══════════════════════════════════════════════════════════════════════ -->
+![Claude Code running in Ghostty with the custom statusline showing model, context usage and rate-limit windows](docs/images/claude-code.png)
 
 ## Authentication
 
