@@ -45,7 +45,8 @@ skip() { printf '  %s%-9s %s%s\n' "$C_DIM"  "$1" "$2" "$C_OFF"; }
 run() { [ "$DRY_RUN" -eq 1 ] || "$@"; }
 
 # Print a path with $HOME collapsed to ~
-tilde() { printf '%s' "${1/#$HOME/\~}"; }
+# The replacement goes through a variable so bash doesn't tilde-expand it back.
+tilde() { local t='~'; printf '%s' "${1/#$HOME/$t}"; }
 
 backed_up_anything=0
 
