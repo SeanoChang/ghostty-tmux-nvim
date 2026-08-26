@@ -63,3 +63,7 @@ keybind = cmd+shift+right_bracket=next_tab
 
 # ── Clear screen like iTerm2 ────────────────────────────
 keybind = cmd+k=clear_screen
+
+# ── Delete word backwards with option+delete ────────────
+# Sends ESC DEL, which readline and zsh's ZLE both read as backward-kill-word.
+keybind = alt+backspace=text:\x1b\x7f
