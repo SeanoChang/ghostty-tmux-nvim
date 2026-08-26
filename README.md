@@ -255,7 +255,7 @@ gbda         # delete every local branch already merged into main
 
 `CLAUDE.md` holds global working rules — reproduce bugs before fixing them, show
 evidence before claiming success, never run mutating infra commands, never print
-secrets. `settings.json` enables 16 official plugins and a custom statusline:
+secrets. `settings.json` enables 13 official plugins and a custom statusline:
 
 ```
 sean@host | ~/dev/project | git:main*+2 | model:Opus | ctx:38% used / 62% left
