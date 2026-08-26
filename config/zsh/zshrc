@@ -20,8 +20,13 @@ source /opt/homebrew/share/powerlevel10k/powerlevel10k.zsh-theme
 
 # ── PATH ─────────────────────────────────────────────────────────────────────
 export PATH="/opt/bin:$PATH"                              # gtkwave
-export PATH="/opt/homebrew/opt/postgresql@16/bin:$PATH"
+export PATH="/opt/homebrew/opt/postgresql@18/bin:$PATH"   # keg-only; explicit so an unlink cannot revert to older psql
 export PATH="$PATH:$HOME/.local/bin"                      # pipx
+export PATH="$PATH:$HOME/go/bin"                          # go install target
+# rustup must beat any brew-installed rust. .zshenv sources ~/.cargo/env, but
+# .zprofile's `brew shellenv` runs after it and prepends /opt/homebrew/bin, so
+# prepend here (.zshrc runs last). ~/.cargo/env self-skips if already present.
+export PATH="$HOME/.cargo/bin:$PATH"                      # rustup toolchains
 
 # pnpm
 export PNPM_HOME="$HOME/Library/pnpm"
@@ -100,6 +105,36 @@ zstyle ':fzf-tab:complete:*:*' fzf-preview '[ -d $realpath ] && eza -1 --icons -
 
 zstyle ':fzf-tab:*' fzf-flags --height=60% --layout=reverse --preview-window=right:55%:wrap
 zstyle ':fzf-tab:*' switch-group '<' '>'
+
+# ── Claude Code via OpenRouter (opt-in) ──────────────────────────────────────
+#   claude     → Claude models on your Anthropic subscription (unchanged)
+#   claude-or  → same CLI, every request routed through OpenRouter
+# Auth is per-process, so the split happens at launch: a claude-or session
+# sends ALL traffic to OpenRouter, including anthropic/* models (billed there,
+# not to your subscription). Use plain `claude` for Claude models.
+#
+# Default model is stealth/ox-alpha (free, 1M ctx, tool-calling). Override per
+# run without editing this file — CLAUDE_OR_CONTEXT must match the model's
+# real window or auto-compact will mis-fire:
+#   CLAUDE_OR_MODEL=x-ai/grok-4.6 CLAUDE_OR_CONTEXT=256000 claude-or
+#
+# API key lives in the macOS Keychain, never in this repo:
+#   security add-generic-password -a "$USER" -s openrouter -w
+claude-or() {
+  local key
+  if ! key=$(security find-generic-password -s openrouter -w 2>/dev/null); then
+    print -u2 "claude-or: no 'openrouter' item in Keychain. Add it with:"
+    print -u2 '  security add-generic-password -a "$USER" -s openrouter -w'
+    return 1
+  fi
+  ANTHROPIC_BASE_URL="https://openrouter.ai/api" \
+  ANTHROPIC_AUTH_TOKEN="$key" \
+  ANTHROPIC_API_KEY= \
+  ANTHROPIC_MODEL="${CLAUDE_OR_MODEL:-stealth/ox-alpha}" \
+  CLAUDE_CODE_MAX_CONTEXT_TOKENS="${CLAUDE_OR_CONTEXT:-1048576}" \
+  CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1 \
+  command claude "$@"
+}
 
 # ── zsh syntax highlighting (must be last) ───────────────────────────────────
 source /opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
