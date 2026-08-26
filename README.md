@@ -99,7 +99,7 @@ nvim                       # lazy.nvim bootstraps itself on first launch
 | **[tmux](https://github.com/tmux/tmux)** | Default `Ctrl-b` prefix kept, floating popups for lazygit/yazi/sessions, seamless `Ctrl-hjkl` movement between tmux panes and Neovim splits, session persistence across reboots |
 | **[Neovim](https://neovim.io) + [LazyVim](https://lazyvim.github.io)** | 21 LazyVim extras, 51 plugins. `Space` leader with which-key, `g` goto family, plus an optional macOS layer (`Cmd+S`, `Cmd+/`, `Alt+↑↓`) and inline image/diagram rendering |
 | **[zsh](https://www.zsh.org)** | [powerlevel10k](https://github.com/romkatv/powerlevel10k) instant prompt, [fzf-tab](https://github.com/Aloxaf/fzf-tab) fuzzy completion with previews, [zoxide](https://github.com/ajeetdsouza/zoxide), [eza](https://github.com/eza-community/eza) |
-| **[Claude Code](https://claude.com/claude-code)** | Global working rules, a custom statusline showing model + context usage + rate limits, and two custom slash commands |
+| **[Claude Code](https://claude.com/claude-code)** | Global working rules, a custom statusline showing model + context usage + rate limits, two slash commands, four skills, and a `claude-or` wrapper that routes the CLI through OpenRouter |
 
 <!-- ══════════════════════════════════════════════════════════════════════════
      🎬 IMAGE SLOT 3 of 6 — FUZZY COMPLETION (GIF)
@@ -264,6 +264,43 @@ sean@host | ~/dev/project | git:main*+2 | model:Opus | ctx:38% used / 62% left
 
 ![Claude Code running in Ghostty with the custom statusline showing model, context usage and rate-limit windows](docs/images/claude-code.png)
 
+Two slash commands live in `config/claude/commands/`: `/explore` and `/map`.
+Four skills live in `config/claude/skills/`, and Claude loads whichever one
+matches what you asked for:
+
+| Skill | What it's for |
+|---|---|
+| `writing-markdown-docs` | House style for docs, with a reference per document type (RCA, runbook, design, handoff…) and a `check_doc.py` linter |
+| `scaffold-docs` | Walks the project tree and writes a `CLAUDE.md` entry point into each meaningful directory, keeping a versioned changelog of what changed |
+| `orient` | Reads those scaffold docs at the start of a session instead of re-exploring the tree |
+| `ccdash-analysis` | Turns a local [ccdash](https://github.com/SeanoChang/ccdash) archive into ranked, evidence-backed changes to model routing and subagent fan-out |
+
+### Routing Claude Code through OpenRouter
+
+`claude` runs Claude models on your Anthropic subscription. `claude-or` — a zsh
+function in `config/zsh/zshrc` — starts the same CLI with every request pointed
+at [OpenRouter](https://openrouter.ai) instead, which is how you reach non-Claude
+models without leaving the tool.
+
+Auth is per-process, so the split happens at launch: a `claude-or` session sends
+**all** of its traffic to OpenRouter, `anthropic/*` models included, and those
+are billed by OpenRouter rather than your subscription. Use plain `claude` for
+Claude models.
+
+The key is read from the macOS Keychain on each launch, so it is never written
+to this repo or to a dotfile:
+
+```sh
+security add-generic-password -a "$USER" -s openrouter -w   # prompts for the key
+
+claude-or                                                   # stealth/ox-alpha, 1M context
+CLAUDE_OR_MODEL=x-ai/grok-4.6 CLAUDE_OR_CONTEXT=256000 claude-or
+```
+
+`CLAUDE_OR_CONTEXT` must match the model's real context window — auto-compact
+fires off that number, so a wrong value either compacts far too early or
+overruns the window.
+
 ## Authentication
 
 **No tokens, keys or session state are in this repo** — every config here is
@@ -273,6 +310,7 @@ safe to read, fork and publish. After installing, log in to whatever you use:
 |---|---|
 | GitHub CLI | `gh auth login` |
 | Claude Code | `claude` — browser OAuth on first run; MCP connectors via `/mcp` |
+| OpenRouter (for `claude-or`) | `security add-generic-password -a "$USER" -s openrouter -w` — stores the key in the macOS Keychain |
 | AWS | `aws configure` |
 | Google Cloud | `gcloud auth login && gcloud auth application-default login` |
 | GitHub Copilot | `:Copilot auth` inside Neovim |
