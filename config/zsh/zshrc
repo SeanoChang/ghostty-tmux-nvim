@@ -136,5 +136,8 @@ claude-or() {
   command claude "$@"
 }
 
+# ── machine-local overrides (untracked; PATH pins, per-box tools) ────────────
+[ -f "$HOME/.zshrc.local" ] && source "$HOME/.zshrc.local"
+
 # ── zsh syntax highlighting (must be last) ───────────────────────────────────
 source /opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh

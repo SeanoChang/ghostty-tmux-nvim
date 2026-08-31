@@ -1,0 +1,94 @@
+/* ghostty — maximum restraint. Derived from ~/.config/ghostty/config: the
+   #131a1b ground, #f2fcff foreground, and #588b8b selection this terminal
+   actually runs.
+
+   --accent differs between modes on purpose. Ghostty's real selection colour
+   #588b8b reaches 4.60:1 on #131a1b and is kept as-is, but only 3.68:1 on
+   #f2fcff, which fails the 4.5:1 a body-size link needs, so light mode
+   darkens it to #3a6f6f.
+
+   Restraint governs how much of the page is coloured, not whether the series
+   are separable. The chart ramp still clears every dataviz gate; a chart whose
+   series cannot be told apart is broken, not restrained. Note the source teal
+   sits at chroma 0.055, below the 0.10 grey floor, so slot 1 keeps the hue at
+   a chroma that reads as a colour. */
+
+:root {
+  --bg: #f2fcff;
+  --bg-raised: #e2eef1;
+  --bg-inset: #eaf4f6;
+  --border: #bdd0d3;
+  --border-strong: #7d9597;
+  --text: #131a1b;
+  --text-muted: #3d4f51;
+  --text-faint: #5d7173;
+  --accent: #3a6f6f;
+  --ok: #2f6b32;
+  --warn: #7d5600;
+  --bad: #a33232;
+  --accent-soft: #dcecec;
+  --ok-soft: #dcecdb;
+  --warn-soft: #f0e8d3;
+  --bad-soft: #f2dcdc;
+  --series-1: #00999a;
+  --series-2: #b28b00;
+  --series-3: #7f508f;
+  --series-4: #609e61;
+  --series-5: #4b8fc7;
+  --series-6: #a46826;
+  --font-sans: ui-sans-serif, -apple-system, "SF Pro Text", "Helvetica Neue",
+    Arial, sans-serif;
+  --font-mono: "MesloLGS NF", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131a1b;
+    --bg-raised: #1d2627;
+    --bg-inset: #0e1414;
+    --border: #2b3839;
+    --border-strong: #57696a;
+    --text: #f2fcff;
+    --text-muted: #b3c4c6;
+    --text-faint: #87999b;
+    --accent: #588b8b;
+    --ok: #8fc98f;
+    --warn: #d9b45c;
+    --bad: #e08b8b;
+    --accent-soft: #1c2c2d;
+    --ok-soft: #1b2b1c;
+    --warn-soft: #2c2718;
+    --bad-soft: #2f1e1e;
+    --series-1: #00999a;
+    --series-2: #b08a00;
+    --series-3: #855695;
+    --series-4: #5a975b;
+    --series-5: #3e83ba;
+    --series-6: #a06523;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #131a1b;
+  --bg-raised: #1d2627;
+  --bg-inset: #0e1414;
+  --border: #2b3839;
+  --border-strong: #57696a;
+  --text: #f2fcff;
+  --text-muted: #b3c4c6;
+  --text-faint: #87999b;
+  --accent: #588b8b;
+  --ok: #8fc98f;
+  --warn: #d9b45c;
+  --bad: #e08b8b;
+  --accent-soft: #1c2c2d;
+  --ok-soft: #1b2b1c;
+  --warn-soft: #2c2718;
+  --bad-soft: #2f1e1e;
+  --series-1: #00999a;
+  --series-2: #b08a00;
+  --series-3: #855695;
+  --series-4: #5a975b;
+  --series-5: #3e83ba;
+  --series-6: #a06523;
+}

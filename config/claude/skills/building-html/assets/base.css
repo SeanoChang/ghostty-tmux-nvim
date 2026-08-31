@@ -1,0 +1,394 @@
+/* base.css — structure only. Defines the scale tokens; references but never
+   defines the colour tokens, which every theme file supplies.
+
+   Two widths, not one. --container is the page column: figures, tables,
+   grids and cards fill it. --measure is the narrower cap on running prose
+   inside it. Applying the prose measure to the container squeezes every
+   diagram to paragraph width — the 2026-08-15 data-model page did exactly
+   that and clipped a six-step flow at step five. */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+:root {
+  --step--1: 0.875rem;                       /* 14px  captions, labels, table body */
+  --step-0: 1.0625rem;                       /* 17px  body */
+  --step-1: 1.3rem;                          /* 21px  lede, pull-claim, h3 */
+  --step-2: 1.8rem;                          /* 29px  h2 */
+  --step-3: 2.4rem;                          /* 38px  stat */
+  --step-4: clamp(2.125rem, 5vw, 3.25rem);   /* 34–52px h1 */
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 1rem;
+  --space-4: 1.5rem;
+  --space-5: 2.5rem;
+  --space-6: 4rem;
+  --space-7: 5.25rem;                        /* 84px  between sections */
+
+  --container: 920px;
+  --measure: 42em;
+  --radius: 8px;
+  --radius-lg: 16px;
+}
+
+html {
+  background: var(--bg);
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--step-0);
+  line-height: 1.62;
+  letter-spacing: -0.003em;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- page column ------------------------------------------------------ */
+
+main, article, .wrap {
+  max-width: var(--container);
+  margin: 0 auto;
+  padding: 0 var(--space-4) var(--space-7);
+}
+
+header {
+  padding: var(--space-7) 0 var(--space-5);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-2);
+}
+
+footer {
+  margin-top: var(--space-7);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+  font-size: var(--step--1);
+  color: var(--text-muted);
+}
+
+/* ---- type ------------------------------------------------------------- */
+
+h1, h2, h3, h4 {
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+  margin: 0;
+}
+h1 {
+  font-size: var(--step-4);
+  font-weight: 700;
+  line-height: 1.06;
+  letter-spacing: -0.028em;
+  margin: 0 0 var(--space-4);
+}
+h2 {
+  font-size: var(--step-2);
+  font-weight: 650;
+  margin: var(--space-7) 0 var(--space-2);
+}
+h3 {
+  font-size: var(--step-1);
+  font-weight: 620;
+  letter-spacing: -0.01em;
+  margin: var(--space-5) 0 var(--space-2);
+}
+h4 {
+  font-size: var(--step-0);
+  font-weight: 620;
+  margin: var(--space-4) 0 var(--space-2);
+}
+h2 + h3 { margin-top: var(--space-4); }
+
+/* Section marker: the small accent line above an h2 ("02 — The constraint").
+   Numbering is information — use .num only when the sections are a sequence;
+   for unordered sections use .eyebrow inside the h2 instead. */
+.num, h2 > .eyebrow {
+  display: block;
+  font-size: 0.75rem;
+  font-weight: 620;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: var(--space-2);
+}
+.eyebrow {
+  font-size: 0.75rem;
+  font-weight: 590;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 0 0 var(--space-3);
+}
+
+/* Prose is capped at the measure; the container is not. */
+p, ul, ol, dl, .lede, .big, .note {
+  max-width: var(--measure);
+}
+p, ul, ol, dl { margin: 0 0 var(--space-3); }
+ul, ol { padding-left: 1.4em; }
+li { margin-bottom: var(--space-2); }
+strong { font-weight: 620; }
+
+.lede {
+  font-size: var(--step-1);
+  line-height: 1.5;
+  color: var(--text-muted);
+  margin: 0;
+}
+.big {
+  font-size: var(--step-1);
+  line-height: 1.45;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  margin: var(--space-4) 0;
+}
+.note {
+  border-left: 2px solid var(--border-strong);
+  padding: var(--space-1) 0 var(--space-1) var(--space-3);
+  color: var(--text-muted);
+  font-size: 0.95em;
+  margin: var(--space-4) 0;
+}
+small, .caption { font-size: var(--step--1); color: var(--text-muted); }
+.faint { color: var(--text-faint); }
+
+a { color: var(--accent); text-underline-offset: 0.15em; }
+a:focus-visible, button:focus-visible, [tabindex]:focus-visible {
+  outline: 2px solid var(--border-strong);
+  outline-offset: 2px;
+}
+
+hr { border: 0; border-top: 1px solid var(--border); margin: var(--space-6) 0; }
+
+/* ---- contents ---------------------------------------------------------- */
+
+nav.toc, .toc { margin: var(--space-5) 0 0; font-size: 0.95em; }
+.toc a {
+  color: var(--text-muted);
+  text-decoration: none;
+  display: block;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+}
+.toc a:hover { color: var(--accent); }
+.toc span {
+  color: var(--text-faint);
+  margin-right: var(--space-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- code and equations ----------------------------------------------- */
+
+code, kbd, samp { font-family: var(--font-mono); font-size: 0.86em; }
+
+:not(pre) > code {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0.05em 0.35em;
+}
+
+pre {
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4);
+  overflow-x: auto;
+  line-height: 1.55;
+  font-size: var(--step--1);
+  margin: var(--space-3) 0;
+}
+pre code { background: none; border: 0; padding: 0; font-size: 1em; }
+
+/* An equation, schema, or key statement set apart in mono. .hl tints it. */
+.eq {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  line-height: 1.9;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-4) 0;
+  overflow-x: auto;
+  color: var(--text);
+}
+.eq .c { color: var(--text-muted); font-size: 0.9em; }
+.eq.hl { background: var(--accent-soft); border-color: var(--accent); }
+.eqname {
+  display: block;
+  font: 590 0.7rem var(--font-sans);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: var(--space-2);
+}
+
+/* ---- callouts ---------------------------------------------------------- */
+
+.callout {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-4) 0;
+  background: var(--bg-raised);
+}
+.callout > :last-child { margin-bottom: 0; }
+.callout-accent { background: var(--accent-soft); border-color: var(--accent); }
+.callout-ok     { background: var(--ok-soft);     border-color: var(--ok); }
+.callout-warn   { background: var(--warn-soft);   border-color: var(--warn); }
+.callout-bad    { background: var(--bad-soft);    border-color: var(--bad); }
+
+blockquote {
+  margin: var(--space-4) 0;
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--border-strong);
+  color: var(--text-muted);
+  max-width: var(--measure);
+}
+
+/* ---- tables ------------------------------------------------------------ */
+
+.table-wrap { overflow-x: auto; margin: var(--space-4) 0; }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: var(--step--1);
+  min-width: 34rem;
+}
+th, td {
+  text-align: left;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+th {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+td:first-child { font-weight: 590; }
+td.m, th.m { font-family: var(--font-mono); font-size: 0.8rem; white-space: nowrap; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ---- figures ----------------------------------------------------------- */
+
+figure { margin: var(--space-5) 0 var(--space-3); }
+figure > svg, figure > img { width: 100%; max-width: 100%; height: auto; display: block; }
+figcaption {
+  margin-top: var(--space-3);
+  font-size: var(--step--1);
+  line-height: 1.55;
+  color: var(--text-muted);
+  max-width: 52em;
+}
+
+/* Text inside inline SVG. Set font on the <text> via class so every figure
+   on the page shares one label scale instead of per-diagram guesses. */
+.lbl     { font: 590 13px var(--font-sans); }
+.lbl-s   { font: 500 11.5px var(--font-sans); }
+.lbl-xs  { font: 500 10.5px var(--font-sans); }
+.mono-s  { font: 500 11px var(--font-mono); }
+.mono-xs { font: 500 9.5px var(--font-mono); }
+
+/* ---- cards, grids, stats ---------------------------------------------- */
+
+.card {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4) var(--space-4);
+  margin: var(--space-4) 0;
+}
+.card > :first-child { margin-top: 0; }
+.card > :last-child { margin-bottom: 0; }
+.card h3, .card h4 { margin-top: 0; }
+
+.grid2, .grid3, .stats {
+  display: grid;
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+}
+.grid2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.grid3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.stats { grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); }
+.grid2 > .card, .grid3 > .card, .stats > .card { margin: 0; }
+.grid2 p, .grid3 p, .stats p { max-width: none; }
+
+/* One number that is the point. */
+.stat {
+  font-size: var(--step-3);
+  line-height: 1.05;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.stat-label {
+  font-size: var(--step--1);
+  color: var(--text-muted);
+  margin-top: var(--space-1);
+}
+.stat-sub { font-size: 0.8rem; color: var(--text-faint); }
+
+.status-ok { color: var(--ok); }
+.status-warn { color: var(--warn); }
+.status-bad { color: var(--bad); }
+
+.legend { display: flex; flex-wrap: wrap; gap: var(--space-3); font-size: var(--step--1); }
+.legend-item { display: inline-flex; align-items: center; gap: var(--space-2); }
+.swatch { width: 0.8em; height: 0.8em; border-radius: 2px; flex: none; }
+.s1 { background: var(--series-1); }
+.s2 { background: var(--series-2); }
+.s3 { background: var(--series-3); }
+.s4 { background: var(--series-4); }
+.s5 { background: var(--series-5); }
+.s6 { background: var(--series-6); }
+
+/* ---- theme toggle (local files own their theme) ----------------------- */
+
+.theme-toggle {
+  position: fixed;
+  top: var(--space-3);
+  right: var(--space-3);
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: var(--space-1) var(--space-3);
+  font: inherit;
+  font-size: var(--step--1);
+  cursor: pointer;
+}
+.theme-toggle:hover { color: var(--text); border-color: var(--border-strong); }
+
+/* ---- responsive ------------------------------------------------------- */
+
+@media (max-width: 44rem) {
+  main, article, .wrap { padding: 0 var(--space-3) var(--space-6); }
+  header { padding-top: var(--space-6); }
+  h2 { margin-top: var(--space-6); }
+  .grid2, .grid3 { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media print {
+  body { background: #fff; color: #000; }
+  main, article, .wrap { padding: 0; max-width: none; }
+  a { text-decoration: underline; }
+  pre, .card, figure, .callout, .eq { break-inside: avoid; }
+  h2 { break-after: avoid; }
+  .no-print, .theme-toggle { display: none; }
+}

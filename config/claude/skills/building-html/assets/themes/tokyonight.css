@@ -1,0 +1,96 @@
+/* tokyonight — for pages beside terminal work. Derived from
+   ~/.config/mermaid/tokyonight.json so a mermaid diagram rendered with that
+   config sits on the page without looking pasted in.
+
+   Light is declared first because the three-state contract requires it: a
+   viewer set to "system" stamps no attribute, so only the media query
+   separates light from dark, and a token defined solely inside a media or
+   attribute block has no value in that state. Dark is still the designed
+   palette — declared-first and designed-for are different things.
+
+   The six series slots are NOT the editor accents. Those sit at OKLCH
+   lightness 0.74-0.88 because glyph strokes need it, where the chart band is
+   0.48-0.67, and syntax colours carry no adjacency constraint. Each slot here
+   keeps its source hue, re-placed in the band at the lowest chroma clearing
+   the grey floor, ordered to maximize worst adjacent separation. Verified
+   against dataviz's five categorical checks; do not substitute by eye. */
+
+:root {
+  --bg: #f0f0f4;
+  --bg-raised: #e3e4ec;
+  --bg-inset: #e8e9f0;
+  --border: #c4c8de;
+  --border-strong: #8288a7;
+  --text: #232433;
+  --text-muted: #4c5270;
+  --text-faint: #6b7290;
+  --accent: #2e5bd8;
+  --ok: #3b7b21;
+  --warn: #8a5a00;
+  --bad: #c1123a;
+  --accent-soft: #dfe6fa;
+  --ok-soft: #e0eed6;
+  --warn-soft: #f6ead2;
+  --bad-soft: #f8dde3;
+  --series-1: #2f509d;
+  --series-2: #b9572d;
+  --series-3: #0d95b3;
+  --series-4: #b47f2b;
+  --series-5: #754dac;
+  --series-6: #72933a;
+  --font-sans: ui-sans-serif, -apple-system, "SF Pro Text", "Helvetica Neue",
+    Arial, sans-serif;
+  --font-mono: "MesloLGS NF", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1e2030;
+    --bg-raised: #2f334d;
+    --bg-inset: #191b29;
+    --border: #3b3f5c;
+    --border-strong: #626b8e;
+    --text: #c8d3f5;
+    --text-muted: #a0aad4;
+    --text-faint: #7a82ab;
+    --accent: #82aaff;
+    --ok: #c3e88d;
+    --warn: #ffc777;
+    --bad: #ff757f;
+    --accent-soft: #263153;
+    --ok-soft: #2b3a2c;
+    --warn-soft: #3d3324;
+    --bad-soft: #422632;
+    --series-1: #4669b9;
+    --series-2: #b55429;
+    --series-3: #008ca9;
+    --series-4: #af7b25;
+    --series-5: #7f58b7;
+    --series-6: #7b9d43;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #1e2030;
+  --bg-raised: #2f334d;
+  --bg-inset: #191b29;
+  --border: #3b3f5c;
+  --border-strong: #626b8e;
+  --text: #c8d3f5;
+  --text-muted: #a0aad4;
+  --text-faint: #7a82ab;
+  --accent: #82aaff;
+  --ok: #c3e88d;
+  --warn: #ffc777;
+  --bad: #ff757f;
+  --accent-soft: #263153;
+  --ok-soft: #2b3a2c;
+  --warn-soft: #3d3324;
+  --bad-soft: #422632;
+  --series-1: #4669b9;
+  --series-2: #b55429;
+  --series-3: #008ca9;
+  --series-4: #af7b25;
+  --series-5: #7f58b7;
+  --series-6: #7b9d43;
+}

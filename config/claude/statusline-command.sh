@@ -122,3 +122,8 @@ fi
 
 # ── output ────────────────────────────────────────────────────────────────────
 printf '%s' "$parts"
+
+# ccdash capture — only on machines where ccdash has run
+if [ -d "$HOME/.local/share/ccdash" ]; then
+  printf '%s\n' "$input" >> "$HOME/.local/share/ccdash/statusline.jsonl"
+fi

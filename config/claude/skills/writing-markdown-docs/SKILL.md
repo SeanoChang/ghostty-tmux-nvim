@@ -17,7 +17,7 @@ description:
 
 Markdown is the default for any standalone document. Write in markdown unless
 the user explicitly asks for plots, charts, interactive elements, or 3D output —
-those are the only reasons to switch to the `html-reports` skill instead. A
+those are the only reasons to switch to the `building-html` skill instead. A
 document being long, technical, or covering a lot of ground is not one of those
 reasons: complexity alone never justifies leaving markdown. Markdown is the
 medium for understanding — it reads in a terminal, diffs cleanly, and keeps the
