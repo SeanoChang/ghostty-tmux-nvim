@@ -61,7 +61,7 @@ brew "cocoapods"
 cask "miniconda"
 
 # ── data ─────────────────────────────────────────────────────────────────────
-brew "postgresql@16"
+brew "postgresql@18"
 brew "duckdb"
 brew "sqlc"
 
