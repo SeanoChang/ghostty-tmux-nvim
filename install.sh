@@ -105,6 +105,25 @@ install_copy() {
   say "created" "$(tilde "$dest")"
 }
 
+# Link each top-level entry of the source directory into dest, which stays a
+# real directory. Entries that exist only in dest are left alone; an entry
+# present on both sides is backed up and replaced by the link, like any link.
+install_merge() {
+  local src="$1" dest="$2"
+
+  # a whole-dir symlink from an earlier install gives way to a real dir
+  if [ -L "$dest" ]; then
+    backup "$dest"
+  fi
+  run mkdir -p "$dest"
+
+  local entry
+  for entry in "$src"/*; do
+    [ -e "$entry" ] || continue
+    install_link "$entry" "$dest/${entry##*/}"
+  done
+}
+
 # ── main ─────────────────────────────────────────────────────────────────────
 [ -f "$MANIFEST" ] || { echo "manifest not found: $MANIFEST" >&2; exit 1; }
 
@@ -149,9 +168,10 @@ while read -r mode src dest; do
   fi
 
   case "$mode" in
-    link) install_link "$abs_src" "$abs_dest" ;;
-    copy) install_copy "$abs_src" "$abs_dest" ;;
-    *)    echo "unknown mode '$mode' for $src" >&2; exit 1 ;;
+    link)  install_link  "$abs_src" "$abs_dest" ;;
+    copy)  install_copy  "$abs_src" "$abs_dest" ;;
+    merge) install_merge "$abs_src" "$abs_dest" ;;
+    *)     echo "unknown mode '$mode' for $src" >&2; exit 1 ;;
   esac
   count=$((count + 1))
 done < "$MANIFEST"
