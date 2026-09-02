@@ -45,6 +45,20 @@
     "type": "command",
     "command": "sh __HOME__/.claude/statusline-command.sh"
   },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash __HOME__/.claude/hooks/second-brain-capture-stop.sh",
+            "timeout": 15,
+            "statusMessage": "Checking second-brain capture"
+          }
+        ]
+      }
+    ]
+  },
   "enabledPlugins": {
     "pyright-lsp@claude-plugins-official": true,
     "rust-analyzer-lsp@claude-plugins-official": true,

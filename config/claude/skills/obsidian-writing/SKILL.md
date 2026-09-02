@@ -1,6 +1,6 @@
 ---
 name: obsidian-writing
-description: Use when writing or updating any note in the Seano Obsidian vault — including immediately after second-brain-obsidian has decided to write, extend, or update a note, to craft the file itself. Use when the user mentions Obsidian, vaults, .md notes, Canvas, Bases, callouts, wikilinks, backlinks, MOCs, or frontmatter; asks for a diagram, design decision, schema note, paper summary, or course note that will live in their notes; converts external material — papers, transcripts, code, DDL, RFCs — into vault notes; asks "how should I capture this"; or reorganizes, splits, links, or normalizes existing notes.
+description: Use when writing or updating any note in the Seano Obsidian vault — normally after second-brain-obsidian has decided whether and where to write; when a note would record new knowledge (a concept, design decision, paper summary, or course note), invoke second-brain-obsidian first. Use when the user mentions Obsidian, vaults, .md notes, Canvas, Bases, callouts, wikilinks, backlinks, MOCs, or frontmatter; converts papers, transcripts, code, DDL, or RFCs into vault notes; asks "how should I capture this"; or reorganizes, splits, links, or normalizes existing notes.
 ---
 
 # Obsidian writing

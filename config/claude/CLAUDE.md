@@ -38,5 +38,9 @@ Verification standard
 Report shape
 - Confirmed findings first with `file:line` evidence, then refuted/unverified counts, then what was NOT covered, then next-step options. No per-agent narration. End with a short summary of what the work actually produced — never agent counts, token totals, or cost.
 
+## Second brain (Obsidian)
+- Conceptual or learning question — "what is X", "how does X work", the design of a system — in ANY project: invoke the `second-brain-obsidian` skill and run vault recall before answering, even when the ask is an HTML/doc/diagram "to understand X".
+- Before ending work that produced generalizable knowledge, let `second-brain-obsidian` decide capture (or record the gap); `obsidian-writing` crafts any note.
+
 ## Writing (PRs, docs, messages)
 - State what changed and why in plain sentences. No filler, no hype adjectives, no restating the diff.
