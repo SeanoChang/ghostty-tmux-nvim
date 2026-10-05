@@ -3,7 +3,7 @@ import type { EngineInterface as Engine, Register, Timer } from 'claude-code'
 
 import type { AgentNode, EditRecord, NodeStatus, ViewProps } from '../types'
 import {
-  changesLine, cleanTitle, describeTool, diffCounts, editRecords, editedPath, fileRows, firstPrompt, firstSentence, fitProps,
+  changesLine, cleanTitle, describeTool, diffCounts, editRecords, editedPath, fileRows, firstPrompt, firstSentence, handbackOf, fitProps,
   lineDiff, parseDigest, parseJournal, readableResult, scopeNodes, transcriptEdits,
 } from './list'
 
@@ -40,6 +40,8 @@ const TITLE_CONCURRENCY = 4
 
 const AGENT_TOOLS = new Set(['Agent', 'Task'])
 const excerpt = (s: string | undefined, n = 400) => (s ? s.slice(0, n) : undefined)
+// This session's repository, looked up once per load: '' when there is none.
+let repoRoot: string | undefined
 const scriptField = (script: string | undefined, field: string) =>
   new RegExp(`${field}:\\s*['"]([^'"]+)['"]`).exec(script ?? '')?.[1]
 
@@ -281,6 +283,42 @@ const addChange = (prev: AgentNode['changes'], e: { path: string; added: number;
 
 const slim = (n: AgentNode): AgentNode => ({ ...n, prompt: excerpt(n.prompt, 300), result: excerpt(n.result, 600), activity: undefined, act: undefined })
 
+// The git top level of the session's folder, else the folder itself.
+async function sessionRepo($: Engine): Promise<string | undefined> {
+  if (repoRoot === undefined) {
+    const git = await $.process.run(['git', 'rev-parse', '--show-toplevel']).catch(() => undefined)
+    const pwd = git?.exitCode === 0 ? git.stdout.trim() : (await $.process.run(['pwd']).catch(() => undefined))?.stdout.trim()
+    repoRoot = pwd ?? ''
+  }
+  return repoRoot || undefined
+}
+
+// The repo as a view prop: left out when there is none, since props hold no undefined.
+async function repoProp($: Engine): Promise<{ repo?: string }> {
+  const repo = await sessionRepo($)
+  return repo ? { repo } : {}
+}
+
+// Runs kept before reports were read from SubagentHandback calls get theirs
+// from their transcripts, once.
+async function backfillReports($: Engine) {
+  const history = ((await $.store.get(HISTORY)) as AgentNode[] | undefined) ?? []
+  const todo = history.filter(n => n.kind === 'agent' && !n.result && !n.reportTried)
+  if (todo.length === 0) return
+  const home = await $.env.get('HOME')
+  const names = todo.flatMap((n, i) => [...(i ? ['-o'] : []), '-name', `agent-${n.id}.jsonl`])
+  const found = await $.process.run(['find', `${home}/.claude/projects`, '-maxdepth', '6', '(', ...names, ')'], { timeoutMs: 20000 }).catch(() => undefined)
+  const pathOf = new Map((found?.stdout ?? '').split('\n').filter(Boolean).map(p => [p.replace(/^.*agent-|\.jsonl$/g, ''), p]))
+  const reports = new Map<string, string>()
+  for (const n of todo) {
+    const path = pathOf.get(n.id)
+    const report = path ? handbackOf(await $.fs.read(path).catch(() => '')) : undefined
+    if (report) reports.set(n.id, report)
+  }
+  const tried = new Set(todo.map(n => n.id))
+  await $.store.set(HISTORY, history.map(n => (tried.has(n.id) ? { ...n, reportTried: true, ...(reports.has(n.id) ? { result: excerpt(reports.get(n.id), 600) } : {}) } : n)))
+}
+
 // A finished top-level run, with everything under it, is kept across sessions.
 async function archive($: Engine) {
   const list = await read($, nodes)
@@ -290,7 +328,8 @@ async function archive($: Engine) {
   const done = tops.map(t => [t, ...subtree(t.id)]).filter(run => run.every(n => n.status !== 'running'))
   if (done.length === 0) return
   const prev = ((await $.store.get(HISTORY)) as AgentNode[] | undefined) ?? []
-  const fresh = done.flat().map(slim)
+  const repo = await sessionRepo($)
+  const fresh = done.flat().map(slim).map(n => (repo && !n.repo ? { ...n, repo } : n))
   const freshIds = new Set(fresh.map(n => n.id))
   if (fresh.every(f => prev.some(p => p.id === f.id && p.status === f.status && p.label === f.label && p.summary === f.summary && p.parentId === f.parentId))) return
   const merged = [...prev.filter(p => !freshIds.has(p.id)), ...fresh]
@@ -316,6 +355,7 @@ export const register: Register = on => {
       description: 'Show subagents and workflows in a side pane (`clear` empties the history)',
     })
     await archive($)
+    await backfillReports($)
     if ((await read($, nodes)).some(n => n.status === 'running')) ensureTimers($)
 
     return next(e)
@@ -402,6 +442,12 @@ export const register: Register = on => {
         ...n, tools: n.tools + 1, lastTool: tool, act, activity, status: 'running', endedAt: undefined,
         work: act === 'think' ? n.work : { ...n.work, [act]: (n.work?.[act] ?? 0) + 1 },
       }))
+      // An agent that hands its report back through a tool ends with no final text.
+      // SubagentHandback is not in the typed tool list, so the name is compared as a string.
+      if ((tool as string) === 'SubagentHandback' && typeof input.message === 'string') {
+        const report = input.message
+        await patch($, agentId, n => ({ ...n, result: excerpt(report) }))
+      }
       ensureTimers($)
     } else {
       // A workflow agent seen before its journal line: filed under the running
@@ -451,7 +497,7 @@ export const register: Register = on => {
         await patch($, agentId, n => ({
           ...finish(status, at)(n),
           model: n.model ?? u?.model,
-          result: excerpt(e.answer),
+          result: excerpt(e.answer) ?? n.result,
           tokens: (n.tokens ?? 0) + (tokens ?? 0),
         }))
       } else if (wf) {
@@ -540,7 +586,7 @@ export const register: Register = on => {
 
 async function viewProps($: Engine): Promise<ViewProps> {
   const history = ((await $.store.get(HISTORY)) as AgentNode[] | undefined) ?? []
-  const base = fitProps({ nodes: await read($, nodes), history, at: await $.clock.now() })
+  const base = { ...fitProps({ nodes: await read($, nodes), history, at: await $.clock.now() }), ...await repoProp($) }
   if (!diffPath) return base
   await backfill($, diffPath, [...history, ...base.nodes])
   const pastEdits = ((await $.store.get(EDITS)) as EditRecord[] | undefined) ?? []

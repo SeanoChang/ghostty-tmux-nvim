@@ -323,6 +323,32 @@ export function parseDigest(raw: string): { outcome?: string; points?: string[] 
   } catch { return undefined }
 }
 
+// The report an agent handed back. Agents that end with a SubagentHandback call
+// leave no final text, so their report is that call's message; otherwise it is
+// the last text the agent wrote.
+export function handbackOf(transcript: string): string | undefined {
+  const lines = transcript.split('\n').filter(Boolean)
+  let lastText: string | undefined
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let row: { message?: { role?: string; content?: unknown } }
+    try { row = JSON.parse(lines[i]!) } catch { continue }
+    const content = row.message?.role === 'assistant' && Array.isArray(row.message.content) ? row.message.content : []
+    for (const b of content as { type?: string; name?: string; text?: string; input?: { message?: unknown } }[]) {
+      if (b.type === 'tool_use' && b.name === 'SubagentHandback' && typeof b.input?.message === 'string') return b.input.message
+      if (b.type === 'text' && b.text?.trim() && lastText === undefined) lastText = b.text
+    }
+  }
+  return lastText
+}
+
+// Why a finished agent has no report, in words, instead of a bare "No report".
+export function noReportReason(n: { status: string }): string {
+  if (n.status === 'running') return 'Still working.'
+  if (n.status === 'failed') return 'Stopped with an error before it reported.'
+  if (n.status === 'killed') return 'Stopped before it reported.'
+  return 'Finished without a written report.'
+}
+
 // Task text as a person reads it: runs recorded before the harness-aware reader kept the frames.
 export function taskText(prompt: string | undefined): string {
   if (!prompt) return ''

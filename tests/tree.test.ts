@@ -3,7 +3,7 @@ import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 
 import {
-  changesLine, cleanTitle, describeTool, diffCounts, editRecords, editStats, fileRows, lineDiff, phaseWords, readableResult, firstPrompt, fitProps, markFor, parseDigest, parseJournal,
+  changesLine, cleanTitle, describeTool, diffCounts, editRecords, editStats, fileRows, handbackOf, lineDiff, noReportReason, phaseWords, readableResult, firstPrompt, fitProps, markFor, parseDigest, parseJournal,
   pipeline, plain, prettyModel, prettyType, scopeNodes, shortPaths, taskText, topItems, transcriptEdits, workSummary, workflowItems,
 } from '../hooks/list'
 import { bar, viewProps, viewState, wrap } from '../hooks/view'
@@ -346,4 +346,58 @@ describe('subagents from one turn', () => {
     expect(await ui.find({ in: KEY, text: '6 done' })).toBeDefined()
     await ui.unmount()
   })
+})
+
+// ── reports handed back through a tool, and History per repository ──────────
+
+const ranIn = (repo: string) => ({
+  value: { exitCode: 0, stdout: `${repo}\n`, stderr: '', isStdoutTruncated: false, isStderrTruncated: false },
+}) as never
+
+test('a report handed back through SubagentHandback is found in a transcript', () => {
+  const handback = [
+    { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Looking at the files.' }] } },
+    { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'SubagentHandback', input: { message: 'BRIEF: tokens flow through refresh.ts' } }] } },
+    { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: 'delivered' }] } },
+  ].map(r => JSON.stringify(r)).join('\n')
+  expect(handbackOf(handback)).toBe('BRIEF: tokens flow through refresh.ts')
+  const plainText = JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Done: 3 callers.' }] } })
+  expect(handbackOf(plainText)).toBe('Done: 3 callers.')
+  expect(handbackOf('')).toBeUndefined()
+  expect(noReportReason({ status: 'failed' })).toBe('Stopped with an error before it reported.')
+  expect(noReportReason({ status: 'done' })).toBe('Finished without a written report.')
+})
+
+test('an agent that hands its report back through a tool shows that report', async ($, on) => {
+  on('process.run', () => ranIn('/repo/a'))
+  on('model.complete', () => ({ value: { isAnswered: false, reason: 'empty-reply', usage } }) as never)
+  on('tool.call', { tool: 'SubagentHandback' }, () => ({ result: { success: true } }) as never)
+  on('turn.complete', () => ({ text: '' }) as never)
+  await oneCat($, on)
+  await $.tool.call({ tool: 'SubagentHandback', tool_use_id: 'hb1', agentId: 'cat1', message: 'Tokens flow through refresh.ts and jwt.ts.' } as never)
+  await $.turn.complete({ agentId: 'cat1', answer: '', durationMs: 1000, isAborted: false, reason: 'answer', usage } as never)
+  const ui = await $.ui.mount({ plugin: 'agent-tree', surface: 'terminal', ...PANE })
+  await ui.key({ in: KEY, key: '2' })
+  await ui.key({ in: KEY, key: 'return' })
+  expect(await ui.find({ in: KEY, text: /Tokens flow through refresh\.ts/ })).toBeDefined()
+  expect(await ui.find({ in: KEY, text: /No report/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('History shows this repository first; r shows every repository', async ($, on) => {
+  mock.clock(on)
+  const at = Date.parse('2026-10-05T10:00:00Z')
+  const run = (id: string, label: string, repo?: string) => ({ id, kind: 'agent', label, status: 'done', startedAt: at, endedAt: at + 1000, tools: 1, result: 'ok', ...(repo ? { repo } : {}) })
+  mock.store(on, { history: [run('h1', 'Run in repo A', '/repo/a'), run('h2', 'Run in repo B', '/repo/b'), run('h3', 'Run from before repos')] })
+  on('process.run', () => ranIn('/repo/a'))
+  const ui = await $.ui.mount({ plugin: 'agent-tree', surface: 'terminal', ...PANE })
+  await ui.key({ in: KEY, key: '2' })
+  expect(await ui.find({ in: KEY, text: 'Run in repo A' })).toBeDefined()
+  expect(await ui.find({ in: KEY, text: 'Run in repo B' })).toBeUndefined()
+  expect(await ui.find({ in: KEY, text: /1 older without a repo/ })).toBeDefined()
+  await ui.key({ in: KEY, key: 'r' })
+  expect(await ui.find({ in: KEY, text: 'Run in repo B' })).toBeDefined()
+  expect(await ui.find({ in: KEY, text: 'Run from before repos' })).toBeDefined()
+  expect(await ui.find({ in: KEY, text: /all repos/ })).toBeDefined()
+  await ui.unmount()
 })

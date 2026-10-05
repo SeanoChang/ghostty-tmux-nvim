@@ -48,6 +48,10 @@ export type AgentNode = {
   tokens?: number
   /** Set once Haiku has titled it (or the attempt failed), so it is asked once. */
   titled?: boolean
+  /** The repository (git top level, else the working folder) of the session that ran it. */
+  repo?: string
+  /** Set once a missing report was looked for in the transcript, so it is looked for once. */
+  reportTried?: boolean
 }
 
 /** One change one agent made to one file: its text before and after, and where it sits. */
@@ -69,6 +73,8 @@ export type ViewProps = {
   at: number
   /** The edits to the file the Changes view has open, oldest first; absent when none is open. */
   diff?: { path: string; edits: EditRecord[] }
+  /** This session's repository, for the History view's This repo filter. */
+  repo?: string
 }
 
 declare module 'claude-code' {

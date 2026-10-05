@@ -3,7 +3,7 @@ import type { ClientModule, ClientSurface, JsonValue } from 'claude-code'
 import type { Act, AgentNode, EditRecord, NodeStatus, ViewProps } from '../types'
 import {
   GROUPS, GROUP_NAMES, childrenOf, counts, dayLabel, diffCounts, fileRows, firstSentence, isSelectable, lineDiff,
-  markFor, phaseWords, pipeline, plain, prettyModel, prettyType, readableResult, runItems, scopeNodes, shortPaths,
+  markFor, noReportReason, phaseWords, pipeline, plain, prettyModel, prettyType, readableResult, runItems, scopeNodes, shortPaths,
   taskText, topItems, whereLabel, workSummary, type DiffLine, type FileRow, type Filter, type Group, type Item,
 } from './list'
 
@@ -28,12 +28,14 @@ type State = {
   // The engine time last handed in, and the tick it arrived on: now = that + ticks since.
   atSeen: number
   tickAtSeen: number
+  // History shows only this repository's runs
+  onlyRepo: boolean
 }
 
 const TICK_MS = 500
 const DEFAULT_STATE: State = {
   tab: 'live', path: null, view: 'agents', sel: 0, first: 0, agentSel: 0, diffFile: null, filter: 'all', group: 'none',
-  flipped: [], showDone: [], tick: 0, atSeen: 0, tickAtSeen: 0,
+  flipped: [], showDone: [], tick: 0, atSeen: 0, tickAtSeen: 0, onlyRepo: true,
 }
 const FILTERS: Filter[] = ['all', 'running', 'failed']
 const VIEWS: ViewName[] = ['agents', 'changes', 'output']
@@ -45,7 +47,7 @@ const arrayOf = <T,>(x: unknown): T[] => (Array.isArray(x) ? (x as T[]) : [])
 export function viewProps(raw: unknown): ViewProps {
   const p = (raw ?? {}) as Partial<ViewProps>
   const diff = p.diff && typeof p.diff.path === 'string' ? { path: p.diff.path, edits: arrayOf<EditRecord>(p.diff.edits) } : undefined
-  return { nodes: arrayOf(p.nodes), history: arrayOf(p.history), at: typeof p.at === 'number' ? p.at : 0, diff }
+  return { nodes: arrayOf(p.nodes), history: arrayOf(p.history), at: typeof p.at === 'number' ? p.at : 0, diff, ...(typeof p.repo === 'string' ? { repo: p.repo } : {}) }
 }
 
 export function viewState(raw: unknown): State {
@@ -65,6 +67,7 @@ export function viewState(raw: unknown): State {
     first: num(s.first),
     agentSel: num(s.agentSel),
     tick: num(s.tick),
+    onlyRepo: s.onlyRepo !== false,
   }
 }
 
@@ -158,7 +161,15 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   if (surface.state !== undefined && s.atSeen !== props.at) surface.setState({ ...s, atSeen: props.at, tickAtSeen: s.tick })
   const now = s.atSeen === props.at ? props.at + (s.tick - s.tickAtSeen) * TICK_MS : props.at
   const pulse = s.tick % 2 === 0
-  const nodes = s.tab === 'live' ? props.nodes : props.history
+  // History filtered to this repository: a run belongs where its top node ran.
+  const repoHistory = (() => {
+    if (!s.onlyRepo || !props.repo) return props.history
+    const byId = new Map(props.history.map(n => [n.id, n]))
+    const top = (n: AgentNode) => { let x = n; while (x.parentId && byId.has(x.parentId)) x = byId.get(x.parentId)!; return x }
+    return props.history.filter(n => top(n).repo === props.repo)
+  })()
+  const noRepoRuns = props.history.filter(n => !n.parentId && !n.repo).length
+  const nodes = s.tab === 'live' ? props.nodes : repoHistory
   const allNodes = [...props.nodes, ...props.history]
   const run = s.path ? nodes.find(n => n.id === s.path) : undefined
   const isInWorkflow = (n: AgentNode) => !!n.parentId && nodes.some(p => p.id === n.parentId && p.kind === 'workflow')
@@ -206,7 +217,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
       for (const k of scopeList) {
         gap()
         para(k.label, C.ink, true)
-        para(k.summary ?? (firstSentence(k.result, 300) || (k.status === 'running' ? 'Still working.' : 'Reported nothing.')), C.soft)
+        para(k.summary ?? (firstSentence(k.result, 300) || noReportReason(k)), C.soft)
       }
       return out
     }
@@ -223,7 +234,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
       gap(); para(n.kind === 'workflow' ? 'Final result' : 'Full report', C.blue, true)
       for (const line of report.split('\n')) para(plain(line) || ' ', C.muted)
     }
-    if (!report && !n.summary) para(n.status === 'running' ? 'Still working — the report appears here when it finishes.' : 'It reported nothing.', C.muted)
+    if (!report && !n.summary) para(n.status === 'running' ? 'Still working — the report appears here when it finishes.' : noReportReason(n), C.muted)
     const task = taskText(n.prompt)
     if (task) { gap(); para('Task it was given', C.blue, true); para(task, C.muted) }
     return out
@@ -312,7 +323,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     : set({ sel: step(count, sel, dir, okRow) }))
 
   const running = props.nodes.filter(n => !n.parentId && n.status === 'running').length
-  const histTops = props.history.filter(n => !n.parentId)
+  const histTops = repoHistory.filter(n => !n.parentId)
   const today = histTops.filter(n => dayLabel(n.startedAt, now) === 'Today').length
   const tabSpecs: [string, string][] = [[`${I.live} Live ${running}`, 'live'], [`${I.history} History ${histTops.length}`, 'history']]
   const viewSpecs: [string, ViewName][] = [[`${I.agents} Agents`, 'agents'], [`${I.changes} Changes ${files.length}`, 'changes'], [`${I.output} Output`, 'output']]
@@ -336,6 +347,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     else if (key === 'o') (run ? go('output') : focusItem?.kind === 'node' && openRun(focusItem.node, 'output'))
     else if (key === 'tab') (run ? go(VIEWS[(VIEWS.indexOf(view) + 1) % VIEWS.length]!) : switchTab(s.tab === 'live' ? 'history' : 'live'))
     else if (key === 'f') set({ filter: FILTERS[(FILTERS.indexOf(s.filter) + 1) % FILTERS.length], sel: 0, first: 0 })
+    else if (key === 'r' && !run) set({ onlyRepo: !s.onlyRepo, sel: 0, first: 0 })
     else if (key === 'v' && !run) set({ group: GROUPS[(GROUPS.indexOf(s.group) + 1) % GROUPS.length], sel: 0, first: 0 })
   })
 
@@ -446,7 +458,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
       meta = statusRow(n, when(n))
       second = <Text color={C.muted}>{I.agent}  {[prettyType(n, inWf), prettyModel(n.model), inWf && n.phase ? `${n.phase} phase` : n.where && n.where !== 'main' ? whereLabel(n.where) : ''].filter(Boolean).join('   ·   ')}</Text>
       rows = [
-        n.status === 'running' ? ['Now', activityValue(n)] : ['Outcome', <Text color={C.ink}>{outcome(n) || 'No report.'}</Text>],
+        n.status === 'running' ? ['Now', activityValue(n)] : ['Outcome', <Text color={C.ink}>{outcome(n) || noReportReason(n)}</Text>],
         ['Changes', changesValue(files)],
         ['Work', <Text color={C.soft}>{workSummary(n)}{n.tokens ? `   ·   ${Math.round(n.tokens / 1000)}k tokens` : ''}</Text>],
       ]
@@ -577,7 +589,8 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   // ── the row above the list: a caption on the run list, the view tabs inside a run ──
   const caption = (() => {
     if (!run) {
-      const what = s.tab === 'live' ? (running ? `${running} running` : 'Nothing running') : `${today} finished today`
+      const where = s.onlyRepo && props.repo ? `this repo${noRepoRuns ? ` (${noRepoRuns} older without a repo: r for all)` : ''}` : 'all repos'
+      const what = s.tab === 'live' ? (running ? `${running} running` : 'Nothing running') : `${today} finished today   ·   ${where}`
       return <Line>{PAD}<Text color={C.muted}>{what}{s.group !== 'none' ? `   ·   ${GROUP_NAMES[s.group]}` : ''}{s.filter !== 'all' ? `   ·   ${s.filter} only` : ''}</Text></Line>
     }
     if (mode === 'diff') {
@@ -593,7 +606,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   })()
 
   const keyList: [string, string][] = !run
-    ? [['j k', 'move'], ['enter', 'open'], ['c', 'changes'], ['h l', 'live · history'], ['v', 'group']]
+    ? [['j k', 'move'], ['enter', 'open'], ['c', 'changes'], ['h l', 'live · history'], ['v', 'group'], ...(s.tab === 'history' ? [['r', s.onlyRepo ? 'all repos' : 'this repo'] as [string, string]] : [])]
     : mode === 'agents' ? [['j k', 'move'], ['enter', 'open'], ['h l', 'views'], ['⌫', 'back']]
       : mode === 'files' ? [['j k', 'move'], ['enter', 'diff'], ['h l', 'views'], ['⌫', 'back']]
         : mode === 'diff' ? [['j k', 'move'], ['enter', 'go to agent'], ['h l', 'files'], ['⌫', 'back']]
