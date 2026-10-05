@@ -1,0 +1,6 @@
+{
+  "name": "agent-tree",
+  "version": "0.1.0",
+  "description": "Side pane that shows running subagents and workflows as a live tree",
+  "types": "./types/index.d.ts"
+}
