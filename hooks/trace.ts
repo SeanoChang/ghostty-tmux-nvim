@@ -387,3 +387,31 @@ export function traceWindow(rows: TraceRow[], offset: number, size = TRACE_WINDO
   const at = Math.max(0, Math.min(offset, Math.max(0, rows.length - size)))
   return { offset: at, rows: rows.slice(at, at + size) }
 }
+
+// ── reading a trace: one lane only, the rows worth a look, and a search ──────
+
+// The rows of one lane: what it did, and the arrows into and out of it. The lanes
+// keep their places (and so their colours); their spans are measured again.
+export function onlyLane(rows: TraceRow[], lanes: TraceLane[], lane: number): { rows: TraceRow[]; lanes: TraceLane[] } {
+  const kept = rows.filter(r => r.lane === lane || r.to === lane)
+  return {
+    rows: kept,
+    lanes: lanes.map((L, i) => {
+      const idx = kept.flatMap((r, k) => (r.lane === i || r.to === i ? [k] : []))
+      return { ...L, from: idx.length ? Math.min(...idx) : 0, to: idx.length ? Math.max(...idx) : -1 }
+    }),
+  }
+}
+
+export const MARKS_KEPT = 400
+
+// Rows worth a look: a failure, a call that errored, a quiet gap.
+export const traceMarks = (rows: TraceRow[]): number[] =>
+  rows.flatMap((r, i) => (r.kind === 'fail' || r.error || r.kind === 'quiet' ? [i] : [])).slice(0, MARKS_KEPT)
+
+// Rows whose words hold the search, any case: the row's text, its tool, what went in and out.
+export function traceHits(rows: TraceRow[], query: string): number[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return []
+  return rows.flatMap((r, i) => ([r.text, r.name, r.input, r.output, r.path, r.from, r.target].some(t => t?.toLowerCase().includes(q)) ? [i] : [])).slice(0, MARKS_KEPT)
+}

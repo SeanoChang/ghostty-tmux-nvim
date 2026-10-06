@@ -80,7 +80,7 @@ describe('a 50-agent workflow', () => {
     expect(await ui.find({ in: KEY, text: 'Check retry loop for off-by-one' })).toBeDefined()
     expect(await ui.find({ in: KEY, text: /show me a workflow/ })).toBeUndefined()
 
-    await ui.key({ in: KEY, key: 'h' })
+    await ui.key({ in: KEY, key: 'b' })
     expect(await ui.find({ in: KEY, text: /more finished agents/ })).toBeUndefined()
     await ui.unmount()
   })
@@ -97,8 +97,14 @@ describe('a 50-agent workflow', () => {
     expect(await ui.find({ in: KEY, text: '+3' })).toBeDefined()
     expect(await ui.find({ in: KEY, text: '−2' })).toBeDefined()
 
-    await ui.key({ in: KEY, key: 'l' }) // h/l walk the views
+    // → in the content stays in the content; ↑ on the top row goes up to the views, → picks Changes
+    await ui.key({ in: KEY, key: 'right' })
+    expect(await ui.find({ in: KEY, text: /src\/retry\.ts/ })).toBeUndefined()
+    await ui.key({ in: KEY, key: 'up' })
+    expect(await ui.find({ in: KEY, text: '▸Agents ' })).toBeDefined()
+    await ui.key({ in: KEY, key: 'right' })
     expect(await ui.find({ in: KEY, text: /Changes 2/ })).toBeDefined()
+    await ui.key({ in: KEY, key: 'down' }) // back down to the file list
     expect(await ui.find({ in: KEY, text: /src\/retry\.ts/ })).toBeDefined()
 
     await ui.key({ in: KEY, key: 'return' }) // open retry.ts's diff
@@ -518,12 +524,14 @@ test('the History page keeps names and durations in fixed columns', async ($, on
   await ui.unmount()
 })
 
-test('? shows every key, and any key closes it', async ($, on) => {
+test('? shows every key; j k scroll it, and any other key closes it', async ($, on) => {
   const ui = await historyPane($, on)
   await ui.key({ in: KEY, key: '?' })
   expect(await ui.find({ in: KEY, text: /every key the pane takes/ })).toBeDefined()
   expect(await ui.find({ in: KEY, text: 'first, last' })).toBeDefined()
   await ui.key({ in: KEY, key: 'j' })
+  expect(await ui.find({ in: KEY, text: /every key the pane takes/ })).toBeDefined()
+  await ui.key({ in: KEY, key: 'q' })
   expect(await ui.find({ in: KEY, text: /every key the pane takes/ })).toBeUndefined()
   await ui.unmount()
 })
@@ -638,8 +646,12 @@ test('the timeline draws a ruler and bars; selecting a bar selects its agent', a
   await ui.key({ in: KEY, key: 'v' })
   const rows = await rowTexts(ui)
   expect(rows.some(r => r.includes('0:00') && r.includes('0:09'))).toBe(true)
-  expect(rows.filter(r => r.includes('━')).length).toBe(3)
-  const selected = () => rowTexts(ui).then(rs => rs.find(r => r.includes('▌') && r.includes('━')))
+  // the critical path's bars are heavy, the others light; its length stands left of the ruler
+  const bars = rows.filter(r => /[━─]{6,}/.test(r) && /[✓✗●]/.test(r))
+  expect(bars.length).toBe(3)
+  expect(bars.filter(r => r.includes('━')).length).toBe(1)
+  expect(rows.some(r => r.includes('━ critical 8s') && r.includes('0:00'))).toBe(true)
+  const selected = () => rowTexts(ui).then(rs => rs.find(r => r.includes('▌') && /[━─]{6,}/.test(r)))
   expect(await selected()).toContain('Fix cart total quantities')
   await ui.key({ in: KEY, key: 'j' })
   expect(await selected()).toContain('Format prices')

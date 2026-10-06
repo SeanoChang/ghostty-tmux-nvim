@@ -1,0 +1,17 @@
+# One subagent run, from the Agent call to History.
+shape: sequence_diagram
+
+main: Main loop
+engine: Claude Code
+mod: agent-tree hooks
+store: History (\$.store)
+
+main -> engine: "Agent tool call"
+engine -> mod: "agent.spawn"
+mod -> mod: "add a running node\n(grouped with its turn)"
+engine -> mod: "tool.call (each call the agent makes)"
+mod -> mod: "count tools, keep edits,\nset what it is doing"
+engine -> mod: "turn.complete (answer, usage)"
+mod -> mod: "mark done · add tokens"
+mod -> mod: "Haiku digest and story\n(when ai is on)"
+mod -> store: "archive the finished run"

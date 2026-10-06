@@ -8,12 +8,13 @@ import {
   lineDiff, parseJournal, pipeline, scopeNodes, transcriptEdits, folderKey, runKey,
 } from './list'
 import { REPORT_SYSTEM, kTokens, parseReport, partInput, runInput } from './report'
-import { ZOOMS, buildTrace, finishParse, newParse, parseLines, traceWindow, type TraceEvent } from './trace'
+import { ZOOMS, buildTrace, finishParse, newParse, onlyLane, parseLines, traceHits, traceMarks, traceWindow, type TraceEvent } from './trace'
 import {
   AI_MODES, EXPLAIN_SYSTEM, PATTERNS_SYSTEM, STORY_SYSTEM, TIER_NAME, aiAllows, explainInput, parseBrief, parsePatterns,
   parseStory, patternsInput, storyInput, type AiMode, type Tier,
 } from './ai'
-import { insights } from './lens'
+import { criticalPath, idleGaps, insights, timelineRows } from './lens'
+import { DESK, pictureSvg, timelineSvg, traceSvg, type TimeBar } from './desktop/svg'
 // phase 6: the desktop's own native view, drawn from the same data
 import { drawDesktop } from './desktop/pane'
 import { DESK_DEFAULT, deskUi } from './desktop/state'
@@ -53,7 +54,8 @@ const backfilled = new Set<string>()
 
 // ── the trace the view has open ─────────────────────────────────────────────
 // What the view asked for: which run, how close, and where it reads.
-let traceReq: { run: string; zoom: TraceZoom; offset: number } | null = null
+// `lane` cuts the rows to one agent's lane; `query` is a search the rows are matched against.
+let traceReq: { run: string; zoom: TraceZoom; offset: number; lane?: string; query?: string } | null = null
 // The run's trace as last built (all its rows), and the window the view gets.
 let traceBuilt: { key: string; at: number; lanes: TraceView['lanes']; rows: TraceRow[]; missing: number; storyBy?: string } | undefined
 let traceSnap: TraceView | undefined
@@ -830,7 +832,7 @@ export const register: Register = (on, options) => {
   // The view asks for a file's diff when it opens one, and lets it go when it closes it.
   // It asks for a run's trace the same way: which run, how close, where it reads.
   on('ui.message', async ($, e, next) => {
-    const data = e.data as { type?: unknown; path?: unknown; run?: unknown; zoom?: unknown; offset?: unknown; regenerate?: unknown } | null
+    const data = e.data as { type?: unknown; path?: unknown; run?: unknown; zoom?: unknown; offset?: unknown; regenerate?: unknown; lens?: unknown; focus?: unknown; lane?: unknown; query?: unknown } | null
     if (e.requestId !== PANE) return next(e)
     if (data?.type === 'diff') {
       diffPath = typeof data.path === 'string' ? data.path : null
@@ -838,6 +840,12 @@ export const register: Register = (on, options) => {
     }
     if (data?.type === 'trace') {
       await askTrace($, data)
+      return { props: await viewProps($) }
+    }
+    if (data?.type === 'export' && typeof data.run === 'string') {
+      const lens = data.lens === 'trace' ? 'trace' : 'timeline'
+      const zoom: TraceZoom = ZOOMS.includes(data.zoom as TraceZoom) ? (data.zoom as TraceZoom) : 'story'
+      void exportPicture($, data.run, lens, zoom, typeof data.focus === 'string' ? data.focus : undefined).catch(() => note($, 'Could not draw the picture.'))
       return { props: await viewProps($) }
     }
     // Explain this run and patterns are Sonnet's, on Full only: the view says how to turn them on
@@ -891,6 +899,7 @@ export const register: Register = (on, options) => {
           void update($, desk, s => ({ ...deskUi(s) }))
           void writePatterns($).catch(() => undefined)
         },
+        exportPic: (run, lens, zoom, focus) => void exportPicture($, run, lens, zoom, focus).catch(() => note($, 'Could not draw the picture.')),
       }, columns)
     }
     // the pane body's own height: the viewport is the whole terminal, frame and all
@@ -908,7 +917,7 @@ async function viewProps($: Engine): Promise<ViewProps> {
   await read($, traceSeq)
   await read($, aiSeq)
   const patterns = await patternsDoc($)
-  const ai = { ai: aiMode, aiWeek: await aiWeek($), explaining: [...explaining], patternsBusy, ...(patterns ? { patterns } : {}) }
+  const ai = { ai: aiMode, aiWeek: await aiWeek($), explaining: [...explaining], patternsBusy, ...(patterns ? { patterns } : {}), ...(exported ? { exported } : {}) }
   const trace = traceReq && traceSnap ? { trace: traceSnap } : {}
   // the trace's window takes its share of the props bound first; runs fill the rest
   const room = 90_000 - (trace.trace ? JSON.stringify(trace.trace).length : 0)
@@ -954,7 +963,7 @@ async function backfill($: Engine, path: string, all: AgentNode[]) {
 
 // The view asks for a run's trace (or lets it go). A new run or zoom is read now;
 // a new place to read only moves the window. A live run is read again every 2 s.
-async function askTrace($: Engine, data: { run?: unknown; zoom?: unknown; offset?: unknown }) {
+async function askTrace($: Engine, data: { run?: unknown; zoom?: unknown; offset?: unknown; lane?: unknown; query?: unknown }) {
   const run = typeof data.run === 'string' ? data.run : null
   if (!run) {
     traceReq = null
@@ -967,7 +976,9 @@ async function askTrace($: Engine, data: { run?: unknown; zoom?: unknown; offset
   const zoom: TraceZoom = ZOOMS.includes(data.zoom as TraceZoom) ? (data.zoom as TraceZoom) : 'story'
   const offset = typeof data.offset === 'number' && Number.isFinite(data.offset) ? Math.max(0, Math.floor(data.offset)) : 0
   const isNew = !traceReq || traceReq.run !== run || traceReq.zoom !== zoom
-  traceReq = { run, zoom, offset }
+  const lane = typeof data.lane === 'string' && data.lane ? data.lane : undefined
+  const query = typeof data.query === 'string' && data.query.trim() ? data.query.slice(0, 80) : undefined
+  traceReq = { run, zoom, offset, ...(lane ? { lane } : {}), ...(query ? { query } : {}) }
   const isLive = await buildRunTrace($, isNew)
   if (isLive) tracer ??= $.clock.every(2000, () => void refreshTrace($))
 }
@@ -996,23 +1007,108 @@ async function buildRunTrace($: Engine, force: boolean): Promise<boolean> {
   const scope = scopeNodes(all, { kind: 'node', id: run.id })
   const isLive = scope.some(n => n.status === 'running')
   const key = `${req.run}|${req.zoom}`
-  if (force || !traceBuilt || traceBuilt.key !== key) {
-    const agents = scope.filter(n => n.kind === 'agent')
-    await locateTranscripts($, agents, all)
-    const events = new Map<string, TraceEvent[]>()
-    for (const a of agents) {
-      const path = transcriptAt.get(a.id)
-      const got = path ? await transcriptEvents($, a.id, path, a.status === 'running', now) : undefined
-      if (got) events.set(a.id, got)
-    }
-    const stories = new Map(agents.flatMap(a => (a.story?.steps.length ? [[a.id, a.story.steps] as [string, string[]]] : [])))
-    const storyTokens = agents.reduce((sum, a) => sum + (a.story?.tokens ?? 0), 0)
-    const storyBy = req.zoom === 'story' && stories.size ? `${TIER_NAME.haiku}${storyTokens ? ` · ${kTokens(storyTokens)} tokens` : ''}` : undefined
-    traceBuilt = { key, at: now, ...buildTrace(run, scope, events, now, req.zoom, stories), ...(storyBy ? { storyBy } : {}) }
+  if (force || !traceBuilt || traceBuilt.key !== key) traceBuilt = { key, at: now, ...await runTrace($, run, scope, all, req.zoom, now) }
+  // one lane only, when asked: its rows and the arrows into and out of it
+  const laneAt = req.lane ? traceBuilt.lanes.findIndex(L => L.id === req.lane) : -1
+  const cut = laneAt >= 0 ? onlyLane(traceBuilt.rows, traceBuilt.lanes, laneAt) : { rows: traceBuilt.rows, lanes: traceBuilt.lanes }
+  const win = traceWindow(cut.rows, req.offset, TRACE_WINDOW)
+  traceSnap = {
+    run: run.id, zoom: req.zoom, lanes: cut.lanes, total: cut.rows.length, offset: win.offset, rows: win.rows.map(trimRow), missing: traceBuilt.missing,
+    ...(traceBuilt.storyBy ? { storyBy: traceBuilt.storyBy } : {}),
+    ...(laneAt >= 0 ? { lane: req.lane } : {}),
+    marks: traceMarks(cut.rows),
+    ...(req.query ? { query: req.query, hits: traceHits(cut.rows, req.query) } : {}),
   }
-  const win = traceWindow(traceBuilt.rows, req.offset, TRACE_WINDOW)
-  traceSnap = { run: run.id, zoom: req.zoom, lanes: traceBuilt.lanes, total: traceBuilt.rows.length, offset: win.offset, rows: win.rows.map(trimRow), missing: traceBuilt.missing, ...(traceBuilt.storyBy ? { storyBy: traceBuilt.storyBy } : {}) }
   return isLive
+}
+
+// A run's whole trace at a zoom, read from its agents' transcripts.
+async function runTrace($: Engine, run: AgentNode, scope: AgentNode[], all: AgentNode[], zoom: TraceZoom, now: number) {
+  const agents = scope.filter(n => n.kind === 'agent')
+  await locateTranscripts($, agents, all)
+  const events = new Map<string, TraceEvent[]>()
+  for (const a of agents) {
+    const path = transcriptAt.get(a.id)
+    const got = path ? await transcriptEvents($, a.id, path, a.status === 'running', now) : undefined
+    if (got) events.set(a.id, got)
+  }
+  const stories = new Map(agents.flatMap(a => (a.story?.steps.length ? [[a.id, a.story.steps] as [string, string[]]] : [])))
+  const storyTokens = agents.reduce((sum, a) => sum + (a.story?.tokens ?? 0), 0)
+  const storyBy = zoom === 'story' && stories.size ? `${TIER_NAME.haiku}${storyTokens ? ` · ${kTokens(storyTokens)} tokens` : ''}` : undefined
+  return { ...buildTrace(run, scope, events, now, zoom, stories), ...(storyBy ? { storyBy } : {}) }
+}
+
+// ── x: a run's timeline or trace, saved as a picture ──────────────────────────
+// SVG always; PNG beside it when rsvg-convert is installed. ImageMagick is not used:
+// a build without Freetype drops the text of an SVG.
+const PICTURE_W = 1100
+let exported: { seq: number; text: string } | undefined
+
+async function exportPicture($: Engine, runId: string, lens: 'timeline' | 'trace', zoom: TraceZoom, focus?: string) {
+  const now = await $.clock.now()
+  const history = ((await $.store.get(HISTORY)) as AgentNode[] | undefined) ?? []
+  const byId = new Map<string, AgentNode>()
+  for (const n of [...history, ...(await read($, nodes))]) byId.set(n.id, n)
+  const all = [...byId.values()]
+  const run = byId.get(runId)
+  if (!run) return
+  const t = DESK[themeName]
+  const scope = scopeNodes(all, { kind: 'node', id: run.id })
+  const agents = scope.filter(n => n.kind === 'agent')
+  const end = Math.max(run.endedAt ?? now, ...agents.map(a => (a.status === 'running' ? now : a.endedAt ?? now)))
+  const when = new Date(run.startedAt)
+  const stamp = `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, '0')}-${String(when.getDate()).padStart(2, '0')}-${String(when.getHours()).padStart(2, '0')}${String(when.getMinutes()).padStart(2, '0')}`
+  const subtitle = `${when.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })} · ${agents.length} agent${agents.length === 1 ? '' : 's'} · ${pictureDuration(end - run.startedAt)}`
+  let svg: string
+  if (lens === 'timeline') {
+    const path = criticalPath(agents, now)
+    const idle = idleGaps(agents, now)
+    const onPath = new Set(path?.ids ?? [])
+    const bars: TimeBar[] = timelineRows(run, all, [], 'all').map(r => (r.kind === 'label'
+      ? { label: r.text, start: 0, end: 0, status: 'done' as const, isHeader: true }
+      : { label: r.node.label, start: r.node.startedAt, end: r.node.status === 'running' ? now : r.node.endedAt ?? now, status: r.node.status, isCritical: onPath.has(r.node.id) }))
+    const real = bars.filter(b => !b.isHeader)
+    if (!real.length) return note($, 'Nothing to draw: this run has no agents.')
+    const from = Math.min(...real.map(b => b.start))
+    const to = Math.max(...real.map(b => b.end))
+    const inner = timelineSvg(t, bars, from, to, PICTURE_W, { idle: idle.gaps })
+    const legend = [...(path && path.ids.length ? [`outlined: critical path (${path.ids.length})`] : []), ...(idle.ms ? [`shaded: idle ${pictureDuration(idle.ms)}`] : [])]
+    svg = pictureSvg(t, `${run.label} — timeline`, subtitle, legend, inner, PICTURE_W, 26 + bars.length * 22)
+  } else {
+    const built = await runTrace($, run, scope, all, zoom, now)
+    if (!built.rows.length) return note($, 'Nothing to draw: no steps were recorded for this run.')
+    const timed = built.rows.filter(r => r.at > 0)
+    const from = Math.min(...timed.map(r => r.at))
+    const to = Math.max(...timed.map(r => r.end ?? r.at))
+    const marks = built.rows.map(r => ({ lane: r.lane, ...(r.to !== undefined ? { to: r.to } : {}), at: r.at || from, kind: r.kind, text: r.text }))
+    const at = focus ? built.lanes.findIndex(L => L.id === focus) : -1
+    const inner = traceSvg(t, built.lanes, marks, from, to, PICTURE_W, at >= 0 ? at : undefined)
+    svg = pictureSvg(t, `${run.label} — trace`, `${subtitle} · ${zoom} zoom`, ['● call · ◆ edit · ✕ ended', 'arrow: started or handed back', 'dashed arrow: message'], inner, PICTURE_W, 24 + built.lanes.length * 34 + 8)
+  }
+  const home = await $.env.get('HOME')
+  const base = `${home ?? '.'}/Downloads/agent-tree/${slug(run.label)}-${lens}-${stamp}`
+  try {
+    await $.fs.write(`${base}.svg`, svg)
+  } catch {
+    return note($, `Could not save the picture in ${home ?? '.'}/Downloads/agent-tree.`)
+  }
+  const png = await $.process.run(['rsvg-convert', '-z', '2', '-o', `${base}.png`, `${base}.svg`], { timeoutMs: 20000 }).catch(() => undefined)
+  const short = (p: string) => (home ? p.replace(home, '~') : p)
+  const isPng = png?.exitCode === 0
+  // the footer gets the folder, which fits; the toast gets the whole path
+  await note($, `Saved the ${lens} as ${isPng ? 'PNG and SVG' : 'SVG'} in ${short(`${home ?? '.'}/Downloads/agent-tree`)}`, `Saved ${short(`${base}.${isPng ? 'png' : 'svg'}`)}`)
+}
+
+async function note($: Engine, text: string, toast = text) {
+  exported = { seq: (exported?.seq ?? 0) + 1, text }
+  $.ui.toast(toast)
+  await bumpAi($)
+}
+
+const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'run'
+const pictureDuration = (ms: number) => {
+  const sec = Math.max(0, Math.round(ms / 1000))
+  return sec < 60 ? `${sec}s` : sec < 3600 ? `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, '0')}s` : `${Math.floor(sec / 3600)}h ${String(Math.floor(sec / 60) % 60).padStart(2, '0')}m`
 }
 
 const trimRow = (r: TraceRow): TraceRow => ({

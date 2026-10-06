@@ -119,3 +119,107 @@ export const rollup = (list: AgentNode[]) => {
   const c = counts(list)
   return { ...c, finished: c.total - c.running }
 }
+
+// ── where the time went: the chain that set the end time, and the idle time ──
+
+// Agents count as one after another when the later one starts within this of the earlier one's end.
+const SLACK_MS = 3000
+const endOf = (n: AgentNode, now: number) => (n.status === 'running' ? now : n.endedAt ?? now)
+
+export type CriticalPath = { ids: string[]; ms: number; span: number }
+
+// The critical path: the agent that ended last, then, going back in time, the agent
+// that ended last before it started, and so on. Shortening any of them shortens the
+// run; the others ran beside them. Needs two agents or more.
+export function criticalPath(agents: AgentNode[], now: number): CriticalPath | undefined {
+  const list = agents.filter(n => n.kind === 'agent')
+  if (list.length < 2) return undefined
+  const t0 = Math.min(...list.map(n => n.startedAt))
+  const t1 = Math.max(...list.map(n => endOf(n, now)))
+  const latest = (xs: AgentNode[]) => xs.reduce((a, b) => (endOf(b, now) > endOf(a, now) || (endOf(b, now) === endOf(a, now) && b.startedAt < a.startedAt) ? b : a))
+  const chain: AgentNode[] = [latest(list)]
+  for (;;) {
+    const cur = chain[chain.length - 1]!
+    const before = list.filter(n => !chain.includes(n) && endOf(n, now) <= cur.startedAt + SLACK_MS)
+    if (!before.length) break
+    chain.push(latest(before))
+  }
+  chain.reverse()
+  return { ids: chain.map(n => n.id), ms: chain.reduce((a, n) => a + Math.max(0, endOf(n, now) - n.startedAt), 0), span: t1 - t0 }
+}
+
+export type Gap = { from: number; to: number }
+
+// Stretches inside a run when none of its agents ran: the main session thinking,
+// or waiting for the person. Short gaps are noise and are left out.
+export function idleGaps(agents: AgentNode[], now: number): { gaps: Gap[]; ms: number } {
+  const spans = agents.filter(n => n.kind === 'agent').map(n => ({ from: n.startedAt, to: endOf(n, now) })).sort((a, b) => a.from - b.from)
+  if (spans.length < 2) return { gaps: [], ms: 0 }
+  const span = Math.max(...spans.map(s => s.to)) - spans[0]!.from
+  const least = Math.max(5000, span * 0.03)
+  const gaps: Gap[] = []
+  let reach = spans[0]!.to
+  for (const s of spans.slice(1)) {
+    if (s.from - reach >= least) gaps.push({ from: reach, to: s.from })
+    reach = Math.max(reach, s.to)
+  }
+  return { gaps, ms: gaps.reduce((a, g) => a + g.to - g.from, 0) }
+}
+
+// ── cost: tokens by model family ─────────────────────────────────────────────
+
+const FAMILIES = ['Fable', 'Opus', 'Sonnet', 'Haiku'] as const
+export const modelFamily = (m: string | undefined): string => FAMILIES.find(f => m?.toLowerCase().includes(f.toLowerCase())) ?? (m ? 'Other' : 'Unknown')
+
+// What the agents of a scope spent, per model family, most first.
+export function spendByModel(scope: AgentNode[]): { model: string; tokens: number; agents: number }[] {
+  const by = new Map<string, { model: string; tokens: number; agents: number }>()
+  for (const n of scope) {
+    if (n.kind !== 'agent' || !n.tokens) continue
+    const model = modelFamily(n.model)
+    const cur = by.get(model) ?? { model, tokens: 0, agents: 0 }
+    cur.tokens += n.tokens
+    cur.agents += 1
+    by.set(model, cur)
+  }
+  return [...by.values()].sort((a, b) => b.tokens - a.tokens)
+}
+
+// Tokens a node and everything under it spent.
+export const tokensUnder = (nodes: AgentNode[], n: AgentNode) =>
+  n.kind === 'agent' ? n.tokens ?? 0 : scopeNodes(nodes, { kind: 'node', id: n.id }).filter(k => k.kind === 'agent').reduce((a, k) => a + (k.tokens ?? 0), 0) || (n.tokens ?? 0)
+
+// ── flags: an insight, shown on the row it is about ──────────────────────────
+
+export type Flag = { tone: 'warn' | 'bad' | 'info'; text: string }
+
+// A short tag per row that needs a look: agents that edited a file another agent
+// also edited, the agent that spent the most, a workflow's slowest phase, and the
+// agent that ended last on the critical path. Keys: node ids, "phase:<wf>:<phase>".
+export function rowFlags(scope: AgentNode[], all: AgentNode[], now: number): Map<string, Flag> {
+  const out = new Map<string, Flag>()
+  const agents = scope.filter(n => n.kind === 'agent')
+  for (const o of overlaps(agents)) for (const b of o.by) if (!out.has(b.id)) out.set(b.id, { tone: 'warn', text: `⚠ shares ${short(o.path)}` })
+  const spent = agents.filter(n => (n.tokens ?? 0) > 0)
+  if (spent.length >= 3) {
+    const total = spent.reduce((a, n) => a + (n.tokens ?? 0), 0)
+    const top = [...spent].sort((a, b) => (b.tokens ?? 0) - (a.tokens ?? 0))[0]!
+    const share = Math.round(((top.tokens ?? 0) / total) * 100)
+    if (share >= 40 && !out.has(top.id)) out.set(top.id, { tone: 'info', text: `▲ ${share}% of tokens` })
+  }
+  for (const wf of scope.filter(n => n.kind === 'workflow')) {
+    const spans = pipeline(wf, all).map(p => {
+      const list = childrenOf(all, wf.id).filter(k => (k.phase ?? 'Agents') === p.phase)
+      return { phase: p.phase, ms: Math.max(...list.map(k => endOf(k, now))) - Math.min(...list.map(k => k.startedAt)) }
+    }).filter(p => Number.isFinite(p.ms) && p.ms > 0)
+    if (spans.length < 2) continue
+    const total = spans.reduce((a, p) => a + p.ms, 0)
+    const top = [...spans].sort((a, b) => b.ms - a.ms)[0]!
+    const share = Math.round((top.ms / total) * 100)
+    if (share >= 50) out.set(`phase:${wf.id}:${top.phase}`, { tone: 'info', text: `slowest · ${share}% of time` })
+  }
+  const path = criticalPath(agents, now)
+  const last = path && path.ids.length >= 2 ? path.ids[path.ids.length - 1]! : undefined
+  if (last && !out.has(last)) out.set(last, { tone: 'info', text: '◆ ended last' })
+  return out
+}

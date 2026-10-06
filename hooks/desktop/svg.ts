@@ -138,9 +138,12 @@ export function sparkSvg(t: DeskTokens, perDay: number[], w = 140, h = 34): stri
 }
 
 // ── the timeline: one bar per agent on a shared ruler ────────────────────────
-export type TimeBar = { label: string; start: number; end: number; status: NodeStatus; isHeader?: boolean; isSelected?: boolean }
+export type TimeBar = { label: string; start: number; end: number; status: NodeStatus; isHeader?: boolean; isSelected?: boolean; isCritical?: boolean }
 
-export function timelineSvg(t: DeskTokens, bars: TimeBar[], from: number, to: number, w: number): string {
+// `idle`: stretches when no agent ran, shaded across every row.
+export type TimelineOpts = { idle?: { from: number; to: number }[] }
+
+export function timelineSvg(t: DeskTokens, bars: TimeBar[], from: number, to: number, w: number, opts: TimelineOpts = {}): string {
   const LABEL = Math.min(200, Math.round(w * 0.28))
   const plot = Math.max(80, w - LABEL - 16)
   const span = Math.max(1, to - from)
@@ -151,6 +154,11 @@ export function timelineSvg(t: DeskTokens, bars: TimeBar[], from: number, to: nu
     const tx = LABEL + f * plot
     return `<line x1="${tx}" y1="18" x2="${tx}" y2="${h}" stroke="${t.rule}" stroke-opacity=".35"/><text x="${tx}" y="12" font-size="9" fill="${t.muted}" text-anchor="${f === 0 ? 'start' : f === 1 ? 'end' : 'middle'}" font-family="-apple-system, sans-serif">${esc(clockOff(span * f))}</text>`
   }).join('')
+  const idle = (opts.idle ?? []).map(g => {
+    const x0 = x(Math.max(from, g.from))
+    const x1 = x(Math.min(to, g.to))
+    return x1 - x0 < 1 ? '' : `<rect x="${x0.toFixed(1)}" y="18" width="${(x1 - x0).toFixed(1)}" height="${h - 18}" fill="${t.rule}" opacity=".18"><title>idle ${esc(clockOff(g.to - g.from).slice(1))}</title></rect>`
+  }).join('')
   const rows = bars.map((b, i) => {
     const y = 26 + i * rowH
     if (b.isHeader) return `<text x="0" y="${y + 13}" font-size="10" font-weight="600" fill="${t.muted}" font-family="-apple-system, sans-serif">${esc(clip(b.label, 34).toUpperCase())}</text>`
@@ -159,15 +167,19 @@ export function timelineSvg(t: DeskTokens, bars: TimeBar[], from: number, to: nu
     const color = statusColor(t, b.status)
     const sel = b.isSelected ? `<rect x="0" y="${y - 2}" width="${w}" height="${rowH - 2}" fill="${t.accent}" opacity=".12" rx="4"/>` : ''
     const live = b.status === 'running' ? `<rect x="${x1 - 6}" y="${y + 3}" width="6" height="10" fill="${color}" opacity=".5"/>` : ''
-    return `${sel}<text x="0" y="${y + 12}" font-size="11" fill="${t.muted}" font-family="-apple-system, sans-serif">${esc(clip(b.label, 30))}</text><rect x="${x0.toFixed(1)}" y="${y + 3}" width="${(x1 - x0).toFixed(1)}" height="10" rx="3" fill="${color}" opacity="${b.status === 'running' ? 0.75 : 0.9}"/>${live}`
+    // the critical path: an accent outline, and the label in bold
+    const crit = b.isCritical ? ` stroke="${t.accent}" stroke-width="2"` : ''
+    const weight = b.isCritical ? ' font-weight="600"' : ''
+    return `${sel}<text x="0" y="${y + 12}" font-size="11" fill="${t.muted}"${weight} font-family="-apple-system, sans-serif">${esc(clip(b.label, 30))}</text><rect x="${x0.toFixed(1)}" y="${y + 3}" width="${(x1 - x0).toFixed(1)}" height="10" rx="3" fill="${color}" opacity="${b.status === 'running' ? 0.75 : 0.9}"${crit}/>${live}`
   }).join('')
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${ticks}${rows}</svg>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${idle}${ticks}${rows}</svg>`
 }
 
 // ── the trace: lanes on a shared time axis, arrows between them ──────────────
 export type TraceMark = { lane: number; to?: number; at: number; kind: string; text: string; isSelected?: boolean }
 
-export function traceSvg(t: DeskTokens, lanes: { label: string; chip: string; status: NodeStatus }[], marks: TraceMark[], from: number, to: number, w: number): string {
+// `focus`: the lane of the agent picked elsewhere; the other lanes draw faint.
+export function traceSvg(t: DeskTokens, lanes: { label: string; chip: string; status: NodeStatus }[], marks: TraceMark[], from: number, to: number, w: number, focus?: number): string {
   const LABEL = Math.min(170, Math.round(w * 0.24))
   const plot = Math.max(80, w - LABEL - 20)
   const span = Math.max(1, to - from)
@@ -177,9 +189,10 @@ export function traceSvg(t: DeskTokens, lanes: { label: string; chip: string; st
   const yOf = (lane: number) => 24 + lane * laneH + laneH / 2
   const color = (lane: number) => t.lanes[lane % t.lanes.length]!
   const ruler = [0, 0.5, 1].map(f => `<text x="${LABEL + f * plot}" y="12" font-size="9" fill="${t.muted}" text-anchor="${f === 0 ? 'start' : f === 1 ? 'end' : 'middle'}" font-family="-apple-system, sans-serif">${esc(clockOff(span * f))}</text>`).join('')
+  const faint = (lane: number) => (focus !== undefined && focus >= 0 && lane !== focus ? ' opacity=".3"' : '')
   const laneRows = lanes.map((l, i) => {
     const y = yOf(i)
-    return `<circle cx="8" cy="${y}" r="4" fill="${statusColor(t, l.status)}"/><text x="18" y="${y + 4}" font-size="11" fill="${t.muted}" font-family="-apple-system, sans-serif">${esc(clip(l.label, 22))}</text><line x1="${LABEL}" y1="${y}" x2="${LABEL + plot}" y2="${y}" stroke="${color(i)}" stroke-opacity=".35" stroke-width="2"/>`
+    return `<g${faint(i)}><circle cx="8" cy="${y}" r="4" fill="${statusColor(t, l.status)}"/><text x="18" y="${y + 4}" font-size="11" fill="${t.muted}" font-family="-apple-system, sans-serif">${esc(clip(l.label, 22))}</text><line x1="${LABEL}" y1="${y}" x2="${LABEL + plot}" y2="${y}" stroke="${color(i)}" stroke-opacity=".35" stroke-width="2"/></g>`
   }).join('')
   const arrows = marks.filter(m => m.to !== undefined && m.to !== m.lane).map(m => {
     const x0 = x(m.at)
@@ -200,9 +213,33 @@ export function traceSvg(t: DeskTokens, lanes: { label: string; chip: string; st
         : m.kind === 'quiet'
           ? `<rect x="${(cx - 6).toFixed(1)}" y="${cy - 3}" width="12" height="6" fill="${t.rule}" opacity=".6"/>`
           : `<circle cx="${cx.toFixed(1)}" cy="${cy}" r="3.5" fill="${c}"/>`
-    return `${ring}${shape}<title>${esc(m.text)}</title>`
+    return `<g${faint(m.lane)}>${ring}${shape}<title>${esc(m.text)}</title></g>`
   }).join('')
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${ruler}${laneRows}${arrows}${dots}</svg>`
+}
+
+// ── a picture to save: a white page with a title, a subtitle and a legend over the drawing ──
+// `inner` is a whole <svg> of `innerH` rows; it is placed as a nested svg, so its own
+// coordinates stay as they are.
+export function pictureSvg(t: DeskTokens, title: string, subtitle: string, legend: string[], inner: string, w: number, innerH: number): string {
+  const PAD = 24
+  const head = 64
+  const foot = legend.length ? 28 : 8
+  const h = head + innerH + foot + PAD
+  const font = 'font-family="-apple-system, Helvetica, Arial, sans-serif"'
+  // legend items one after another, spaced by their own length (about 5.6 px a character at 11 px)
+  let lx = PAD
+  const keys = legend.map(k => {
+    const el = `<text x="${lx}" y="${head + innerH + 22}" font-size="11" fill="${t.muted}" ${font}>${esc(k)}</text>`
+    lx += Math.round(k.length * 5.6) + 28
+    return el
+  }).join('')
+  const body = inner.replace(/^<svg /, `<svg x="${PAD}" y="${head}" `)
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w + PAD * 2}" height="${h}" viewBox="0 0 ${w + PAD * 2} ${h}">`
+    + `<rect width="100%" height="100%" fill="#ffffff"/>`
+    + `<text x="${PAD}" y="${PAD + 12}" font-size="17" font-weight="600" fill="#111827" ${font}>${esc(clip(title, 90))}</text>`
+    + `<text x="${PAD}" y="${PAD + 32}" font-size="12" fill="${t.muted}" ${font}>${esc(clip(subtitle, 140))}</text>`
+    + `${body}${keys}</svg>`
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────

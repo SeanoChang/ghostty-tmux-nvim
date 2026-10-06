@@ -1,0 +1,39 @@
+# Where agent-tree's data comes from, where it is kept, and who draws it.
+direction: right
+vars: {d2-config: {layout-engine: elk}}
+
+engine: Claude Code {
+  hooks: "hook events\ntool.call · agent.spawn\nturn.complete · prompt.submit · Stop"
+  journals: "workflow journals\njournal.jsonl"
+  transcripts: "subagent transcripts\nagent-<id>.jsonl"
+}
+
+mod: "hooks/register.tsx\n(the hooks module)" {
+  record: "record runs\nnodes · edits · tokens"
+  trace: "build a trace\n(on request)"
+  ai: "AI layer (ai: cheap or full)\nHaiku: reports, titles, story\nSonnet: explain, patterns"
+  export: "x: save a picture\nSVG, and PNG via rsvg-convert"
+}
+
+kept: Kept {
+  state: "\$.state (this session)\nlive runs · edits"
+  store: "\$.store (across sessions)\nHistory: 150 runs · edits · patterns"
+}
+
+views: Drawn {
+  terminal: "hooks/view.tsx\nterminal pane"
+  desktop: "hooks/desktop/pane.tsx\ndesktop Code tab"
+}
+
+out: "~/Downloads/agent-tree/\n*.svg · *.png"
+
+engine.hooks -> mod.record
+engine.journals -> mod.record: "polled every 2 s"
+engine.transcripts -> mod.trace: "read when a trace opens"
+mod.record -> kept.state
+mod.record -> kept.store: "a finished run is archived"
+mod.ai -> kept.store
+kept -> views: "viewProps (≤ 90 kB)"
+views.terminal -> mod.trace: "ui.message: trace, lane, search" {style.stroke-dash: 3}
+views.terminal -> mod.export: "ui.message: export" {style.stroke-dash: 3}
+mod.export -> out

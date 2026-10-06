@@ -186,6 +186,21 @@ describe('desktop: themes', () => {
   })
 })
 
+test('desktop: a run\'s timeline names its critical path and saves a picture', async ($, on) => {
+  const writes: string[] = []
+  on('fs.write', (_$, e) => { writes.push(e.path); return { value: undefined } as never })
+  on('ui.toast', () => ({ value: undefined }) as never)
+  const ui = await desk($, on)
+  await ui.press({ key: 'tab:history' })
+  await ui.press({ key: 'run:w1' })
+  await ui.press({ key: 'lens:timeline' })
+  expect(await ui.find({ text: /Critical path 2 agents/ })).toBeDefined()
+  await ui.press({ key: 'save-timeline' })
+  await ui.advance(600)
+  expect(writes.some(p => /^\/home\/test\/Downloads\/agent-tree\/review-changed-files-across-dimensions-timeline-.*\.svg$/.test(p))).toBe(true)
+  await ui.unmount()
+})
+
 test('sprites: every grid is rectangular, every pixel in the palette, sizes under the Svg cap', () => {
   for (const [name, grid] of Object.entries(PIX)) {
     expect(new Set(grid.map(r => r.length)).size).toBe(1)

@@ -2,9 +2,10 @@ import type { ClientModule, ClientSurface, JsonValue } from 'claude-code'
 
 import type { Act, AgentNode, Brief, EditRecord, PatternsDoc, TraceRow, TraceView, TraceZoom, ViewProps, Wheel } from '../types'
 import {
-  COLUMNS, LENSES, LENS_NAMES, aspects, boardLanes, columnOf, insights, lensesFor, timelineRows,
-  type Column, type Insight, type Lane, type Lens, type TimeRow,
+  COLUMNS, LENSES, LENS_NAMES, aspects, boardLanes, columnOf, criticalPath, idleGaps, insights, lensesFor, modelFamily, rowFlags, spendByModel,
+  timelineRows, tokensUnder, type Column, type Flag, type Insight, type Lane, type Lens, type TimeRow,
 } from './lens'
+import { compareRuns, previousOf, verdict, type Metric } from './compare'
 import {
   GROUPS, GROUP_NAMES, childrenOf, counts, dayLabel, diffCounts, fileRows, firstSentence, isSelectable, lineDiff,
   noReportReason, overlaps, phaseWords, pipeline, plain, prettyModel, prettyType, readableResult, runTree, scopeNodes, shortPaths,
@@ -72,9 +73,48 @@ type State = {
   confirmTick: number
   // History: whether the patterns across runs show
   patternsOpen: boolean
+  // Where the keys go, as on a remote: the content, or one of the two bars above it
+  // (the caption's views and lenses, the Live and History tabs). Arrows switch tabs
+  // only in a bar; ↑ on the first row goes up to it, ↓ comes back. `barAt` is the
+  // item the bar's cursor is on.
+  zone: Zone
+  barAt: number
+  // the agent picked in another lens, whose lane the trace opens on and marks;
+  // `traceJump` until the trace has come and the jump is made
+  traceFocus: string | null
+  traceJump: boolean
+  // the trace cut to one lane (its agent id), and the words searched in it
+  traceLane: string | null
+  tquery: string
+  // a run marked to compare with the next one m is pressed on; two runs side by side
+  mark: string | null
+  compare: [string, string] | null
+  // the last picture note shown
+  exportSeen: number
 }
+type Zone = 'content' | 'caption' | 'tabs'
 
 const TICK_MS = 500
+// every key the pane takes, for ? help
+const KEYS_HELP: [string, string][] = [
+  ['j k  ↑ ↓', 'move, or scroll the text'], ['↑ on the top row', 'up to the bar: views and lenses, then Live · History'],
+  ['in a bar  ← →', 'switch; ↓ or enter goes back down to the list'], ['PgUp PgDn', 'a page at a time'], ['g G', 'first, last'], ['enter', 'open'],
+  ['space  ← →', 'fold or unfold in the tree; ← goes up to the parent'], ['v', 'view: tree, board, timeline; in a run, trace'],
+  ['1 2  a c o', 'straight to live, history; agents, changes, output'], ['b  ⌫', 'back'],
+  ['i', 'next thing that needs a look'], ['f', 'filter: all, running, failed · history: all, failed, changed files'], ['s', 'group the run list'],
+  ['/', 'search history: names and outcomes; in a trace, its rows; enter keeps, ctrl+u clears'], ['o', 'show or hide history older than a week'],
+  ['r', 'this repo · all repos (history)'],
+  ['m', 'mark a run; m on a second run compares the two'], ['=', 'compare a run with its last run of the same work'],
+  ['trace  n p', 'next, previous failure or quiet gap; with a search, its matches'], ['trace  f', 'only the lane of the row you are on; f again for all'],
+  ['z', 'trace: story, steps, raw'], ['n p', 'next, previous file in a diff'],
+  ['x', 'save the run\'s timeline or trace as a picture (SVG, and PNG with rsvg-convert)'],
+  ['e', 'explain this run: a brief from Sonnet (ai: full); twice to write it again'],
+  ['g', 'history: patterns across runs from Sonnet (ai: full); twice to look again'],
+  ['p', 'history: show or hide the patterns'],
+  ['wheel', 'move, or scroll'], ['?', 'close this help'],
+]
+// its rows: a blank row, then the list
+const KEYS_HELP_COUNT = KEYS_HELP.length + 1
 const MIN_COLUMNS = 60
 const CARDS_PER_CELL = 4
 const DEFAULT_STATE: State = {
@@ -83,6 +123,7 @@ const DEFAULT_STATE: State = {
   wheelSeen: -1, insight: -1, hfilter: 'all', query: '', searching: false, olderOpen: false,
   zoom: 'story', traceAsk: '', traceAskTick: -100, traceAt: 0,
   note: '', noteTick: -100, confirm: '', confirmTick: -100, patternsOpen: true,
+  zone: 'content', barAt: 0, traceFocus: null, traceJump: false, traceLane: null, tquery: '', mark: null, compare: null, exportSeen: 0,
 }
 const FILTERS: Filter[] = ['all', 'running', 'failed']
 // a note shows for 8 ticks (4 s); a confirm waits 6 ticks (3 s) for the second press
@@ -110,6 +151,7 @@ export function viewProps(raw: unknown): ViewProps {
     explaining: arrayOf<string>(p.explaining).filter(x => typeof x === 'string'),
     patternsBusy: p.patternsBusy === true,
     ...(patternsOf(p.patterns) ? { patterns: patternsOf(p.patterns) } : {}),
+    ...(p.exported && typeof p.exported.seq === 'number' && typeof p.exported.text === 'string' ? { exported: { seq: p.exported.seq, text: p.exported.text } } : {}),
   }
 }
 
@@ -127,7 +169,10 @@ const traceOf = (t: unknown): TraceView | undefined => {
   if (!x || typeof x.run !== 'string' || !Array.isArray(x.rows) || !Array.isArray(x.lanes)) return undefined
   return { run: x.run, zoom: ZOOMS.includes(x.zoom as TraceZoom) ? (x.zoom as TraceZoom) : 'story', lanes: x.lanes, rows: x.rows as TraceRow[],
     total: typeof x.total === 'number' ? x.total : x.rows.length, offset: typeof x.offset === 'number' ? x.offset : 0, missing: typeof x.missing === 'number' ? x.missing : 0,
-    ...(typeof x.storyBy === 'string' ? { storyBy: x.storyBy } : {}) }
+    ...(typeof x.storyBy === 'string' ? { storyBy: x.storyBy } : {}),
+    ...(typeof x.lane === 'string' ? { lane: x.lane } : {}),
+    marks: arrayOf<number>(x.marks).filter(n => typeof n === 'number'),
+    ...(typeof x.query === 'string' ? { query: x.query, hits: arrayOf<number>(x.hits).filter(n => typeof n === 'number') } : {}) }
 }
 
 export function viewState(raw: unknown): State {
@@ -166,6 +211,15 @@ export function viewState(raw: unknown): State {
     confirm: s.confirm === 'explain' || s.confirm === 'patterns' ? s.confirm : '',
     confirmTick: typeof s.confirmTick === 'number' ? s.confirmTick : -100,
     patternsOpen: s.patternsOpen !== false,
+    zone: s.zone === 'caption' || s.zone === 'tabs' ? s.zone : 'content',
+    barAt: num(s.barAt),
+    traceFocus: typeof s.traceFocus === 'string' ? s.traceFocus : null,
+    traceJump: s.traceJump === true,
+    traceLane: typeof s.traceLane === 'string' ? s.traceLane : null,
+    tquery: typeof s.tquery === 'string' ? s.tquery : '',
+    mark: typeof s.mark === 'string' ? s.mark : null,
+    compare: Array.isArray(s.compare) && s.compare.length === 2 && s.compare.every(x => typeof x === 'string') ? [s.compare[0]!, s.compare[1]!] : null,
+    exportSeen: num(s.exportSeen),
   }
 }
 
@@ -389,7 +443,11 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   // ── what the screen is about ─────────────────────────────────────────
   const view: ViewName = run ? s.view : 'agents'
   const inAgents = view === 'agents'
-  const mode: 'help' | 'agents' | 'board' | 'timeline' | 'trace' | 'files' | 'diff' | 'output' = s.help ? 'help'
+  // two runs side by side, when both are still kept
+  const pair = s.compare ? s.compare.map(id => allNodes.find(n => n.id === id)) : []
+  const comparing = pair.length === 2 && pair.every(Boolean)
+  const mode: 'help' | 'compare' | 'agents' | 'board' | 'timeline' | 'trace' | 'files' | 'diff' | 'output' = s.help ? 'help'
+    : comparing ? 'compare'
     : inAgents ? (lens === 'tree' ? 'agents' : lens)
       : view === 'output' ? 'output' : s.diffFile !== null ? 'diff' : 'files'
   const asked = Math.min(Math.max(0, inAgents ? s.sel : s.agentSel), Math.max(0, agentItems.length - 1))
@@ -422,6 +480,12 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   // what needs a look: inside a run, everything under it; on the run list, what is live
   const shownInsights: Insight[] = run ? insights(scopeNodes(nodes, { kind: 'node', id: run.id }), nodes, now)
     : !isHistory ? insights(props.nodes, props.nodes, now) : []
+  // the same insights on the rows they are about, inside a run
+  const flags: Map<string, Flag> = run ? rowFlags(scopeNodes(nodes, { kind: 'node', id: run.id }), nodes, now) : new Map()
+  // where a run's time went, on its timeline: the chain that set its end, and the idle time
+  const crit = run && lens === 'timeline' ? criticalPath(timeCards, now) : undefined
+  const onPath = new Set(crit?.ids ?? [])
+  const idle = run && lens === 'timeline' ? idleGaps(timeCards, now) : { gaps: [], ms: 0 }
 
   // ── pieces ───────────────────────────────────────────────────────────
   const outcome = (n: AgentNode) => n.summary ?? (n.kind === 'workflow' ? firstSentence(readableResult(n.result)) : firstSentence(n.result))
@@ -443,6 +507,9 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     const removed = rows.reduce((a, r) => a + r.removed, 0)
     return [seg(`${rows.length} file${rows.length === 1 ? '' : 's'}`, C.accent), seg('   '), seg(`+${num(added)}`, C.add), seg(' '), seg(`−${num(removed)}`, C.del)]
   }
+  // tokens by model family: "Opus 120k (2) · Sonnet 40k (5)"
+  const spendSegs = (scope: AgentNode[]): Seg[] => spendByModel(scope).flatMap((m, i) => [
+    ...(i ? [seg('  ·  ', C.faint)] : []), seg(m.model, C.soft), seg(` ${kTokens(m.tokens)}`, C.ink), seg(` (${m.agents})`, C.faint)])
   const nowSegs = (n: AgentNode): Seg[] => [seg('› ', C.accent), seg(n.activity ?? 'Thinking', C.ink), seg(`   ${ACT_WORD[n.act ?? 'think']}`, C.faint)]
   const quietFor = (n: AgentNode) => (n.status === 'running' ? now - (n.lastToolAt ?? n.startedAt) : 0)
   // a cluster's aspects as chips: each member's short task with how it went
@@ -602,7 +669,8 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
       const end = c.running ? now : Math.max(...scopeList.map(k => k.endedAt ?? now))
       meta = statusSegs({ status: c.running ? 'running' : c.failed ? 'failed' : 'done', startedAt: start, endedAt: end })
       second = [...rollSegs(c, 12), seg(`   ${c.total - c.running} of ${c.total} agents`, C.muted)]
-      rows = [['Agents', [seg(phaseWords({ phase: scope.phase, ...c }), C.ink)]], ['Changes', changeSegs(files)], ['Part of', [seg(wf?.label ?? 'workflow', C.soft)]]]
+      const spend = spendSegs(scopeList)
+      rows = [['Agents', [seg(phaseWords({ phase: scope.phase, ...c }), C.ink)]], ['Changes', changeSegs(files)], ...(spend.length ? [['Spend', spend] as [string, Seg[]]] : []), ['Part of', [seg(wf?.label ?? 'workflow', C.soft)]]]
     } else if (scopeNode && scopeNode.kind !== 'agent') {
       const n = scopeNode
       const kids = childrenOf(nodes, n.id)
@@ -618,6 +686,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
         ...(n.kind === 'group' && !inline ? [['Aspects', chipSegs(n.id, w - 11)] as [string, Seg[]]] : []),
         ...(overlap.length ? [['Overlap', overlap] as [string, Seg[]]] : []),
         ['Changes', changeSegs(files)],
+        ...(spendSegs(scopeList).length ? [['Spend', spendSegs(scopeList)] as [string, Seg[]]] : []),
         n.status === 'running' && busy ? ['Now', [...nowSegs(busy), seg(`   ${busy.label}`, C.muted)]] : ['Outcome', [seg(outcome(n) || '—', C.ink)]],
       ]
       points = n.points ?? []
@@ -655,7 +724,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     if (dense !== 'brief') { out.push({ segs: second }); out.push({ segs: [] }) }
     if (secs) {
       // a parent keeps its one status line ("6 done"); the report follows
-      const status = scope.kind === 'phase' || scopeNode?.kind !== 'agent' ? rows.filter(([k]) => k === 'Agents' || k === 'Phases') : []
+      const status = scope.kind === 'phase' || scopeNode?.kind !== 'agent' ? rows.filter(([k]) => k === 'Agents' || k === 'Phases' || k === 'Spend') : []
       for (const [name, value] of status) out.push({ segs: [seg(padEnd(name, 11), C.muted), ...value] })
       out.push(...sectionRows(secs))
       if (scopeNode?.kind === 'agent') out.push(...rows.filter(([k]) => k === 'Work').map(([name, value]) => ({ segs: [seg(padEnd(name, 11), C.muted), ...value] })))
@@ -744,6 +813,50 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     return out
   }
 
+  // ── two runs side by side: totals, phases, spend by model, files ──────
+  const compareRows = (w: number): Row[] => {
+    if (mode !== 'compare') return []
+    const [a, b] = pair as [AgentNode, AgentNode]
+    const cmp = compareRuns(allNodes, a, b, now)
+    const out: Row[] = []
+    const gap = () => out.push({ segs: [] })
+    const fmt = (m: Metric, v: number | undefined) => (v === undefined ? '—' : m.measure === 'ms' ? duration(v) : m.measure === 'tokens' ? kTokens(v) : num(v))
+    const nameW = Math.min(16, Math.max(8, ...[...cmp.totals, ...cmp.phases, ...cmp.models].map(m => cellWidth(m.name)))) + 2
+    const colW = Math.max(9, Math.min(14, Math.floor((w - nameW - 18) / 2)))
+    const change = (m: Metric): Seg => {
+      const v = verdict(m)
+      if (m.a === undefined || m.b === undefined) return seg(m.a === undefined ? 'only in B' : 'only in A', C.faint)
+      if (m.a === m.b) return seg('same', C.faint)
+      const d = m.b - m.a
+      const pct = m.a ? ` (${d > 0 ? '+' : ''}${Math.round((d / m.a) * 100)}%)` : ''
+      const abs = m.measure === 'ms' ? duration(Math.abs(d)) : m.measure === 'tokens' ? kTokens(Math.abs(d)) : num(Math.abs(d))
+      return seg(`${d > 0 ? '+' : '−'}${abs}${pct}`, v === 'better' ? C.ok : v === 'worse' ? C.bad : C.muted)
+    }
+    const table = (title: string, list: Metric[]) => {
+      if (!list.length) return
+      out.push({ segs: [seg(padEnd(title, nameW), C.accent, true), seg(padStart('A', colW), C.muted, true), seg(padStart('B', colW), C.muted, true), seg('   change', C.muted, true)] })
+      for (const m of list) out.push({ segs: [seg(padEnd(fit(m.name, nameW - 2), nameW), C.soft), seg(padStart(fmt(m, m.a), colW), C.ink), seg(padStart(fmt(m, m.b), colW), C.ink), seg('   '), change(m)] })
+      gap()
+    }
+    const who = (k: string, n: AgentNode) => [seg(`${k}  `, C.accent, true), seg(statusIcon(n), T.status[n.status].color), seg(' '), seg(n.label, C.ink, true), seg(`   ${dayLabel(n.startedAt, now)} ${clock(n.startedAt)}`, C.muted)]
+    out.push({ segs: who('A', a) }, { segs: who('B', b) })
+    gap()
+    table('Totals', cmp.totals)
+    table('Phases', cmp.phases)
+    table('Tokens by model', cmp.models)
+    const files = (title: string, list: string[]) => {
+      if (!list.length) return
+      const short = shortPaths(list)
+      out.push({ segs: [seg(title, C.accent, true), seg(`  ${list.length}`, C.faint)] })
+      wrap(list.map(p => short.get(p) ?? p).join('  ·  '), w - 3).slice(0, 6).forEach(l => out.push({ segs: [seg('   '), seg(l, C.soft)] }))
+    }
+    files('Files only A changed', cmp.files.onlyA)
+    files('Files only B changed', cmp.files.onlyB)
+    files('Files both changed', cmp.files.both)
+    if (!cmp.files.onlyA.length && !cmp.files.onlyB.length && !cmp.files.both.length) out.push({ segs: [seg('Neither run changed files.', C.muted)] })
+    return out
+  }
+
   // ── insights: one row on narrow panes, up to two on wide ones ─────────
   const insightRows = (w: number): Row[] => {
     if (!shownInsights.length || mode === 'help') return []
@@ -781,7 +894,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   }
 
   // ── fixed blocks: top rows, the body, bottom rows ─────────────────────
-  const isReading = mode === 'output' || mode === 'diff' || mode === 'help' || mode === 'trace'
+  const isReading = mode === 'output' || mode === 'diff' || mode === 'help' || mode === 'trace' || mode === 'compare'
   // the History page's numbers on top, and the search line while there is one
   const isHistoryPage = isHistory && !run && lens === 'tree'
   // runs that match, not the runs a pattern card points at
@@ -829,6 +942,9 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   const isSplit = layout === 'split' && (mode === 'agents' || mode === 'files' || mode === 'board' || mode === 'timeline')
   const listW = isSplit ? LW : IW
   const output = outRows(IW)
+  const comparison = compareRows(IW)
+  // the views that scroll as text, a page at a time
+  const isText = mode === 'output' || mode === 'compare' || mode === 'help'
 
   // ── the board and the timeline: rows built at a width, cards placed on them ──
   type Body = { rows: Row[]; cardRow: number[] }
@@ -920,7 +1036,12 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
       const at = Math.max(0, Math.min(barW - label.length, i === ticks ? x - label.length + 1 : x))
       for (let j = 0; j < label.length; j++) ruler[at + j] = label[j]!
     }
-    rows.push({ segs: [seg(' '.repeat(labelW + 1)), seg(ruler.join(''), C.faint), seg(' '.repeat(durW + 1))] })
+    // left of the ruler, inside a run: how long the critical path took, and the idle share
+    const pathNote = crit ? `━ critical ${duration(crit.ms)}${idle.ms && crit.span ? ` · idle ${Math.round((idle.ms / crit.span) * 100)}%` : ''}` : ''
+    rows.push({ segs: [seg(padEnd(fit(pathNote, labelW), labelW), C.accent), seg(' '), seg(ruler.join(''), C.faint), seg(' '.repeat(durW + 1))] })
+    // idle stretches shade every row with dots, as a column
+    const idleAt = new Array<boolean>(barW).fill(false)
+    for (const g of idle.gaps) for (let x = Math.max(0, xOf(g.from)); x < Math.min(barW, xOf(g.to)); x++) idleAt[x] = true
     let k = 0
     for (const r of timeRows) {
       if (r.kind === 'label') { rows.push({ segs: [seg('  '), seg(r.text, C.muted, true)] }); continue }
@@ -931,15 +1052,25 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
       const x0 = Math.min(barW - 1, xOf(n.startedAt))
       const x1 = Math.max(x0 + 1, Math.min(barW, xOf(n.endedAt ?? now)))
       const isLive = n.status === 'running'
-      const body = isLive ? `${'━'.repeat(Math.max(0, x1 - x0 - 1))}▸` : '━'.repeat(x1 - x0)
+      // with a critical path, its bars are heavy and the others light
+      const isCrit = onPath.has(n.id)
+      const line = !crit || isCrit ? '━' : '─'
       const quiet = quietFor(n)
-      const tag = isLive ? (quiet >= 120_000 ? ` quiet ${duration(quiet)}` : ' running') : ''
-      const tagShown = tag && barW - x1 >= tag.length ? tag : ''
-      const label = lay([cursorSeg(on), seg(' '), cell2(statusIcon(n), color), seg(' '), seg(n.label, on || isLive ? C.ink : C.soft, on)], labelW)
+      const flag = flags.get(n.id)
+      const tag = isLive ? (quiet >= 120_000 ? ` quiet ${duration(quiet)}` : ' running') : flag ? ` ${flag.text}` : ''
+      const tagShown = tag && barW - x1 >= cellWidth(tag) ? tag : ''
+      const tagColor = isLive ? (quiet >= 120_000 ? C.warn : C.faint) : flag?.tone === 'warn' ? C.warn : C.faint
+      // the bar's cells: idle dots, the bar, then its tag
+      const cells: Seg[] = []
+      const put = (t: string, c?: string) => { const last = cells[cells.length - 1]; if (last && last.c === c) last.t += t; else cells.push({ t, c }) }
+      for (let x = 0; x < x0; x++) put(idleAt[x] ? '·' : ' ', idleAt[x] ? C.rule : undefined)
+      put(isLive ? `${line.repeat(Math.max(0, x1 - x0 - 1))}▸` : line.repeat(x1 - x0), color)
+      if (tagShown) put(tagShown, tagColor)
+      for (let x = x1 + cellWidth(tagShown); x < barW; x++) put(idleAt[x] ? '·' : ' ', idleAt[x] ? C.rule : undefined)
+      const label = lay([cursorSeg(on), seg(' '), cell2(statusIcon(n), color), seg(' '), seg(n.label, on || isLive || isCrit ? C.ink : C.soft, on || isCrit)], labelW)
       rows.push({
         bg: on ? C.selBg : undefined,
-        segs: [...label, seg(' '), seg(' '.repeat(x0)), seg(body, color), seg(tagShown, quiet >= 120_000 ? C.warn : C.faint),
-          seg(' '.repeat(Math.max(0, barW - x1 - cellWidth(tagShown)))), seg(' '), seg(padStart(duration(elapsed(n)), durW), C.muted)],
+        segs: [...label, seg(' '), ...cells, seg(' '), seg(padStart(duration(elapsed(n)), durW), C.muted)],
         hit: [{ x0: 0, x1: w, act: () => pickCard(at) }],
       })
       cardRow[at] = rows.length - 1
@@ -950,18 +1081,22 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   // ── selection, scrolling ─────────────────────────────────────────────
   const isLens = mode === 'board' || mode === 'timeline'
   // the trace the hooks sent for this run at this zoom; its rows are a window of all of them
-  const tv: TraceView | undefined = mode === 'trace' && run && props.trace?.run === run.id && props.trace.zoom === s.zoom ? props.trace : undefined
+  // (cut to the lane asked for; while a search is typed the rows stay, and only the hits wait)
+  const tq = s.tquery.trim().slice(0, 80)
+  const tv: TraceView | undefined = mode === 'trace' && run && props.trace?.run === run.id && props.trace.zoom === s.zoom && (props.trace.lane ?? null) === s.traceLane ? props.trace : undefined
+  // the rows n and p step through: the search's hits while there is a search, else what needs a look
+  const traceStops = tv ? (tq ? (tv.query === tq ? tv.hits ?? [] : []) : tv.marks ?? []) : []
   // under the trace: two pinned rows above (legend, lanes), a rule and two detail rows below
   const traceWin = mode === 'trace' ? Math.max(1, bodyRows - 5) : 0
   const count = mode === 'agents' ? agentItems.length : mode === 'files' ? fileItems.length : mode === 'diff' ? blocks.length
-    : mode === 'output' ? output.length : isLens ? cards.length : mode === 'trace' ? tv?.total ?? 0 : 0
+    : mode === 'output' ? output.length : mode === 'compare' ? comparison.length : mode === 'help' ? KEYS_HELP_COUNT : isLens ? cards.length : mode === 'trace' ? tv?.total ?? 0 : 0
   const okRow = (i: number) => (mode === 'agents' ? isSelectable(agentItems[i]) : true)
   const rawSel = mode === 'agents' ? agentSel : isLens ? cardSel : s.sel
-  const sel = mode === 'output' || mode === 'help' ? 0 : Math.min(Math.max(0, rawSel), Math.max(0, count - 1))
+  const sel = isText ? 0 : Math.min(Math.max(0, rawSel), Math.max(0, count - 1))
   const body: Body | undefined = mode === 'board' ? boardBody(listW) : mode === 'timeline' ? timeBody(listW) : undefined
   // the diff scrolls by edit block, the selected one at the top; the board and the
   // timeline by rows under their pinned first row, keeping the selected card in sight
-  let first = mode === 'output' ? s.first : mode === 'diff' ? sel : Math.min(s.first, sel)
+  let first = isText ? s.first : mode === 'diff' ? sel : Math.min(s.first, sel)
   if (body) {
     const win = Math.max(1, bodyRows - 1)
     const total = body.rows.length - 1
@@ -973,7 +1108,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     first = Math.max(0, Math.min(first, Math.max(0, total - win)))
   } else {
     const win = mode === 'trace' ? traceWin : bodyRows
-    if (mode !== 'output' && mode !== 'diff' && sel >= first + win) first = sel - win + 1
+    if (!isText && mode !== 'diff' && sel >= first + win) first = sel - win + 1
     if (mode !== 'diff') first = Math.max(0, Math.min(first, Math.max(0, count - win)))
   }
 
@@ -994,12 +1129,12 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     if (l === 'tree') return listFor(flipped, showDone, at).findIndex(it => keyOf(it) === key)
     return cardsFor(at, l).findIndex(n => n.id === key)
   }
-  const go = (v: ViewName) => {
+  const go = (v: ViewName, extra: Partial<State> = {}) => {
     if (!run || v === view) return
     const keep = inAgents ? { agentSel: sel, focus: focusKey } : {}
     const leaving = diffOpen ? closeDiff() : {}
     const back = v === 'agents' ? Math.max(0, indexIn(s.focus, run, lens)) : 0
-    set({ ...keep, ...leaving, view: v, sel: v === 'agents' ? (inAgents ? sel : back) : 0, first: 0 })
+    set({ ...keep, ...leaving, ...extra, view: v, sel: v === 'agents' ? (inAgents ? sel : back) : 0, first: 0 })
   }
   const openRun = (n: AgentNode, v: ViewName = 'agents', focus: string | null = null) =>
     set({ path: n.id, view: v, sel: v === 'agents' ? Math.max(0, indexIn(focus, n, lens)) : 0, first: 0, agentSel: 0, focus, diffFile: null })
@@ -1094,6 +1229,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   }
   const back = () => {
     if (s.help) return set({ help: false })
+    if (mode === 'compare') return set({ compare: null, sel: 0, first: 0 })
     if (mode === 'diff') return set({ ...closeDiff(), sel: Math.max(0, fileItems.findIndex(f => f.row.path === s.diffFile)), first: 0 })
     if (run && view !== 'agents') return go('agents')
     if (!run) return
@@ -1101,11 +1237,24 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     set({ path: null, view: 'agents', sel: Math.max(0, at), first: 0, focus: null })
   }
   // in a replay the History tab leads back to the History page
-  const switchTab = (tab: Tab) => (tab === s.tab && run && tab === 'history' ? back() : tab !== s.tab && set({ tab, path: null, view: 'agents', sel: 0, first: 0, diffFile: null, focus: null, insight: -1 }))
-  const switchLens = (l: Lens) => {
+  const switchTab = (tab: Tab, extra: Partial<State> = {}) => (tab === s.tab && run && tab === 'history' ? back()
+    : tab !== s.tab && set({ ...extra, tab, path: null, view: 'agents', sel: 0, first: 0, diffFile: null, focus: null, insight: -1, compare: null }))
+  // A change of lens keeps what is picked: the trace opens on the picked agent's lane,
+  // and leaving the trace picks the agent of the row it was on.
+  const switchLens = (l: Lens, extra: Partial<State> = {}) => {
     const leaving = diffOpen ? closeDiff() : {}
-    const key = inAgents ? focusKey : s.focus
-    set({ ...leaving, lens: l, view: 'agents', sel: Math.max(0, indexIn(key, run, l)), first: 0 })
+    const fromTrace = mode === 'trace' ? laneId(traceRow(sel)) : undefined
+    const key = fromTrace && fromTrace !== 'main' ? fromTrace : mode === 'trace' ? s.traceFocus : inAgents ? focusKey : s.focus
+    const agent = key ? nodes.find(n => n.id === key && n.kind === 'agent') : undefined
+    const toTrace = l === 'trace' && !!run
+    // the tree opens what hides the agent: its phase, a folded parent
+    const opened = l === 'tree' && run && agent && agent.id !== run.id ? reveal(agent, run) : { flipped: s.flipped, showDone: s.showDone }
+    set({
+      ...leaving, ...extra, lens: l, view: 'agents', first: 0, ...opened,
+      sel: toTrace ? (agent ? 0 : s.traceAt) : Math.max(0, indexIn(key, run, l, opened.flipped, opened.showDone)),
+      ...(mode === 'trace' ? { traceAt: sel, traceFocus: agent?.id ?? null } : {}),
+      ...(toTrace ? { traceFocus: agent?.id ?? null, traceJump: !!agent, traceLane: null, tquery: '' } : {}),
+    })
   }
   const confirming = (what: 'explain' | 'patterns') => s.confirm === what && s.tick - s.confirmTick <= CONFIRM_TICKS
   const say = (note: string, extra: Partial<State> = {}) => set({ ...extra, note, noteTick: s.tick })
@@ -1132,14 +1281,8 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     const f = fileItems[fileItems.findIndex(x => x.row.path === s.diffFile) + dir]
     if (f) openDiff(f.row.path)
   }
-  const side = (dir: 1 | -1) => {
-    if (!run) return switchTab(dir > 0 ? 'history' : 'live')
-    if (mode === 'diff') return nextFile(dir)
-    const i = VIEWS.indexOf(view) + dir
-    if (i < 0) return back()
-    if (i < VIEWS.length) go(VIEWS[i]!)
-  }
-  // ← and → open and close the tree first, as file trees do; then they walk the views
+  // ← and → open and close the tree, as file trees do, and ← goes up to the parent.
+  // They never leave the content: tabs and views switch only from a bar (↑ at the top).
   const arrow = (dir: 1 | -1) => {
     if (mode === 'agents') {
       const it = agentItems[sel]
@@ -1153,11 +1296,9 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
         }
       }
     }
-    side(dir)
   }
   const moveBy = (by: number): Partial<State> => {
-    if (mode === 'output') return { first: Math.max(0, Math.min(first + by, count - bodyRows)) }
-    if (mode === 'help') return {}
+    if (isText) return { first: Math.max(0, Math.min(first + by, count - bodyRows)) }
     let at = sel
     for (let k = 0; k < Math.abs(by); k++) at = step(count, at, by > 0 ? 1 : -1, okRow)
     return { sel: at }
@@ -1174,14 +1315,22 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   // The trace's rows come from the hooks: ask for the run and zoom, and for a new
   // window when reading moves past the one held; ask again after 2 s if nothing came
   // (a reload drops what the hooks held). Leaving the trace lets it go.
-  if (surface.state !== undefined && !wheelPending) {
+  // the hooks say where a picture went (or why it did not): once, in the footer
+  const exportNote = props.exported && surface.state !== undefined && !wheelPending && props.exported.seq !== s.exportSeen ? props.exported : undefined
+  if (exportNote) surface.setState({ ...s, sel, first, note: exportNote.text, noteTick: s.tick, exportSeen: exportNote.seq })
+  if (surface.state !== undefined && !wheelPending && !exportNote) {
     if (mode === 'trace' && run) {
-      const holds = !!tv && first >= tv.offset && (first + traceWin <= tv.offset + tv.rows.length || tv.offset + tv.rows.length >= tv.total)
-      if (!holds) {
+      const holds = !!tv && (tv.query ?? '') === tq && first >= tv.offset && (first + traceWin <= tv.offset + tv.rows.length || tv.offset + tv.rows.length >= tv.total)
+      if (tv && s.traceJump) {
+        // the trace has come: open it on the lane of the agent picked in the other lens
+        const L = tv.lanes.find(l => l.id === s.traceFocus)
+        const at = L && L.to >= L.from ? L.from : 0
+        surface.setState({ ...s, sel: at, first: Math.max(0, at - 2), traceAt: at, traceJump: false })
+      } else if (!holds) {
         const offset = Math.max(0, first - 20)
-        const ask = `${run.id}|${s.zoom}|${offset}`
+        const ask = `${run.id}|${s.zoom}|${offset}|${s.traceLane ?? ''}|${tq}`
         if (ask !== s.traceAsk || s.tick - s.traceAskTick >= 4) {
-          surface.post({ type: 'trace', run: run.id, zoom: s.zoom, offset })
+          surface.post({ type: 'trace', run: run.id, zoom: s.zoom, offset, ...(s.traceLane ? { lane: s.traceLane } : {}), ...(tq ? { query: tq } : {}) })
           surface.setState({ ...s, sel, first, traceAsk: ask, traceAskTick: s.tick })
         }
       }
@@ -1191,21 +1340,103 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     }
   }
 
+  // ── m and =: two runs side by side ────────────────────────────────────
+  // the run a key is about: the open run, else the run the selection sits in
+  const runOfSel = (): AgentNode | undefined => run ?? (focusItem?.kind === 'node' ? topOf(focusItem.node) : focusCard ? topOf(focusCard) : undefined)
+  const markKey = () => {
+    const target = runOfSel()
+    if (!target) return say('Pick a run first, then press m.')
+    if (!s.mark) return say(`Marked ${fit(target.label, 32)}. Press m on another run to compare.`, { mark: target.id })
+    if (s.mark === target.id) return say('Mark cleared.', { mark: null })
+    set({ compare: [s.mark, target.id], mark: null, sel: 0, first: 0, help: false, note: '' })
+  }
+  const lastRunKey = () => {
+    const target = runOfSel()
+    if (!target) return say('Pick a run first, then press =.')
+    const prev = previousOf([...props.history, ...props.nodes], target)
+    if (!prev) return say(`No earlier run of ${fit(target.label, 32)} is kept.`)
+    set({ compare: [prev.id, target.id], mark: null, sel: 0, first: 0, note: '' })
+  }
+  // ── x: the open run's timeline or trace, saved as a picture by the hooks ──
+  const exportKey = () => {
+    if (!run || (mode !== 'timeline' && mode !== 'trace')) return say('x saves a picture of a run\'s Timeline or Trace: open a run, then v to one of them.')
+    const focus = mode === 'trace' ? laneId(traceRow(sel)) : focusCard?.id
+    surface.post({ type: 'export', run: run.id, lens: mode, zoom: s.zoom, ...(focus && focus !== 'main' ? { focus } : {}) })
+    say('Drawing the picture…')
+  }
+  // ── the trace: n p step through what needs a look (or the search's hits), f one lane ──
+  const traceStep = (dir: 1 | -1) => {
+    const at = dir > 0 ? traceStops.find(i => i > sel) : [...traceStops].reverse().find(i => i < sel)
+    if (at === undefined) return say(tq ? (traceStops.length ? 'No more matches that way.' : `Nothing in this trace says "${tq}".`) : traceStops.length ? 'Nothing more that way.' : 'No failures, errors or quiet gaps here.')
+    set({ sel: at, first: Math.max(0, at - 3) })
+  }
+  const laneKey = () => {
+    if (s.traceLane) return set({ traceLane: null, sel: 0, first: 0, traceJump: !!s.traceFocus })
+    const id = laneId(traceRow(sel))
+    if (!id) return
+    set({ traceLane: id, traceFocus: id === 'main' ? s.traceFocus : id, sel: 0, first: 0 })
+  }
+
+  // ── the bars above the content, for a remote's ↑ ← → ↓ ─────────────────
+  type BarItem = { label: string; on: boolean; act: (extra: Partial<State>) => void }
+  const tabItems: BarItem[] = [
+    { label: `Live ${props.nodes.filter(n => !n.parentId && n.status === 'running').length}`, on: s.tab === 'live', act: x => switchTab('live', x) },
+    { label: `History ${repoHistory.filter(n => !n.parentId).length}`, on: s.tab === 'history', act: x => switchTab('history', x) },
+  ]
+  // the caption's views (inside a run) and lenses; a page with a caption of its own has none
+  const captionItems: BarItem[] = mode === 'help' || mode === 'diff' || mode === 'compare' ? [] : [
+    ...(run ? ([['Agents', 'agents'], [`Changes ${files.length}`, 'changes'], ['Output', 'output']] as [string, ViewName][])
+      .map(([label, v]) => ({ label, on: view === v, act: (x: Partial<State>) => go(v, x) })) : []),
+    ...offered.map(l => ({ label: LENS_NAMES[l], on: inAgents && lens === l, act: (x: Partial<State>) => switchLens(l, x) })),
+  ]
+  // a bar's cursor starts on its first chosen item: the open view, else the lens or the tab
+  const activeIn = (items: BarItem[]) => Math.max(0, items.findIndex(it => it.on))
+  const zone: Zone = s.zone === 'caption' && !captionItems.length ? 'tabs' : s.zone
+  const barAt = Math.min(Math.max(0, s.barAt), Math.max(0, (zone === 'tabs' ? tabItems : captionItems).length - 1))
+  // the first row of the content: ↑ there goes up to the bar
+  const atTop = () => (isText ? first === 0 : mode === 'agents' ? step(count, sel, -1, okRow) === sel : sel === 0)
+  const upToBar = () => set(captionItems.length ? { zone: 'caption', barAt: activeIn(captionItems) } : { zone: 'tabs', barAt: activeIn(tabItems) })
+
   surface.onKey(({ key, ctrl, meta }) => {
     // Escape never reaches a Client (it returns focus to the prompt), so ctrl+u clears the search.
     const clearsSearch = ctrl === true && key === 'u'
-    // while the search line takes typing, every printable key goes to it
+    // while the search line takes typing, every printable key goes to it: History's, or the trace's
     if (s.searching) {
-      if (key === 'return') return set({ searching: false })
-      if (clearsSearch) return set({ searching: false, query: '', sel: 0, first: 0 })
+      const inTrace = mode === 'trace'
+      const field: 'tquery' | 'query' = inTrace ? 'tquery' : 'query'
+      const text = s[field]
+      const reset = inTrace ? {} : { sel: 0, first: 0 }
+      if (key === 'return') {
+        // the trace jumps to its first hit at or after the row it is on
+        const hit = inTrace ? traceStops.find(i => i >= sel) ?? traceStops[0] : undefined
+        return set({ searching: false, ...(hit !== undefined ? { sel: hit, first: Math.max(0, hit - 3) } : {}) })
+      }
+      if (clearsSearch) return set({ searching: false, [field]: '', ...reset })
       if (ctrl || meta) return
-      if (key === 'escape') return set({ searching: false, query: '', sel: 0, first: 0 })
-      if (key === 'backspace' || key === 'delete') return s.query ? set({ query: s.query.slice(0, -1), sel: 0, first: 0 }) : set({ searching: false })
+      if (key === 'escape') return set({ searching: false, [field]: '', ...reset })
+      if (key === 'backspace' || key === 'delete') return text ? set({ [field]: text.slice(0, -1), ...reset }) : set({ searching: false })
       if (key === 'down') return move(1)
       if (key === 'up') return move(-1)
       const ch = key === 'space' ? ' ' : key
-      if ([...ch].length === 1) return set({ query: s.query + ch, sel: 0, first: 0 })
+      if ([...ch].length === 1) return set({ [field]: text + ch, ...reset })
       return
+    }
+    // a bar has the keys: ← → switch, ↑ goes to the tabs, ↓ or enter back down to the content
+    if (zone !== 'content' && !s.help) {
+      const items = zone === 'tabs' ? tabItems : captionItems
+      const moveBar = (dir: 1 | -1) => {
+        const it = items[barAt + dir]
+        if (!it) return
+        if (it.on) set({ zone, barAt: barAt + dir })
+        else it.act({ zone, barAt: barAt + dir })
+      }
+      if (key === 'left' || key === 'h') return moveBar(-1)
+      if (key === 'right' || key === 'l') return moveBar(1)
+      if (key === 'up' || key === 'k') return zone === 'caption' ? set({ zone: 'tabs', barAt: activeIn(tabItems) }) : undefined
+      if (key === 'down' || key === 'j' || key === 'return') return zone === 'tabs' && captionItems.length ? set({ zone: 'caption', barAt: activeIn(captionItems) }) : set({ zone: 'content' })
+      if (key === 'backspace' || key === 'b') return set({ zone: 'content' })
+      // any other key does what it does in the content, and the content takes the keys back
+      s.zone = 'content'
     }
     if (isHistoryPage && !s.help) {
       if (key === 'g') return patternsKey()
@@ -1215,10 +1446,19 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
       if (key === 'f') return set({ hfilter: HISTORY_FILTERS[(HISTORY_FILTERS.indexOf(s.hfilter) + 1) % HISTORY_FILTERS.length]!, sel: 0, first: 0 })
       if (key === 'o') return set({ olderOpen: !s.olderOpen })
     }
-    if (key === '?') return set({ help: !s.help })
-    if (s.help) return set({ help: false })
+    if (mode === 'trace' && !s.help) {
+      if (key === 'n') return traceStep(1)
+      if (key === 'p') return traceStep(-1)
+      if (key === 'f') return laneKey()
+      if (key === '/') return set({ searching: true })
+      if (clearsSearch && s.tquery) return set({ tquery: '' })
+    }
+    if (key === '?') return set({ help: !s.help, first: 0 })
+    // the help scrolls; any other key closes it
+    if (s.help) return key === 'j' || key === 'down' || key === 'k' || key === 'up' ? move(key === 'j' || key === 'down' ? 1 : -1)
+      : key === 'pagedown' || key === 'pageup' ? set(moveBy((key === 'pagedown' ? 1 : -1) * Math.max(1, bodyRows - 1))) : set({ help: false, first: 0 })
     if (key === 'j' || key === 'down') move(1)
-    else if (key === 'k' || key === 'up') move(-1)
+    else if (key === 'k' || key === 'up') (atTop() ? upToBar() : move(-1))
     else if (key === 'pagedown') set(moveBy(Math.max(1, bodyRows - 1)))
     else if (key === 'pageup') set(moveBy(-Math.max(1, bodyRows - 1)))
     else if (key === 'g' || key === 'home') set({ sel: 0, first: 0 })
@@ -1227,8 +1467,6 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     else if (key === ' ' || key === 'space') toggleFold(agentItems[sel])
     else if (key === 'left') arrow(-1)
     else if (key === 'right') arrow(1)
-    else if (key === 'h' || key === '<' || key === ',') side(-1)
-    else if (key === 'l' || key === '>' || key === '.') side(1)
     else if (key === 'backspace' || key === 'b') back()
     else if (key === 'n') nextFile(1)
     else if (key === 'p') nextFile(-1)
@@ -1240,11 +1478,14 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     else if (key === 'tab') (run ? go(VIEWS[(VIEWS.indexOf(view) + 1) % VIEWS.length]!) : switchTab(s.tab === 'live' ? 'history' : 'live'))
     else if (key === 'v') switchLens(nextLensOf(lens))
     else if (key === 'e' && run) explainKey()
-    else if (key === 'z' && mode === 'trace') set({ zoom: ZOOMS[(ZOOMS.indexOf(s.zoom) + 1) % ZOOMS.length]!, sel: 0, first: 0, traceAt: 0 })
+    else if (key === 'z' && mode === 'trace') set({ zoom: ZOOMS[(ZOOMS.indexOf(s.zoom) + 1) % ZOOMS.length]!, sel: 0, first: 0, traceAt: 0, traceJump: !!s.traceFocus })
     else if (key === 'i' && shownInsights.length) { const next = (s.insight + 1) % shownInsights.length; jumpTo(shownInsights[next]!.target, next) }
     else if (key === 'f') set({ filter: FILTERS[(FILTERS.indexOf(s.filter) + 1) % FILTERS.length], sel: 0, first: 0 })
     else if (key === 'r' && !run) set({ onlyRepo: !s.onlyRepo, sel: 0, first: 0 })
     else if (key === 's' && !run) set({ group: GROUPS[(GROUPS.indexOf(s.group) + 1) % GROUPS.length], sel: 0, first: 0 })
+    else if (key === 'm') markKey()
+    else if (key === '=') lastRunKey()
+    else if (key === 'x') exportKey()
   })
 
   // ── rows of the tree ─────────────────────────────────────────────────
@@ -1255,6 +1496,17 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   // the run list's columns: status · tree · label · roll-up or changes · start · duration
   const showMid = listW >= 60
   const showStart = listW >= 84
+  // what each row spent: "Opus 120k" for an agent, the sum for what holds agents
+  const showCost = listW >= 76
+  const COST_W = 11
+  const costSegs = (tokens: number, model?: string): Seg[] => {
+    if (!showCost) return []
+    const fam = model ? modelFamily(model) : ''
+    // short counts, so a model name and its tokens fit the column: 9.5k, 12k, 1.2M
+    const short = tokens >= 1_000_000 ? `${(tokens / 1_000_000).toFixed(1)}M` : tokens >= 10_000 ? `${Math.round(tokens / 1000)}k` : tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens)
+    const text = tokens ? `${fam && fam !== 'Unknown' ? `${fam} ` : ''}${short}` : ''
+    return [seg(' '), seg(padStart(fit(text, COST_W), COST_W), C.faint)]
+  }
   const tailSegs = (n: AgentNode, isParent: boolean): Seg[] => {
     const kids = isParent ? scopeNodes(nodes, { kind: 'node', id: n.id }).filter(k => k.id !== n.id && k.kind === 'agent') : []
     const c = counts(kids)
@@ -1269,10 +1521,12 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
             : rows.length ? [seg(`+${added}`, C.add), seg(' '), seg(`−${removed}`, C.del)] : []
     return [
       ...(showMid ? [seg(' '), seg(' '.repeat(Math.max(0, 14 - width(mid)))), ...mid] : []),
+      ...costSegs(tokensUnder(nodes, n), n.kind === 'agent' ? n.model : undefined),
       ...(showStart ? [seg(' '), seg(padStart(!run || isHistory ? clock(n.startedAt) : '', 8), C.faint)] : []),
       seg(' '), seg(padStart(duration(elapsed(n)), 8), C.muted),
     ]
   }
+  const flagSegs = (f: Flag | undefined): Seg[] => (f ? [seg('  '), seg(f.text, f.tone === 'bad' ? C.bad : f.tone === 'warn' ? C.warn : C.faint)] : [])
   const agentRow = (it: Item, i: number, w: number): Row => {
     const on = i === sel && mode === 'agents'
     const bg = on ? C.selBg : undefined
@@ -1297,12 +1551,14 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
       const end = it.running ? now : Math.max(...inPhase.map(k => k.endedAt ?? now))
       const tail: Seg[] = [
         ...(showMid ? [seg(' '), ...rollSegs(c, 6), seg(' '), seg(padStart(`${c.total - c.running}/${c.total}`, 7), C.muted)] : []),
+        ...costSegs(scopeNodes(nodes, { kind: 'phase', wfId: it.wfId, phase: it.phase }).filter(k => k.kind === 'agent').reduce((a, k) => a + (k.tokens ?? 0), 0)),
         ...(showStart ? [seg(' '), seg(' '.repeat(8))] : []),
         seg(' '), seg(padStart(Number.isFinite(start) ? duration(end - start) : '', 8), C.muted),
       ]
-      const room = w - width(head) - width(tail)
+      const flag = flagSegs(flags.get(`phase:${it.wfId}:${it.phase}`))
+      const room = w - width(head) - width(tail) - width(flag)
       const mid = fit(`   ${words}`, Math.max(0, room))
-      return { bg, segs: [...head, seg(mid, C.muted), seg(' '.repeat(Math.max(0, room - cellWidth(mid)))), ...tail] }
+      return { bg, segs: [...head, seg(mid, C.muted), ...flag, seg(' '.repeat(Math.max(0, room - cellWidth(mid)))), ...tail] }
     }
     if (it.kind !== 'node') return { segs: [] }
     const n = it.node
@@ -1317,12 +1573,15 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
       ...(glyph ? [cell2(glyph), seg(' ')] : isTop && !run ? [seg('   ')] : []),
     ]
     const tail = tailSegs(n, !!it.fold || n.kind !== 'agent')
-    const labelW = Math.max(4, w - width(head) - width(tail))
+    // the run marked for a compare carries a mark; a row an insight is about carries its tag
+    const marked = s.mark === n.id ? [seg('◉ ', C.accent, true)] : []
+    const flag = flagSegs(flags.get(n.id))
+    const labelW = Math.max(4, w - width(head) - width(tail) - width(marked) - width(flag))
     const shown = fit(n.label, labelW)
     const isLive = n.status === 'running'
     return {
       bg,
-      segs: [...head, seg(shown, isLive || on ? C.ink : C.soft, on || n.kind !== 'agent'), seg(' '.repeat(Math.max(0, labelW - cellWidth(shown)))), ...tail],
+      segs: [...head, ...marked, seg(shown, isLive || on ? C.ink : C.soft, on || n.kind !== 'agent'), ...flag, seg(' '.repeat(Math.max(0, labelW - cellWidth(shown)))), ...tail],
     }
   }
   // History's columns: status · kind · name · outcome · ± · duration · tokens. Narrow
@@ -1370,7 +1629,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     const rows = fileRows(scopeNodes(nodes, { kind: 'node', id: n.id }))
     const pm: Seg[] = rows.length ? pmSegs(rows.reduce((a, r) => a + r.added, 0), rows.reduce((a, r) => a + r.removed, 0)) : [seg('—', C.faint)]
     const tok = runTokens(nodes, n)
-    const name = fit(n.label, k.nameW)
+    const name = fit(`${s.mark === n.id ? '◉ ' : ''}${n.label}`, k.nameW)
     const out = k.outW ? fit(said, k.outW) : ''
     return {
       bg: on ? C.selBg : undefined,
@@ -1398,20 +1657,6 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     }
   }
 
-  const KEYS_HELP: [string, string][] = [
-    ['j k  ↑ ↓', 'move, or scroll the text'], ['PgUp PgDn', 'a page at a time'], ['g G', 'first, last'], ['enter', 'open'],
-    ['space  ← →', 'fold or unfold in the tree; ← goes up to the parent'], ['v', 'view: tree, board, timeline; in a run, trace'],
-    ['z', 'trace: story, steps, raw'],
-    ['i', 'next thing that needs a look'], ['h l', 'live · history, or the views of a run'], ['1 2', 'live, history'],
-    ['a c o', 'agents, changes, output'], ['n p', 'next, previous file in a diff'], ['b  ⌫', 'back'],
-    ['f', 'filter: all, running, failed · history: all, failed, changed files'], ['s', 'group the run list'],
-    ['/', 'search history: names and outcomes; enter keeps, ctrl+u clears'], ['o', 'show or hide history older than a week'],
-    ['r', 'this repo · all repos (history)'],
-    ['e', 'explain this run: a brief from Sonnet (ai: full); twice to write it again'],
-    ['g', 'history: patterns across runs from Sonnet (ai: full); twice to look again'],
-    ['p', 'history: show or hide the patterns'],
-    ['wheel', 'move, or scroll'], ['?', 'close this help'],
-  ]
   // ── the trace: a vertical log with a lane gutter, git log --graph style ─────
   const KIND_WORD: Record<TraceRow['kind'], string> = {
     spawn: 'started an agent', tool: 'tool call', edit: 'edit', message: 'message', handback: 'handed back',
@@ -1442,8 +1687,20 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     // the story's steps are Haiku's when it wrote them: say so, with what they cost
     if (s.zoom === 'story' && tv?.storyBy) zoomSegs.push(seg(`   Story · ${tv.storyBy}`, C.faint))
     const legend: Seg[] = [...zoomSegs]
-    for (const part of legendParts) if (width(legend) + 3 + width(part) <= w - 1) legend.push(seg('   '), ...part)
-    const laneSegs: Seg[] = lanes.flatMap((L, k) => [...(k ? [seg('   ')] : []), seg(L.chip, laneColor(k), true), seg(` ${L.label}`, C.muted)])
+    // while there is a search, its line stands where the legend was
+    const found = tq && tv?.query === tq ? traceStops.length : undefined
+    const searchSegs: Seg[] = [seg('/ ', C.accent, true), seg(s.tquery, C.ink, true), ...(s.searching ? [seg(T.cursor, C.accent)] : []),
+      seg(found === undefined ? (tq ? '   …' : '') : `   ${found} match${found === 1 ? '' : 'es'}`, C.muted),
+      seg(s.searching ? '   enter jump · ctrl+u clear' : '   n p next · ctrl+u clear', C.faint)]
+    if (s.searching || tq) legend.push(seg('   '), ...searchSegs)
+    else for (const part of legendParts) if (width(legend) + 3 + width(part) <= w - 1) legend.push(seg('   '), ...part)
+    // the picked agent's lane stands out; a trace cut to one lane says so first
+    const focusLane = lanes.findIndex(L => L.id === s.traceFocus)
+    const only = s.traceLane ? lanes.find(L => L.id === s.traceLane) : undefined
+    const laneSegs: Seg[] = [
+      ...(only ? [seg('only ', C.accent, true), seg(only.chip, laneColor(lanes.indexOf(only)), true), seg(` ${only.label}`, C.ink), seg('   f all lanes   ·  ', C.faint)] : []),
+      ...lanes.flatMap((L, k) => [...(k ? [seg('   ')] : []), { t: L.chip, c: laneColor(k), b: true, ...(k === focusLane ? { bg: C.selBg } : {}) }, seg(` ${L.label}`, k === focusLane ? C.ink : C.muted)]),
+    ]
     const missing = tv?.missing ? [seg('   '), seg(`${T.warn} ${tv.missing} transcript${tv.missing === 1 ? '' : 's'} no longer on disk`, C.warn)] : []
     // the warning first, so a long list of lanes never cuts it off
     const head: Row[] = [{ segs: legend }, { segs: lay([...missing.slice(1), ...(missing.length ? [seg('   ')] : []), ...laneSegs], w) }]
@@ -1486,6 +1743,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
       if (r.kind === 'edit') return [seg(r.text, C.ink), seg('   '), seg(`+${r.added ?? 0}`, C.add), seg(' '), seg(`−${r.removed ?? 0}`, C.del)]
       return [seg(r.text, r.error ? C.bad : C.soft)]
     }
+    const hitSet = new Set(tq ? traceStops : [])
     const rows: Row[] = [...head]
     for (let y = 0; y < traceWin; y++) {
       const i = first + y
@@ -1493,8 +1751,10 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
       if (!r) { rows.push({ segs: i < tv.total ? [seg(' '), seg('…', C.faint)] : [] }); continue }
       const on = i === sel
       const L = lanes[r.lane]
-      const segs: Seg[] = [cursorSeg(on), ...gutter(r, i), seg(' '), seg(padStart(`+${offset(r.at - t0)}`, 8), C.faint), seg('  '),
-        seg(L?.chip ?? '··', laneColor(r.lane), true), seg(' '), ...textSegs(r)]
+      // a row in the picked agent's lane keeps a thin mark where the cursor goes
+      const lead: Seg = on ? cursorSeg(true) : r.lane === focusLane ? seg('│', laneColor(r.lane)) : seg(' ')
+      const segs: Seg[] = [lead, ...gutter(r, i), seg(' '), seg(padStart(`+${offset(r.at - t0)}`, 8), C.faint), seg('  '),
+        seg(L?.chip ?? '··', laneColor(r.lane), true), seg(' '), ...(hitSet.has(i) ? textSegs(r).map(x => ({ ...x, c: C.accent })) : textSegs(r))]
       rows.push({ segs: lay(segs, w), bg: on ? C.selBg : undefined, hit: [{ x0: 0, x1: w, act: () => (i === sel ? activateTrace(i) : set({ sel: i })) }] })
     }
     // the detail strip: when, which lane, what it cost; then what went in and came out
@@ -1514,7 +1774,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   const bodyList: Row[] = (() => {
     if (mode === 'trace') return traceRows(listW)
     if (mode === 'help') {
-      return [{ segs: [] }, ...KEYS_HELP.map(([k, what]) => ({ segs: [seg(padEnd(k, 14), C.ink, true), seg(what, C.muted)] }))]
+      return [{ segs: [] }, ...KEYS_HELP.map(([k, what]) => ({ segs: [seg(padEnd(k, 18), C.ink, true), seg(what, C.muted)] }))].slice(first, first + bodyRows)
     }
     if (mode === 'agents') {
       if (isHistoryPage && matchCount === 0 && (s.query || s.hfilter !== 'all')) {
@@ -1534,18 +1794,21 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
       return fileItems.slice(first, first + bodyRows).map((it, k) => fileRow(it, first + k, listW))
     }
     if (mode === 'output') return output.slice(first, first + bodyRows)
+    if (mode === 'compare') return comparison.slice(first, first + bodyRows)
     return []
   })()
 
   // ── the rows above and below the body ────────────────────────────────
-  const tabSeg = (label: string, on: boolean): Seg => (on ? { t: ` ${label} `, c: C.accent, b: true, bg: C.selBg } : { t: ` ${label} `, c: C.muted })
-  const tabRow = (specs: [string, boolean, () => void][], start = 0): { segs: Seg[]; hit: Hit[] } => {
+  // the bar's cursor draws as a filled tab, ink on accent; the chosen tab as accent on the selection ground
+  const tabSeg = (label: string, on: boolean, focused = false): Seg => (focused ? { t: `▸${label} `, c: C.selBg, b: true, bg: C.accent }
+    : on ? { t: ` ${label} `, c: C.accent, b: true, bg: C.selBg } : { t: ` ${label} `, c: C.muted })
+  const tabRow = (specs: [string, boolean, () => void, boolean?][], start = 0): { segs: Seg[]; hit: Hit[] } => {
     const segs: Seg[] = []
     const hit: Hit[] = []
     let x = start
-    specs.forEach(([label, on, act], i) => {
+    specs.forEach(([label, on, act, focused], i) => {
       if (i) { segs.push(seg('  ')); x += 2 }
-      const sg = tabSeg(label, on)
+      const sg = tabSeg(label, on, focused)
       hit.push({ x0: x, x1: x + cellWidth(sg.t), act })
       segs.push(sg)
       x += cellWidth(sg.t)
@@ -1553,20 +1816,24 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     return { segs, hit }
   }
   const tabsRow: Row = (() => {
-    const t = tabRow([[`Live ${running}`, s.tab === 'live', () => switchTab('live')], [`History ${histTops.length}`, s.tab === 'history', () => switchTab('history')]])
+    const t = tabRow(tabItems.map((it, i) => [it.label, it.on, () => it.act({}), zone === 'tabs' && i === barAt] as [string, boolean, () => void, boolean]))
     // the open run follows its tab; in a replay the History tab itself leads back
     if (run) t.segs.push(seg('   ›  ', C.faint), seg(run.label, C.soft, true))
     return t
   })()
   // the lens switch, at the right of the caption: all three when there is room, else the current one
+  // the caption bar's lens items come after its view items
+  const lensBase = run ? 3 : 0
+  const onLens = zone === 'caption' && barAt >= lensBase
   const lensSegs = (room: number, x: number): { segs: Seg[]; hit: Hit[] } => {
-    const full = tabRow(offered.map(l => [LENS_NAMES[l], inAgents && lens === l, () => switchLens(l)] as [string, boolean, () => void]), x)
+    const full = tabRow(offered.map((l, i) => [LENS_NAMES[l], inAgents && lens === l, () => switchLens(l), onLens && barAt - lensBase === i] as [string, boolean, () => void, boolean]), x)
     if (width(full.segs) <= room) return full
-    const short = [seg('v ', C.soft, true), seg(LENS_NAMES[lens], C.accent, true)]
+    const short = onLens ? [tabSeg(LENS_NAMES[lens], true, true)] : [seg('v ', C.soft, true), seg(LENS_NAMES[lens], C.accent, true)]
     return { segs: short, hit: [{ x0: x, x1: x + width(short), act: () => switchLens(nextLensOf(lens)) }] }
   }
   const caption: Row = (() => {
     if (mode === 'help') return { segs: [seg('Keys', C.accent, true), seg('   every key the pane takes', C.muted)] }
+    if (mode === 'compare') return { segs: [seg('‹ ', C.accent), seg('Compare two runs', C.ink, true), seg('   change is B against A · green where B did better', C.muted)], hit: [{ x0: 0, x1: 2, act: back }] }
     if (mode === 'diff') {
       const row = files.find(f => f.path === s.diffFile)
       return {
@@ -1586,7 +1853,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
       const filtering = !isHistory && s.filter !== 'all' ? `   ·   ${s.filter} only` : ''
       left = { segs: [seg(header, C.ink, true), seg('   '), seg(`${what}${grouping}${filtering}`, C.muted)], hit: [] }
     } else {
-      left = tabRow([['Agents', view === 'agents', () => go('agents')], [`Changes ${files.length}`, view === 'changes', () => go('changes')], ['Output', view === 'output', () => go('output')]])
+      left = tabRow(captionItems.slice(0, 3).map((it, i) => [it.label, it.on, () => it.act({}), zone === 'caption' && i === barAt] as [string, boolean, () => void, boolean]))
     }
     const room = listW - 3
     const fullW = width(lensSegs(1000, 0).segs)
@@ -1602,19 +1869,24 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   const nextLens = LENS_NAMES[nextLensOf(lens)].toLowerCase()
   const insightKey: [string, string][] = shownInsights.length ? [['i', 'insight']] : []
   const nextFilter = HISTORY_FILTER_NAMES[HISTORY_FILTERS[(HISTORY_FILTERS.indexOf(s.hfilter) + 1) % HISTORY_FILTERS.length]!]
+  // ↑ at the top of the content reaches the bars: the views and lenses, then the tabs
+  const upKey: [string, string] = ['↑ top', run ? 'views' : 'tabs']
   const keyList: [string, string][] = mode === 'help' ? [['?', 'close']]
-    : s.searching ? [['type', 'search'], ['enter', 'keep'], ['ctrl+u', 'clear'], ['⌫', 'delete'], ['↑ ↓', 'move']]
-    : mode === 'trace' ? [['j k', 'move'], ['z', ZOOM_NAMES[ZOOMS[(ZOOMS.indexOf(s.zoom) + 1) % ZOOMS.length]!].toLowerCase()],
+    : s.searching ? [['type', 'search'], ['enter', mode === 'trace' ? 'jump' : 'keep'], ['ctrl+u', 'clear'], ['⌫', 'delete'], ['↑ ↓', 'move']]
+    : zone !== 'content' ? [['← →', zone === 'tabs' ? 'live · history' : 'switch'], ['↓', zone === 'tabs' && captionItems.length ? 'views' : 'back to the list'], ...(zone === 'caption' ? [['↑', 'tabs']] as [string, string][] : []), ['?', 'help']]
+    : mode === 'compare' ? [['j k', 'scroll'], ['b', 'back'], ['?', 'help']]
+    : mode === 'trace' ? [['j k', 'move'], ['n p', tq ? 'matches' : 'problems'], ['f', s.traceLane ? 'all lanes' : 'this lane'], ['/', 'search'],
+      ['z', ZOOM_NAMES[ZOOMS[(ZOOMS.indexOf(s.zoom) + 1) % ZOOMS.length]!].toLowerCase()],
       ...(traceRow(sel)?.kind === 'edit' ? [['enter', 'diff']] as [string, string][] : laneId(traceRow(sel)) && laneId(traceRow(sel)) !== 'main' ? [['enter', 'agent']] as [string, string][] : []),
-      ['v', nextLens], ['h l', 'views'], ['b', 'back'], ['?', 'help']]
-    : isHistoryPage && mode === 'agents' ? [['j k', 'move'], ['enter', 'open'], ['/', 'search'], ['f', nextFilter], ['o', s.olderOpen ? 'hide older' : 'older'],
-      ['v', nextLens], ['r', s.onlyRepo ? 'all repos' : 'this repo'], ['h l', 'live · history'], ['?', 'help']]
-    : !run && mode === 'agents' ?[['j k', 'move'], ['enter', 'open'], ['space', 'fold'], ['v', nextLens], ...insightKey, ['c', 'changes'], ['h l', 'live · history'], ['s', 'group'], ...(isHistory ? [['r', s.onlyRepo ? 'all repos' : 'this repo'] as [string, string]] : []), ['?', 'help']]
-      : mode === 'agents' ? [['j k', 'move'], ['enter', 'open'], ['← →', 'fold'], ['v', nextLens], ...insightKey, ['h l', 'views'], ['b', 'back'], ['?', 'help']]
-        : isLens ? [['j k', 'card'], ['enter', 'open'], ['v', nextLens], ...insightKey, ...(run ? [['h l', 'views'], ['b', 'back']] as [string, string][] : [['h l', 'live · history']] as [string, string][]), ['?', 'help']]
-          : mode === 'files' ? [['j k', 'move'], ['enter', 'diff'], ['h l', 'views'], ['b', 'back'], ['?', 'help']]
+      ['v', nextLens], ['x', 'picture'], upKey, ['b', 'back'], ['?', 'help']]
+    : isHistoryPage && mode === 'agents' ? [['j k', 'move'], ['enter', 'open'], ['/', 'search'], ['f', nextFilter], ['m', s.mark ? 'compare' : 'mark'], ['=', 'vs last'], ['o', s.olderOpen ? 'hide older' : 'older'],
+      ['v', nextLens], ['r', s.onlyRepo ? 'all repos' : 'this repo'], upKey, ['?', 'help']]
+    : !run && mode === 'agents' ? [['j k', 'move'], ['enter', 'open'], ['space', 'fold'], ['v', nextLens], ...insightKey, ['c', 'changes'], upKey, ['m', s.mark ? 'compare' : 'mark'], ['s', 'group'], ...(isHistory ? [['r', s.onlyRepo ? 'all repos' : 'this repo'] as [string, string]] : []), ['?', 'help']]
+      : mode === 'agents' ? [['j k', 'move'], ['enter', 'open'], ['← →', 'fold'], ['v', nextLens], ...insightKey, upKey, ['=', 'vs last'], ['b', 'back'], ['?', 'help']]
+        : isLens ? [['j k', 'card'], ['enter', 'open'], ['v', nextLens], ...insightKey, ...(run && mode === 'timeline' ? [['x', 'picture']] as [string, string][] : []), upKey, ...(run ? [['b', 'back']] as [string, string][] : []), ['?', 'help']]
+          : mode === 'files' ? [['j k', 'move'], ['enter', 'diff'], upKey, ['b', 'back'], ['?', 'help']]
             : mode === 'diff' ? [['j k', 'edit'], ['enter', 'go to agent'], ['n p', 'files'], ['b', 'back'], ['?', 'help']]
-              : [['j k', 'scroll'], ['h l', 'views'], ['b', 'back'], ['?', 'help']]
+              : [['j k', 'scroll'], upKey, ['b', 'back'], ['?', 'help']]
   // e and g where they work, before ? help
   const aiKeys: [string, string][] = !isFull || s.searching || mode === 'help' ? []
     : isHistoryPage ? [['g', props.patterns ? 'patterns again' : 'patterns'], ...(props.patterns ? [['p', s.patternsOpen ? 'hide patterns' : 'patterns'] as [string, string]] : [])]
@@ -1700,8 +1972,9 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     if (isSplit && x >= LW) return
     const i = first + at
     if (i >= count || !okRow(i)) return
-    if (i === sel) activate(i)
-    else set({ sel: i })
+    // a click in the content gives it the keys back
+    if (i === sel) { if (s.zone !== 'content') s.zone = 'content'; activate(i) }
+    else set({ sel: i, zone: 'content' })
   })
 
   // ── drawing ──────────────────────────────────────────────────────────

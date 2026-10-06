@@ -152,6 +152,8 @@ export type ViewProps = {
   /** This repository's patterns across runs, and whether Sonnet is writing them now. */
   patterns?: PatternsDoc
   patternsBusy?: boolean
+  /** The last picture saved with x: where it went, or why it could not be saved. */
+  exported?: { seq: number; text: string }
 }
 
 /** A wheel move over the pane, forwarded from ui.scroll: rows asked for, signed. */
@@ -210,6 +212,13 @@ export type TraceView = {
   loading?: boolean
   /** Who wrote the story steps shown, and what they cost: "Haiku · 3.1k tokens". */
   storyBy?: string
+  /** The lane the rows are cut to (its agent id), when the view asked for one lane only. */
+  lane?: string
+  /** Rows (absolute) worth a look: failures, errors, quiet gaps. */
+  marks?: number[]
+  /** The search the rows were matched against, and the rows (absolute) that hold it. */
+  query?: string
+  hits?: number[]
 }
 
 /** The desktop view's own state (phase 6): what is open, and how the lists are filtered. */

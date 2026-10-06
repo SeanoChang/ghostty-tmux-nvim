@@ -227,3 +227,45 @@ test('a transcript over the read limit is read in 3 MiB pieces with dd, never wh
   expect(await ui.find({ in: KEY, text: /Reading items\.ts/ })).toBeDefined()
   await ui.unmount()
 })
+
+test('the trace opens on the lane of the agent picked in the tree, and leaving it picks that lane\'s agent', async ($, on) => {
+  traceMocks(on)
+  const ui = await $.ui.mount({ plugin: 'agent-tree', surface: 'terminal', ...PANE })
+  await ui.resize({ in: KEY, columns: 120, rows: 34 })
+  await ui.key({ in: KEY, key: '2' })
+  await ui.key({ in: KEY, key: 'return' })
+  await ui.key({ in: KEY, key: 'j' })
+  await ui.key({ in: KEY, key: 'j' }) // Check the price formatter, under Fix cart totals
+  for (let k = 0; k < 3; k++) await ui.key({ in: KEY, key: 'v' })
+  await ui.advance(600)
+  // the cursor sits on the row that started it, not on the trace's first row
+  expect(await ui.find({ in: KEY, text: /▌.*started Check the price formatter/ })).toBeDefined()
+  await ui.key({ in: KEY, key: 'j' })
+  await ui.key({ in: KEY, key: 'v' }) // back to the tree, on the agent of the row
+  expect(await ui.find({ in: KEY, text: /▌.*(Check the price formatter|Fix cart totals)/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('in a trace n p step through what needs a look, f keeps one lane, / searches', async ($, on) => {
+  traceMocks(on)
+  const ui = await openTrace($)
+  await ui.key({ in: KEY, key: 'z' })
+  await ui.key({ in: KEY, key: 'z' }) // raw: every call
+  await ui.advance(600)
+  await ui.key({ in: KEY, key: 'n' }) // the first problem: the failing test run
+  expect(await ui.find({ in: KEY, text: /▌.*Run the cart tests/ })).toBeDefined()
+  await ui.key({ in: KEY, key: 'f' }) // only Fix cart totals' lane
+  await ui.advance(600)
+  expect(await ui.find({ in: KEY, text: /only FC Fix cart totals/ })).toBeDefined()
+  expect(await ui.find({ in: KEY, text: /started Build the explainer/ })).toBeUndefined()
+  await ui.key({ in: KEY, key: 'f' }) // all lanes again
+  await ui.advance(600)
+  expect(await ui.find({ in: KEY, text: /started Build the explainer/ })).toBeDefined()
+  await ui.key({ in: KEY, key: '/' })
+  for (const ch of 'explainer') await ui.key({ in: KEY, key: ch })
+  await ui.advance(600)
+  expect(await ui.find({ in: KEY, text: /\d+ match/ })).toBeDefined()
+  await ui.key({ in: KEY, key: 'return' })
+  expect(await ui.find({ in: KEY, text: /▌.*explainer/ })).toBeDefined()
+  await ui.unmount()
+})

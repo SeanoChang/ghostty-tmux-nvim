@@ -1,6 +1,6 @@
 import type { AgentNode, DeskUi, EditRecord, PatternsDoc, TraceZoom, ViewProps } from '../../types'
 import { HISTORY_FILTERS, HISTORY_FILTER_NAMES, historyItems, historyStats, outcomeOf, runTokens } from '../history'
-import { COLUMNS, aspects, boardLanes, insights, rollup, timelineRows, type Lane } from '../lens'
+import { COLUMNS, aspects, boardLanes, criticalPath, idleGaps, insights, rollup, timelineRows, type Lane } from '../lens'
 import {
   childrenOf, counts, fileRows, folderKey, lineDiff, noReportReason, overlaps, pipeline, prettyModel, prettyType, runKey,
   runTree, scopeNodes, shortPaths, topItems, type Item,
@@ -26,6 +26,8 @@ export type DeskActs = {
   /** Ask Sonnet for a run's brief, or for patterns across runs (the hooks check ai: full again). */
   explain: (run: string) => void
   patterns: () => void
+  /** Save a run's timeline or trace as a picture in ~/Downloads/agent-tree (the hooks say where). */
+  exportPic: (run: string, lens: 'timeline' | 'trace', zoom: TraceZoom, focus?: string) => void
 }
 
 // Below this many columns nothing fits well, so the pane says so. The desktop
@@ -543,16 +545,33 @@ function Timeline(c: Ctx, run: AgentNode | undefined, tops: AgentNode[], cols = 
   const { Svg } = c.els
   const { t, ui } = c
   const rows = timelineRows(run, c.all, tops, 'all')
+  // inside a run: the chain that set its end time, outlined, and the idle time, shaded
+  const agents = rows.flatMap(r => (r.kind === 'bar' ? [r.node] : []))
+  const path = run ? criticalPath(agents, c.now) : undefined
+  const idle = run ? idleGaps(agents, c.now) : { gaps: [], ms: 0 }
+  const onPath = new Set(path?.ids ?? [])
   const bars: TimeBar[] = rows.map(r => (r.kind === 'label'
     ? { label: r.text, start: 0, end: 0, status: 'done' as const, isHeader: true }
-    : { label: r.node.label, start: r.node.startedAt, end: r.node.endedAt ?? c.now, status: r.node.status, isSelected: ui.sel === r.node.id }))
+    : { label: r.node.label, start: r.node.startedAt, end: r.node.endedAt ?? c.now, status: r.node.status, isSelected: ui.sel === r.node.id, isCritical: onPath.has(r.node.id) }))
   const real = bars.filter(b => !b.isHeader)
   if (!real.length) return Empty(c.els, t, 'No timeline yet.', 'Bars appear as agents start and finish.')
   const from = Math.min(...real.map(b => b.start))
   const to = Math.max(...real.map(b => b.end))
   const w = Math.max(320, Math.round(cols * CELL_PX))
-  const svg = timelineSvg(t, bars, from, to, w)
-  return <Svg source={svg} alt={`Timeline of ${real.length} agents over ${duration(to - from)}`} width={w} height={26 + bars.length * 22} />
+  const svg = timelineSvg(t, bars, from, to, w, { idle: idle.gaps })
+  const picture = <Svg source={svg} alt={`Timeline of ${real.length} agents over ${duration(to - from)}`} width={w} height={26 + bars.length * 22} />
+  if (!run) return picture
+  const { Box, Text, Button } = c.els
+  return (
+    <Box flexDirection="column" gap={1}>
+      <Box flexDirection="row" gap={2} alignItems="center" flexWrap="wrap">
+        {path ? <Text color={t.accent}>Critical path {path.ids.length} agent{path.ids.length === 1 ? '' : 's'} · {duration(path.ms)} of {duration(path.span)}</Text> : null}
+        {idle.ms ? <Text color={t.muted}>Idle {duration(idle.ms)} (shaded)</Text> : null}
+        <Button key="save-timeline" plain label="Save picture" hotkey="x" onPress={() => c.acts.exportPic(run.id, 'timeline', ui.zoom)} />
+      </Box>
+      {picture}
+    </Box>
+  )
 }
 
 // ── Trace: lanes on a time axis, arrows for spawns, messages, hand-backs ──────
@@ -578,7 +597,9 @@ function Trace(c: Ctx, run: AgentNode, cols: number) {
   const from = timed.length ? Math.min(...timed.map(r => r.at)) : c.now
   const to = timed.length ? Math.max(...timed.map(r => r.end ?? r.at)) : c.now
   const w = Math.max(320, Math.round(cols * CELL_PX))
-  const marks = tr.rows.map((r, i) => ({ lane: r.lane, ...(r.to !== undefined ? { to: r.to } : {}), at: r.at || from, kind: r.kind, text: r.text, isSelected: i === 0 && false }))
+  const marks = tr.rows.map(r => ({ lane: r.lane, ...(r.to !== undefined ? { to: r.to } : {}), at: r.at || from, kind: r.kind, text: r.text }))
+  // the agent picked in the tree or the timeline: its lane stands out, the others fade
+  const focus = ui.sel ? tr.lanes.findIndex(l => l.id === ui.sel) : -1
   const svgH = 24 + lanes.length * 34 + 8
   return (
     <Box flexDirection="column" gap={1}>
@@ -586,8 +607,9 @@ function Trace(c: Ctx, run: AgentNode, cols: number) {
         {zoomBar}
         <Text color={t.muted}>{tr.lanes.length} lanes · {tr.total} events{tr.missing ? ` · ${tr.missing} transcript${tr.missing === 1 ? '' : 's'} no longer on disk` : ''}{tr.loading ? ' · reading…' : ''}</Text>
         {ui.zoom === 'story' && tr.storyBy ? <Text color={t.accent}>Story · {tr.storyBy}</Text> : null}
+        <Button key="save-trace" plain label="Save picture" hotkey="x" onPress={() => c.acts.exportPic(run.id, 'trace', ui.zoom, ui.sel ?? undefined)} />
       </Box>
-      <Svg source={traceSvg(t, lanes, marks, from, to, w)} alt={`Trace of ${tr.lanes.length} agents`} width={w} height={svgH} />
+      <Svg source={traceSvg(t, lanes, marks, from, to, w, focus >= 0 ? focus : undefined)} alt={`Trace of ${tr.lanes.length} agents`} width={w} height={svgH} />
       <Box flexDirection="column">
         {tr.rows.map((r, i) => (
           <Box key={`tr-${tr.offset + i}`} flexDirection="row" gap={1}>
