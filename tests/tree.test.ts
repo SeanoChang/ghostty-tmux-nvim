@@ -165,9 +165,9 @@ describe('subagents', () => {
   test('grouping puts a header over the rows', async ($, on) => {
     await oneCat($, on)
     const ui = await $.ui.mount({ plugin: 'agent-tree', surface: 'terminal', ...PANE })
-    await ui.key({ in: KEY, key: 'v' })
+    await ui.key({ in: KEY, key: 's' })
     expect(await ui.find({ in: KEY, text: 'Explore agents' })).toBeDefined()
-    await ui.key({ in: KEY, key: 'v' })
+    await ui.key({ in: KEY, key: 's' })
     expect(await ui.find({ in: KEY, text: 'Main checkout' })).toBeDefined()
     await ui.unmount()
   })
@@ -329,8 +329,9 @@ describe('subagents from one turn', () => {
     expect(await ui.find({ in: KEY, text: 'Read the billing module' })).toBeDefined() // one spawn stays a plain row
     expect(await ui.find({ in: KEY, text: 'Trace the refresh flow' })).toBeUndefined() // members sit inside the group
     await ui.key({ in: KEY, key: 'return' })
-    expect(await ui.find({ in: KEY, text: 'All agents' })).toBeDefined()
+    expect(await ui.find({ in: KEY, text: 'All agents' })).toBeUndefined()
     expect(await ui.find({ in: KEY, text: 'Trace the refresh flow' })).toBeDefined()
+    expect(await ui.find({ in: KEY, text: '├─ ' })).toBeDefined()
     expect(await ui.find({ in: KEY, text: '6 running' })).toBeDefined()
     await ui.unmount()
   })
@@ -530,4 +531,133 @@ test('edits become unified-diff hunks under the size limit', () => {
   const hunks = unifiedHunks(big)
   expect(hunks.length).toBeGreaterThan(1)
   expect(hunks.every(h => h.length <= 10000)).toBe(true)
+})
+
+// ── phase 2: the tree, clusters, the board, the timeline, insights ──────────
+
+import { insights, QUIET_MS } from '../hooks/lens'
+
+// The case from the person's screenshot: three Haiku subagents from one turn,
+// one cluster; two of them edited cart.ts.
+const cartAt = Date.parse('2026-10-05T00:12:00Z')
+const cart = [
+  { id: 'g1', kind: 'group', label: 'Fix shopping cart calculation bugs', status: 'done', startedAt: cartAt, endedAt: cartAt + 9000, tools: 0, summary: 'Cart totals, prices and email checks fixed.', repo: '/repo/a' },
+  { id: 'c1', kind: 'agent', parentId: 'g1', label: 'Fix cart total quantities', type: 'general-purpose', model: 'claude-haiku-4-5', status: 'done', startedAt: cartAt, endedAt: cartAt + 8000, tools: 3, tokens: 12000,
+    changes: { '/repo/a/src/cart.ts': { edits: 1, added: 2, removed: 1 } } },
+  { id: 'c2', kind: 'agent', parentId: 'g1', label: 'Format prices with two decimals', type: 'general-purpose', model: 'claude-haiku-4-5', status: 'done', startedAt: cartAt + 100, endedAt: cartAt + 9000, tools: 3, tokens: 9000,
+    changes: { '/repo/a/src/cart.ts': { edits: 1, added: 1, removed: 1 } } },
+  { id: 'c3', kind: 'agent', parentId: 'g1', label: 'Tighten email validation', type: 'general-purpose', model: 'claude-haiku-4-5', status: 'done', startedAt: cartAt + 200, endedAt: cartAt + 9000, tools: 2, tokens: 5000,
+    changes: { '/repo/a/src/email.ts': { edits: 1, added: 2, removed: 1 } } },
+]
+const CATS = /🐱|😺|😿|🙀|🐈/g
+
+async function cartRun($: Engine, on: On, columns = 110) {
+  mock.clock(on)
+  mock.store(on, { history: cart })
+  on('process.run', inRepoA)
+  const ui = await $.ui.mount({ plugin: 'agent-tree', surface: 'terminal', ...PANE })
+  await ui.resize({ in: KEY, columns, rows: 30 })
+  await ui.key({ in: KEY, key: '2' })
+  await ui.key({ in: KEY, key: 'return' })
+  return ui
+}
+const rowTexts = async (ui: Awaited<ReturnType<typeof cartRun>>) =>
+  contentRows(await ui.drawn({ in: KEY })).map(r => leaves(r).map(l => l.text).join(''))
+
+test('a cluster opens as a tree: its row, aspect chips, members on guide lines', { options: { theme: 'kitty' } }, async ($, on) => {
+  const ui = await cartRun($, on)
+  const rows = await rowTexts(ui)
+  const lead = rows.findIndex(r => r.includes('Fix shopping cart calculation bugs') && r.includes('🐾'))
+  expect(lead).toBeGreaterThan(-1)
+  expect(rows[lead]).toContain('3/3')
+  expect(rows[lead]).toContain('▰▰▰▰▰▰')
+  // the chips line: each member's aspect with its status
+  expect(rows[lead + 1]).toMatch(/😺 Fix cart.*😺 Format prices.*😺 Tighten/)
+  const members = ['Fix cart total quantities', 'Format prices with two decimals', 'Tighten email validation']
+    .map(m => rows.find(r => r.includes(m) && /[├└]─ /.test(r)))
+  expect(members.every(Boolean)).toBe(true)
+  expect(members[2]).toContain('└─ ')
+  await ui.unmount()
+})
+
+test('kitty rows carry one cat: the status', { options: { theme: 'kitty' } }, async ($, on) => {
+  const ui = await cartRun($, on)
+  const rows = await rowTexts(ui)
+  const treeRows = rows.filter(r => /[├└]─ |Fix shopping cart/.test(r) && !r.includes('Outcome'))
+  expect(treeRows.length).toBeGreaterThanOrEqual(4)
+  for (const r of treeRows) expect((r.match(CATS) ?? []).length).toBeLessThanOrEqual(1)
+  await ui.unmount()
+})
+
+test('two members on one file raise an overlap warning', async ($, on) => {
+  const ui = await cartRun($, on)
+  expect(await ui.find({ in: KEY, text: /cart\.ts edited by 2 members/ })).toBeDefined()
+  expect(await ui.find({ in: KEY, text: /cart\.ts edited by 2 agents/ })).toBeDefined() // the insights strip
+  await ui.unmount()
+})
+
+test('the board puts a run in lanes and status columns', async ($, on) => {
+  const ui = await cartRun($, on)
+  await ui.key({ in: KEY, key: 'v' })
+  const rows = await rowTexts(ui)
+  expect(rows.some(r => r.includes('RUNNING 0') && r.includes('DONE 3') && /FAILED( OR STOPPED)? 0/.test(r))).toBe(true)
+  expect(rows.some(r => r.includes('Fix shopping cart calculation bugs') && r.includes('3/3'))).toBe(true)
+  expect(rows.some(r => r.includes('Fix cart total quantities'))).toBe(true)
+  // j walks the cards; the detail follows the selected one
+  await ui.key({ in: KEY, key: 'j' })
+  expect(await ui.find({ in: KEY, text: /Format prices with two decimals/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('the timeline draws a ruler and bars; selecting a bar selects its agent', async ($, on) => {
+  const ui = await cartRun($, on)
+  await ui.key({ in: KEY, key: 'v' })
+  await ui.key({ in: KEY, key: 'v' })
+  const rows = await rowTexts(ui)
+  expect(rows.some(r => r.includes('0:00') && r.includes('0:09'))).toBe(true)
+  expect(rows.filter(r => r.includes('━')).length).toBe(3)
+  const selected = () => rowTexts(ui).then(rs => rs.find(r => r.includes('▌') && r.includes('━')))
+  expect(await selected()).toContain('Fix cart total quantities')
+  await ui.key({ in: KEY, key: 'j' })
+  expect(await selected()).toContain('Format prices')
+  await ui.unmount()
+})
+
+test('insights name what needs a look, and i jumps to it', async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  on('ui.open', () => ({ value: { isPlaced: true as const } }))
+  on('ui.toast', () => ({ value: undefined }) as never)
+  on('agent.list', () => ({ value: [] }) as never)
+  on('agent.spawn', (_$, e) => ({ model: 'claude-haiku-4-5', agentId: `q-${e.tool_use_id}` }))
+  on('tool.call', { tool: 'Read' }, () => ({ result: { file: { content: '' } } }) as never)
+  await $.agent.spawn({ ...spawnBase, tool_use_id: 'a', prompt: 'check cache.ts', description: 'Verify cache.ts', subagentType: 'Explore' } as never)
+  await $.agent.spawn({ ...spawnBase, tool_use_id: 'b', prompt: 'check auth.ts', description: 'Verify auth.ts', subagentType: 'Explore' } as never)
+  await clock.advance(150_000)
+  // one of them keeps calling tools; the other goes quiet
+  await $.tool.call({ tool: 'Read', tool_use_id: 'r1', agentId: 'q-b', file_path: '/repo/auth.ts' } as never)
+  await clock.advance(30_000)
+  const ui = await $.ui.mount({ plugin: 'agent-tree', surface: 'terminal', ...PANE })
+  expect(await ui.find({ in: KEY, text: /Verify cache\.ts quiet for 3m, no tool call/ })).toBeDefined()
+  expect(await ui.find({ in: KEY, text: /Verify auth\.ts quiet/ })).toBeUndefined()
+  await ui.key({ in: KEY, key: 'i' })
+  const rows = contentRows(await ui.drawn({ in: KEY })).map(r => leaves(r).map(l => l.text).join(''))
+  expect(rows.find(r => r.includes('▌'))).toContain('Verify cache.ts')
+  await ui.unmount()
+})
+
+test('insights from data: quiet, overlap, failures, slow phase, tokens', () => {
+  const n = (id: string, over: Partial<AgentNode> = {}): AgentNode => ({ id, kind: 'agent', label: id, status: 'done', startedAt: 0, endedAt: 1000, tools: 1, ...over })
+  const now = 1_000_000
+  const wf = n('wf', { kind: 'workflow', phases: ['Find', 'Verify'], status: 'running' })
+  const all = [
+    wf,
+    n('f1', { parentId: 'wf', phase: 'Find', startedAt: 0, endedAt: 60_000, tokens: 10_000 }),
+    n('v1', { parentId: 'wf', phase: 'Verify', startedAt: 60_000, endedAt: 400_000, tokens: 40_000, changes: { '/r/a.ts': { edits: 1, added: 1, removed: 0 } } }),
+    n('v2', { parentId: 'wf', phase: 'Verify', status: 'running', startedAt: 60_000, endedAt: undefined, lastToolAt: now - QUIET_MS - 1, changes: { '/r/a.ts': { edits: 1, added: 1, removed: 0 } } }),
+    n('v3', { parentId: 'wf', phase: 'Verify', status: 'failed', startedAt: 60_000, endedAt: 90_000 }),
+  ]
+  const kinds = insights(all, all, now).map(i => i.kind)
+  expect(kinds).toEqual(['quiet', 'overlap', 'failed', 'slow', 'tokens'])
+  expect(insights(all, all, now).find(i => i.kind === 'slow')!.text).toMatch(/^Verify took \d+% of the time$/)
 })

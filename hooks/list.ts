@@ -367,13 +367,18 @@ export type Group = 'none' | 'type' | 'where' | 'status'
 export const GROUPS: Group[] = ['none', 'type', 'where', 'status']
 export const GROUP_NAMES: Record<Group, string> = { none: 'no grouping', type: 'by type', where: 'by worktree', status: 'by status' }
 
+// A row of the run list or of a run's tree. `guide` is the tree's drawing to the
+// left of the row (├─ └─ │), `fold` a row that holds others and can open or close.
+export type Fold = { key: string; isOpen: boolean }
 export type Item =
-  | { kind: 'node'; node: AgentNode; species: Species; depth: number }
-  | { kind: 'phase'; key: string; wfId: string; phase: string; isOpen: boolean; total: number; done: number; failed: number; running: number; stopped: number }
-  | { kind: 'more'; key: string; count: number }
+  | { kind: 'node'; node: AgentNode; species: Species; depth: number; guide?: string; fold?: Fold }
+  | { kind: 'phase'; key: string; wfId: string; phase: string; isOpen: boolean; total: number; done: number; failed: number; running: number; stopped: number; guide?: string }
+  | { kind: 'more'; key: string; count: number; guide?: string }
   | { kind: 'header'; text: string; count?: number }
+  // a line under a cluster's row: its aspects, a file overlap, its combined outcome
+  | { kind: 'info'; tone: 'chips' | 'warn' | 'outcome'; nodeId: string; guide: string }
 
-export const isSelectable = (it: Item | undefined) => it !== undefined && it.kind !== 'header'
+export const isSelectable = (it: Item | undefined) => it !== undefined && it.kind !== 'header' && it.kind !== 'info'
 
 export function childrenOf(nodes: AgentNode[], id: string) {
   return nodes.filter(n => n.parentId === id)
@@ -390,7 +395,7 @@ export function counts(kids: AgentNode[]) {
   return c
 }
 
-const passes = (n: AgentNode, kids: AgentNode[], f: Filter) =>
+export const passes = (n: AgentNode, kids: AgentNode[], f: Filter) =>
   f === 'all' ||
   (f === 'running' && (n.status === 'running' || kids.some(k => k.status === 'running'))) ||
   (f === 'failed' && (n.status === 'failed' || kids.some(k => k.status === 'failed')))
@@ -414,7 +419,10 @@ const groupOf = (n: AgentNode, g: Group, now: number): string =>
 // The top level: one row per subagent or workflow; a subagent's own subagents sit under it.
 // Live holds what is still running; a finished run moves to History. Rows sit under
 // group headers: the chosen grouping, or the day in History when there is none.
-export function topItems(nodes: AgentNode[], filter: Filter, isHistory: boolean, now: number, group: Group = 'none'): Item[] {
+export function topItems(
+  nodes: AgentNode[], filter: Filter, isHistory: boolean, now: number, group: Group = 'none',
+  flipped: readonly string[] = [], showDone: readonly string[] = [],
+): Item[] {
   const ids = new Set(nodes.map(n => n.id))
   const tops = nodes.filter(n => !n.parentId || !ids.has(n.parentId))
   const sorted = isHistory
@@ -434,15 +442,86 @@ export function topItems(nodes: AgentNode[], filter: Filter, isHistory: boolean,
   const out: Item[] = []
   for (const [key, list] of buckets) {
     if (useHeaders) out.push({ kind: 'header', text: key, count: list.length })
-    for (const n of list) {
-      out.push({ kind: 'node', node: n, species: speciesOf(n, false), depth: 0 })
-      if (n.kind === 'agent') {
-        for (const k of childrenOf(nodes, n.id)) if (passes(k, [], filter)) out.push({ kind: 'node', node: k, species: speciesOf(k, false), depth: 1 })
-      }
-    }
+    // folded by default: the run list stays one row per run until one is opened
+    for (const n of list) emitTree(n, nodes, { filter, flipped, showDone }, out, { guide: '', prefix: '', depth: 0, defaultOpen: false })
   }
   return out
 }
+
+// ── the tree: a run and everything under it, with guide lines ─────────────
+
+type TreeOpts = { filter: Filter; flipped: readonly string[]; showDone: readonly string[] }
+type At = { guide: string; prefix: string; depth: number; defaultOpen: boolean }
+
+const isOpenNow = (key: string, byDefault: boolean, flipped: readonly string[]) => byDefault !== flipped.includes(key)
+const visibleKids = (nodes: AgentNode[], id: string, f: Filter) =>
+  childrenOf(nodes, id).filter(k => passes(k, childrenOf(nodes, k.id), f)).sort((a, b) => a.startedAt - b.startedAt)
+const branch = (prefix: string, isLast: boolean) => ({ guide: `${prefix}${isLast ? '└─ ' : '├─ '}`, prefix: `${prefix}${isLast ? '   ' : '│  '}` })
+
+// One node, then (when open) its cluster lines and its children: a group's members,
+// a workflow's phases and their agents, an agent's own subagents.
+function emitTree(n: AgentNode, nodes: AgentNode[], o: TreeOpts, out: Item[], at: At): void {
+  const isWorkflow = n.kind === 'workflow'
+  const kids = isWorkflow ? [] : visibleKids(nodes, n.id, o.filter)
+  const hasKids = isWorkflow ? childrenOf(nodes, n.id).length > 0 : kids.length > 0
+  // closed-by-default rows (the run list) and open-by-default rows (inside a run) keep separate keys
+  const key = `${at.defaultOpen ? 'o' : 'c'}:${n.id}`
+  const isOpen = hasKids && isOpenNow(key, at.defaultOpen, o.flipped)
+  out.push({ kind: 'node', node: n, species: speciesOf(n, !!n.phase), depth: at.depth, guide: at.guide, ...(hasKids ? { fold: { key, isOpen } } : {}) })
+  if (!isOpen) return
+  const more = hasKids ? `${at.prefix}│  ` : `${at.prefix}   `
+  if (n.kind === 'group') {
+    out.push({ kind: 'info', tone: 'chips', nodeId: n.id, guide: more })
+    if (overlaps(scopeNodes(nodes, { kind: 'node', id: n.id }).filter(k => k.id !== n.id)).length) out.push({ kind: 'info', tone: 'warn', nodeId: n.id, guide: more })
+    if (n.summary && n.status !== 'running') out.push({ kind: 'info', tone: 'outcome', nodeId: n.id, guide: more })
+  }
+  if (isWorkflow) return emitPhases(n, nodes, o, out, at)
+  kids.forEach((k, i) => emitTree(k, nodes, o, out, { ...branch(at.prefix, i === kids.length - 1), depth: at.depth + 1, defaultOpen: true }))
+}
+
+// A workflow's phases: one folding row each; a phase with nothing running or failed
+// folds to its row, and finished agents past the first few fold to a "… N done" row.
+function emitPhases(wf: AgentNode, nodes: AgentNode[], o: TreeOpts, out: Item[], at: At): void {
+  const kids = childrenOf(nodes, wf.id).sort((a, b) => a.startedAt - b.startedAt)
+  const order = [...(wf.phases ?? [])]
+  for (const k of kids) if (!order.includes(k.phase ?? 'Agents')) order.push(k.phase ?? 'Agents')
+  const phases = order
+    .map(phase => ({ phase, list: kids.filter(k => (k.phase ?? 'Agents') === phase && passes(k, [], o.filter)) }))
+    .filter(p => p.list.length > 0)
+  phases.forEach(({ phase, list }, pi) => {
+    const c = counts(list)
+    const key = `${wf.id}:${phase}`
+    const isOpen = (c.running > 0 || c.failed > 0) !== o.flipped.includes(key)
+    const b = branch(at.prefix, pi === phases.length - 1)
+    out.push({ kind: 'phase', key, wfId: wf.id, phase, isOpen, ...c, guide: b.guide })
+    if (!isOpen) return
+    const failed = list.filter(k => k.status === 'failed')
+    const running = list.filter(k => k.status === 'running')
+    const done = list.filter(k => k.status !== 'running' && k.status !== 'failed').sort((a, z) => (z.endedAt ?? 0) - (a.endedAt ?? 0))
+    const doneShown = o.showDone.includes(key) || done.length <= SHOWN_DONE + 1 ? done : done.slice(0, SHOWN_DONE)
+    const rows = [...failed, ...running, ...doneShown]
+    const hidden = done.length - doneShown.length
+    rows.forEach((n, i) => emitTree(n, nodes, o, out, { ...branch(b.prefix, i === rows.length - 1 && hidden === 0), depth: at.depth + 2, defaultOpen: true }))
+    if (hidden > 0) out.push({ kind: 'more', key, count: hidden, guide: branch(b.prefix, true).guide })
+  })
+}
+
+// Inside an opened run: the run's own row first, then its whole tree, open.
+export function runTree(run: AgentNode, nodes: AgentNode[], filter: Filter, flipped: readonly string[], showDone: readonly string[]): Item[] {
+  const out: Item[] = []
+  emitTree(run, nodes, { filter, flipped, showDone }, out, { guide: '', prefix: '', depth: 0, defaultOpen: true })
+  return out
+}
+
+// Files two or more agents of a scope edited: where parallel work can collide.
+export function overlaps(scope: AgentNode[]): { path: string; by: AgentNode[] }[] {
+  return fileRows(scope)
+    .map(r => ({ path: r.path, by: [...new Map(r.by.map(b => [b.node.id, b.node])).values()] }))
+    .filter(r => r.by.length >= 2)
+}
+
+// The agents a run or a top-level view covers, for the board, the timeline and the insights.
+export const leafAgents = (scope: AgentNode[]) => scope.filter(n => n.kind === 'agent')
 
 const SHOWN_DONE = 3
 

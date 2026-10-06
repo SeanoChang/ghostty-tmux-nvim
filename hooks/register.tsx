@@ -443,9 +443,10 @@ export const register: Register = (on, options) => {
     const input = e as unknown as Record<string, unknown>
     const { act, activity } = describeTool(tool, input)
     const list = await read($, nodes)
+    const calledAt = await $.clock.now()
     if (list.some(n => n.id === agentId)) {
       await patch($, agentId, n => ({
-        ...n, tools: n.tools + 1, lastTool: tool, act, activity, status: 'running', endedAt: undefined,
+        ...n, tools: n.tools + 1, lastTool: tool, lastToolAt: calledAt, act, activity, status: 'running', endedAt: undefined,
         work: act === 'think' ? n.work : { ...n.work, [act]: (n.work?.[act] ?? 0) + 1 },
       }))
       // An agent that hands its report back through a tool ends with no final text.
@@ -462,7 +463,7 @@ export const register: Register = (on, options) => {
       if (!wf) return next(e)
       await add($, {
         id: agentId, kind: 'agent', parentId: wf.id, label: `agent ${agentId.slice(0, 6)}`,
-        status: 'running', startedAt: await $.clock.now(), tools: 1, lastTool: tool, act, activity,
+        status: 'running', startedAt: calledAt, tools: 1, lastTool: tool, lastToolAt: calledAt, act, activity,
         work: act === 'think' ? {} : { [act]: 1 },
       })
     }
@@ -565,7 +566,8 @@ export const register: Register = (on, options) => {
     return (
       <Box flexDirection="row" gap={1}>
         <Text color={st.color}>{st.icon}</Text>
-        <Text>{tool === 'Workflow' ? t.kind.workflow : t.kind.agent}</Text>
+        {/* one glyph means status; only a workflow adds one for what it is */}
+        {tool === 'Workflow' ? <Text>{t.kind.workflow}</Text> : null}
         <Text bold wrap="truncate-end">{label}</Text>
         <Text dimColor>· {kind} · details in the Agents pane</Text>
       </Box>

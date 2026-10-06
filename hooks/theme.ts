@@ -16,17 +16,16 @@ export type Theme = {
   status: Record<NodeStatus, { icon: string; word: string; color: string }>
   // the running glyph's second frame, so a live row breathes
   runningAlt: string
-  kind: { workflow: string; group: string; agent: string; file: string }
-  // a workflow member's mark: kitty keeps its school of sea creatures
-  member: (n: Pick<AgentNode, 'id'>) => string
+  // One glyph per row means status. A second one appears only for what holds
+  // others (a workflow, a cluster) and for files; a plain agent gets none.
+  kind: { workflow: string; group: string; file: string }
   bar: { full: string; empty: string }
+  // the mark on a warning: a quiet agent, a file two agents edited
+  warn: string
   fold: { open: string; closed: string }
   cursor: string
   words: { live: string; history: string; emptyLive: string; emptyHistory: string; emptyHint: string }
 }
-
-const SEA = ['🐡', '🐠', '🐙', '🐟']
-const hash = (s: string) => [...s].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7)
 
 const MINIMAL: Theme = {
   name: 'minimal',
@@ -41,9 +40,9 @@ const MINIMAL: Theme = {
     killed: { icon: '■', word: 'Stopped', color: '#8a909c' },
   },
   runningAlt: '○',
-  kind: { workflow: '◆', group: '◇', agent: '▸', file: '·' },
-  member: () => '▸',
+  kind: { workflow: '◆', group: '◇', file: '·' },
   bar: { full: '▰', empty: '▱' },
+  warn: '⚠',
   fold: { open: '▾', closed: '▸' },
   cursor: '▌',
   words: {
@@ -66,26 +65,26 @@ const KITTY: Theme = {
     killed: { icon: '🙀', word: 'Stopped', color: '#b8968a' },
   },
   runningAlt: '🐈',
-  kind: { workflow: '🧶', group: '🐾', agent: '🐱', file: '🧾' },
-  member: n => SEA[hash(n.id) % SEA.length]!,
+  kind: { workflow: '🧶', group: '🐾', file: '🧾' },
   bar: { full: '▰', empty: '▱' },
+  warn: '⚠',
   fold: { open: '▾', closed: '▸' },
   cursor: '▌',
   words: {
     live: 'Out exploring', history: 'Back home',
     emptyLive: 'ᓚᘏᗢ zzz · No cats out.', emptyHistory: 'No cats have come home yet.',
-    emptyHint: 'Subagents (🐱) and workflows (🧶) appear here while they run, then move to History.',
+    emptyHint: 'Subagents and workflows (🧶) appear here while they run, then move to History.',
   },
 }
 
 export const THEMES: Record<ThemeName, Theme> = { minimal: MINIMAL, kitty: KITTY }
 export const themeOf = (name: unknown): Theme => (name === 'kitty' ? KITTY : MINIMAL)
 
-// The glyph a row shows for what a node is.
-export function kindGlyph(t: Theme, n: Pick<AgentNode, 'id' | 'kind'>, inWorkflow: boolean): string {
+// The glyph a row shows for what a node is: only what holds others has one.
+export function kindGlyph(t: Theme, n: Pick<AgentNode, 'kind'>): string {
   if (n.kind === 'workflow') return t.kind.workflow
   if (n.kind === 'group') return t.kind.group
-  return inWorkflow ? t.member(n) : t.kind.agent
+  return ''
 }
 
 // ── display width: how many terminal cells a string takes ──────────────────

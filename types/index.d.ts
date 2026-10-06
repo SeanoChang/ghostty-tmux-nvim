@@ -25,6 +25,8 @@ export type AgentNode = {
   endedAt?: number
   tools: number
   lastTool?: string
+  /** When it last called a tool: a running agent quiet for long is worth a look. */
+  lastToolAt?: number
   /** Tool calls by kind, for "Read 3 files, ran 2 commands". */
   work?: { read?: number; write?: number; run?: number; web?: number }
   /** Files it edited or wrote, each with its edit count and lines added and removed. */
