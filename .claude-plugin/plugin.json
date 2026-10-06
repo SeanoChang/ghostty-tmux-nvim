@@ -2,5 +2,17 @@
   "name": "agent-tree",
   "version": "0.1.0",
   "description": "Side pane that shows running subagents and workflows as a live tree",
-  "types": "./types/index.d.ts"
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "theme": {
+      "type": "string",
+      "title": "Theme",
+      "description": "How the Agents pane looks: minimal (plain glyphs, any terminal) or kitty (warm colours and emoji cats)",
+      "default": "minimal",
+      "options": [
+        "minimal",
+        "kitty"
+      ]
+    }
+  }
 }

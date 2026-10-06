@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine, Register, Timer } from 'claude-code'
 
 import type { AgentNode, EditRecord, NodeStatus, ViewProps } from '../types'
+import { themeOf, type ThemeName } from './theme'
 import {
   changesLine, cleanTitle, describeTool, diffCounts, editRecords, editedPath, fileRows, firstPrompt, firstSentence, handbackOf, fitProps,
   lineDiff, parseDigest, parseJournal, readableResult, scopeNodes, transcriptEdits,
@@ -10,12 +11,16 @@ import {
 const PANE = 'agent-tree'
 // Bumped when the view module's props or state change shape: a new key mounts a
 // fresh instance, where the old one would carry its state into the new code.
-const VIEW_KEY = 'tree-v6'
+const VIEW_KEY = 'tree-v7'
 const TITLE = 'Agents'
 const HISTORY = 'history'
 const HISTORY_RUNS = 150
 const nodes = atom({ plugin: 'agent-tree', key: 'nodes' } as const, [])
 const edits = atom({ plugin: 'agent-tree', key: 'edits' } as const, [])
+// The last wheel move over the pane, which the view applies once per seq.
+const wheel = atom({ plugin: 'agent-tree', key: 'wheel' } as const, { seq: 0, by: 0 })
+// The look chosen in /config, read from the options at each load.
+let themeName: ThemeName = 'minimal'
 const EDITS = 'edits'
 const EDITS_KEPT = 400
 const EDIT_TEXT = 6000
@@ -348,7 +353,8 @@ async function archive($: Engine) {
   await $.store.set(EDITS, [...pastEdits, ...freshEdits.filter(r => !known.has(r.id))].filter(r => kept.has(r.agentId)).slice(-EDITS_KEPT))
 }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
+  themeName = options?.theme === 'kitty' ? 'kitty' : 'minimal'
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'agent-tree',
@@ -553,12 +559,13 @@ export const register: Register = on => {
       ? scriptField(input.script, 'description') ?? input.name ?? scriptField(input.script, 'name') ?? 'workflow'
       : input.description ?? 'subagent'
     const kind = tool === 'Workflow' ? 'Workflow' : `${input.subagent_type ?? 'General-purpose'} agent`
-    const [glyph, color] = isErrored ? ['✗', '#f7768e'] : isRunning ? ['●', '#e0af68'] : ['✓', '#9ece6a']
+    const t = themeOf(themeName)
+    const st = t.status[isErrored ? 'failed' : isRunning ? 'running' : 'done']
 
     return (
       <Box flexDirection="row" gap={1}>
-        <Text color={color}>{glyph}</Text>
-        <Text>{tool === 'Workflow' ? '🌊' : '🐱'}</Text>
+        <Text color={st.color}>{st.icon}</Text>
+        <Text>{tool === 'Workflow' ? t.kind.workflow : t.kind.agent}</Text>
         <Text bold wrap="truncate-end">{label}</Text>
         <Text dimColor>· {kind} · details in the Agents pane</Text>
       </Box>
@@ -571,6 +578,14 @@ export const register: Register = on => {
     if (e.requestId !== PANE || data?.type !== 'diff') return next(e)
     diffPath = typeof data.path === 'string' ? data.path : null
     return { props: await viewProps($) }
+  })
+
+  // The pane's rows are the view's own, so the engine has nothing to scroll:
+  // each wheel tick is handed to the view, which moves its selection or text.
+  on('ui.scroll', { requestId: PANE }, async ($, e, next) => {
+    if (e.origin.kind !== 'person') return next(e)
+    await update($, wheel, w => ({ seq: (w?.seq ?? 0) + 1, by: e.by }))
+    return {}
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -586,7 +601,7 @@ export const register: Register = on => {
 
 async function viewProps($: Engine): Promise<ViewProps> {
   const history = ((await $.store.get(HISTORY)) as AgentNode[] | undefined) ?? []
-  const base = { ...fitProps({ nodes: await read($, nodes), history, at: await $.clock.now() }), ...await repoProp($) }
+  const base = { ...fitProps({ nodes: await read($, nodes), history, at: await $.clock.now() }), ...await repoProp($), theme: themeName, wheel: await read($, wheel) }
   if (!diffPath) return base
   await backfill($, diffPath, [...history, ...base.nodes])
   const pastEdits = ((await $.store.get(EDITS)) as EditRecord[] | undefined) ?? []

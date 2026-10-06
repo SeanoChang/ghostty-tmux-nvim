@@ -6,10 +6,11 @@ import {
   changesLine, cleanTitle, describeTool, diffCounts, editRecords, editStats, fileRows, handbackOf, lineDiff, noReportReason, phaseWords, readableResult, firstPrompt, fitProps, markFor, parseDigest, parseJournal,
   pipeline, plain, prettyModel, prettyType, scopeNodes, shortPaths, taskText, topItems, transcriptEdits, workSummary, workflowItems,
 } from '../hooks/list'
-import { bar, viewProps, viewState, wrap } from '../hooks/view'
+import { bar, unifiedHunks, viewProps, viewState, wrap } from '../hooks/view'
+import { cellWidth } from '../hooks/theme'
 import type { AgentNode } from '../types'
 
-const KEY = 'tree-v6'
+const KEY = 'tree-v7'
 const PANE = {
   component: 'Pane' as const,
   requestId: 'agent-tree',
@@ -101,10 +102,12 @@ describe('a 50-agent workflow', () => {
     expect(await ui.find({ in: KEY, text: /src\/retry\.ts/ })).toBeDefined()
 
     await ui.key({ in: KEY, key: 'return' }) // open retry.ts's diff
-    expect(await ui.find({ in: KEY, text: 'Verify  ›  ' })).toBeDefined()
-    expect(await ui.find({ in: KEY, text: '+  c' })).toBeDefined()
-    expect(await ui.find({ in: KEY, text: '−  x' })).toBeDefined()
-    expect(await ui.find({ in: KEY, text: /enter: go to agent/ })).toBeDefined()
+    expect(await ui.find({ in: KEY, text: 'Verify' })).toBeDefined()
+    const codes = await ui.findAll({ in: KEY, type: 'Code' })
+    expect(codes.every(c => c.props.format === 'diff' && c.props.wrap === 'wrap' && c.props.path === '/repo/src/retry.ts')).toBe(true)
+    expect(codes.some(c => String(c.props.source).includes('\n+c'))).toBe(true)
+    expect(codes.some(c => String(c.props.source).includes('\n-x'))).toBe(true)
+    expect(await ui.find({ in: KEY, text: /go to agent/ })).toBeDefined()
     await ui.key({ in: KEY, key: 'return' }) // trace the first edit to its agent
     expect(await ui.find({ in: KEY, text: /Verify phase/ })).toBeDefined()
     expect(await ui.find({ in: KEY, text: 'open' })).toBeDefined()
@@ -278,8 +281,9 @@ test('a run recorded before edits were kept gets its diff from the transcript', 
   await ui.key({ in: KEY, key: '2' })
   await ui.key({ in: KEY, key: 'c' }) // the run, straight into Changes
   await ui.key({ in: KEY, key: 'return' }) // config.json's diff
-  expect(await ui.find({ in: KEY, text: '+  ' + '  "retries": 3,' })).toBeDefined()
-  expect(await ui.find({ in: KEY, text: '−  ' + '  "retries": 1,' })).toBeDefined()
+  const codes = await ui.findAll({ in: KEY, type: 'Code' })
+  expect(codes.some(c => String(c.props.source).includes('\n+  "retries": 3,'))).toBe(true)
+  expect(codes.some(c => String(c.props.source).includes('\n-  "retries": 1,'))).toBe(true)
   expect(await ui.find({ in: KEY, text: /never/ })).toBeUndefined() // the failed call is left out
   await ui.unmount()
 })
@@ -400,4 +404,130 @@ test('History shows this repository first; r shows every repository', async ($, 
   expect(await ui.find({ in: KEY, text: 'Run from before repos' })).toBeDefined()
   expect(await ui.find({ in: KEY, text: /all repos/ })).toBeDefined()
   await ui.unmount()
+})
+
+// ── phase 1: themes, the frame and its widths, help, the wheel ─────────────
+
+const t0 = Date.parse('2026-10-05T10:00:00Z')
+const runs = [
+  { id: 'w1', kind: 'workflow', label: 'Review changed files across dimensions', status: 'done', startedAt: t0, endedAt: t0 + 242000, tools: 0, phases: ['Review'], summary: 'Found 3 issues.', repo: '/repo/a' },
+  { id: 'w1a', kind: 'agent', parentId: 'w1', label: 'review:bugs', phase: 'Review', status: 'done', startedAt: t0, endedAt: t0 + 90000, tools: 3 },
+  { id: 'h1', kind: 'agent', label: 'Map nark-os agents and memory', type: 'Explore', status: 'done', startedAt: t0 + 300000, endedAt: t0 + 351000, tools: 15, result: 'Tools, not personas.', repo: '/repo/a' },
+  { id: 'h2', kind: 'agent', label: 'Build the explainer', type: 'fork', status: 'failed', startedAt: t0 + 400000, endedAt: t0 + 1000000, tools: 0, repo: '/repo/a' },
+]
+const inRepoA = () => ({ value: { exitCode: 0, stdout: '/repo/a\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }) as never
+
+async function historyPane($: Engine, on: On, surface: 'terminal' | 'desktop' = 'terminal') {
+  mock.clock(on)
+  mock.store(on, { history: runs })
+  on('process.run', inRepoA)
+  const ui = await $.ui.mount({ plugin: 'agent-tree', surface, ...PANE })
+  await ui.key({ in: KEY, key: '2' })
+  return ui
+}
+
+// The text leaves of one drawn row, with the cell each one starts at.
+type Drawn = { type?: string; props?: Record<string, unknown>; children?: unknown[] }
+function leaves(x: unknown, out: { text: string; x: number }[] = [], at = { x: 0 }) {
+  if (typeof x === 'string' || typeof x === 'number') { out.push({ text: String(x), x: at.x }); at.x += cellWidth(String(x)); return out }
+  const el = x as Drawn
+  for (const k of el?.children ?? []) leaves(k, out, at)
+  return out
+}
+function contentRows(tree: unknown): unknown[] {
+  const middle = (tree as Drawn).children?.[1] as Drawn
+  return ((middle.children?.[1] as Drawn).children ?? []) as unknown[]
+}
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`the minimal theme draws plain glyphs (${surface})`, async ($, on) => {
+    const ui = await historyPane($, on, surface)
+    expect(await ui.find({ in: KEY, text: '✗' })).toBeDefined()
+    expect(await ui.find({ in: KEY, text: /😿/ })).toBeUndefined()
+    await ui.unmount()
+  })
+  test(`the kitty theme draws cats (${surface})`, { options: { theme: 'kitty' } }, async ($, on) => {
+    const ui = await historyPane($, on, surface)
+    expect(await ui.find({ in: KEY, text: /😿/ })).toBeDefined()
+    expect(await ui.find({ in: KEY, text: /🧶/ })).toBeDefined()
+    expect(await ui.find({ in: KEY, text: /Back home/ })).toBeDefined()
+    await ui.unmount()
+  })
+}
+
+test('under 60 columns the pane asks to be widened', async ($, on) => {
+  const ui = await historyPane($, on)
+  await ui.resize({ in: KEY, columns: 50, rows: 24 })
+  expect(await ui.find({ in: KEY, text: /Widen the pane to at least 60 columns/ })).toBeDefined()
+  expect(await ui.find({ in: KEY, text: 'Map nark-os agents and memory' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('from 140 columns the list and the detail sit side by side', async ($, on) => {
+  const ui = await historyPane($, on)
+  await ui.resize({ in: KEY, columns: 150, rows: 24 })
+  const rows = contentRows(await ui.drawn({ in: KEY })).map(r => leaves(r))
+  // one row holds both a list entry and, right of the divider, the detail
+  const both = rows.find(r => r.some(l => l.text === 'Build the explainer') && r.some(l => l.text === ' │ '))
+  expect(both).toBeDefined()
+  const divider = both!.find(l => l.text === ' │ ')!.x
+  expect(rows.some(r => r.some(l => l.text === 'Outcome   ' || l.text.startsWith('Outcome')) && r.some(l => l.text.startsWith('Outcome') && l.x > divider))).toBe(true)
+  await ui.unmount()
+})
+
+test('the run list keeps start and duration in fixed columns', async ($, on) => {
+  const ui = await historyPane($, on)
+  await ui.resize({ in: KEY, columns: 110, rows: 24 })
+  const rows = contentRows(await ui.drawn({ in: KEY })).map(r => leaves(r))
+  const ends = rows.flatMap(r => {
+    const d = r.find(l => /^ *(\d+m \d\ds|\d+s)$/.test(l.text) && l.text.length === 8)
+    return d ? [d.x + cellWidth(d.text)] : []
+  })
+  expect(ends.length).toBe(3)
+  expect(new Set(ends).size).toBe(1)
+  const listRows = rows.filter(r => r.some(l => /^ *(\d+m \d\ds|\d+s)$/.test(l.text) && l.text.length === 8))
+  const starts = listRows.flatMap(r => {
+    const c = r.find(l => /^ *\d{1,2}:\d\d [AP]M$/.test(l.text))
+    return c ? [c.x + cellWidth(c.text)] : []
+  })
+  expect(starts.length).toBe(3)
+  expect(new Set(starts).size).toBe(1)
+  await ui.unmount()
+})
+
+test('? shows every key, and any key closes it', async ($, on) => {
+  const ui = await historyPane($, on)
+  await ui.key({ in: KEY, key: '?' })
+  expect(await ui.find({ in: KEY, text: /every key the pane takes/ })).toBeDefined()
+  expect(await ui.find({ in: KEY, text: 'first, last' })).toBeDefined()
+  await ui.key({ in: KEY, key: 'j' })
+  expect(await ui.find({ in: KEY, text: /every key the pane takes/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('the wheel over the pane moves the selection', async ($, on) => {
+  const ui = await historyPane($, on)
+  const selected = async () => {
+    const rows = contentRows(await ui.drawn({ in: KEY })).map(r => leaves(r))
+    return rows.find(r => r.some(l => l.text === '▌'))?.find(l => ['Build the explainer', 'Map nark-os agents and memory', 'Review changed files across dimensions'].includes(l.text))?.text
+  }
+  const first = await selected()
+  await $.ui.scroll({ component: 'Pane', requestId: 'agent-tree', offset: 0, by: 1, bodyRows: 40, contentRows: 40, origin: { kind: 'person' } } as never)
+  const second = await selected()
+  expect(first).toBeDefined()
+  expect(second).toBeDefined()
+  expect(second).not.toBe(first)
+  await ui.unmount()
+})
+
+test('edits become unified-diff hunks under the size limit', () => {
+  const lines = lineDiff('a\nb', 'a\nB\nc', 10)
+  const [hunk] = unifiedHunks(lines)
+  expect(hunk!.split('\n')[0]).toBe('@@ -10,2 +10,3 @@')
+  expect(hunk).toContain('\n-b')
+  expect(hunk).toContain('\n+B')
+  const big = lineDiff('', Array.from({ length: 400 }, (_, i) => `line ${i} ${'x'.repeat(60)}`).join('\n'), 1)
+  const hunks = unifiedHunks(big)
+  expect(hunks.length).toBeGreaterThan(1)
+  expect(hunks.every(h => h.length <= 10000)).toBe(true)
 })
