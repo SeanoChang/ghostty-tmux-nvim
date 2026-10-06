@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
+import { NOTE_DESCRIPTION, PATCH_DESCRIPTION, SHOW_DESCRIPTION, STATUS_DESCRIPTION } from '../hooks/text.ts'
 
 const SURFACES = ['desktop', 'terminal'] as const
 
@@ -313,7 +314,7 @@ test('the brief and the answers are saved to the store', async ($, on) => {
   await show($, BRIEF)
   const ui = await $.ui.mount({ plugin: 'brief', surface: 'desktop', component: 'Pane', requestId: 'brief', props: PANE_PROPS })
   await ui.select({ key: 'ask-2', value: 'no' })
-  expect(store.last).toBe('scheduling-sent-messages')
+  expect(store['last:/proj']).toBe('scheduling-sent-messages')
   const last = store['brief:scheduling-sent-messages'] as { brief?: { title?: string }; answers?: Record<string, string> }
   expect(last.brief?.title).toBe('Scheduling Sent Messages')
   expect(last.answers?.['2']).toBe('no')
@@ -464,4 +465,24 @@ test('a subagent tagged [brief 3] runs on point 3, then waits for review', async
   await $.tool.call({ tool: 'Agent', description: '[brief 3] build the worker', prompt: 'go' } as never)
   expect(await ui.find({ text: '◎ needs review' })).toBeDefined()
   expect(await ui.find({ text: 'EVIDENCE · needs review · build the worker' })).toBeDefined()
+})
+
+test('every tool description fits the 2048 characters the model reads, and guide serves the full reference', async ($, on) => {
+  stub(on)
+  for (const d of [SHOW_DESCRIPTION, PATCH_DESCRIPTION, NOTE_DESCRIPTION, STATUS_DESCRIPTION]) expect(d.length).toBeLessThan(2048)
+  const ref = (await $.tool.call({ tool: 'mcp__brief__guide' } as never)) as { result?: string }
+  expect(String(ref.result)).toContain('machine: {source, screens:{state: mock}}')
+  expect(String(ref.result)).toContain('image: {path, alt}')
+})
+
+test('Respond accepts the standing suggestions, so no decision stays open', async ($, on) => {
+  const { sent } = stub(on)
+  await show($, BRIEF)
+  const ui = await $.ui.mount({ plugin: 'brief', surface: 'desktop', component: 'Pane', requestId: 'brief', props: PANE_PROPS })
+  expect(await ui.find({ text: '◆ 1 of 1 decisions open' })).toBeDefined()
+  await ui.press({ key: 'respond' })
+  expect(sent.at(-1)).toContain('_(not opened; default kept)_')
+  expect(await ui.find({ text: '✓ all 1 decided' })).toBeDefined()
+  await ui.press({ key: 'open-log' })
+  expect(await ui.find({ text: 'Yes, 3 times' })).toBeDefined()
 })
