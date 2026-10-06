@@ -134,3 +134,30 @@ export function toMarkdown(
   }
   return out.join('\n') + '\n'
 }
+
+/** One line for a brief tool's row in the transcript, in place of its whole JSON input. */
+export function toolLine(tool: string, input: unknown): string {
+  const i = (typeof input === 'object' && input !== null ? input : {}) as Record<string, unknown>
+  const list = (v: unknown) => (Array.isArray(v) ? (v as Record<string, unknown>[]) : [])
+  const count = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
+  const name = tool.replace(/^mcp__brief__/, '')
+  if (name === 'show') {
+    const points = list(i.points)
+    const asks = (ps: Record<string, unknown>[]): number => ps.reduce((n, p) => n + (p.ask ? 1 : 0) + asks(list(p.points)), 0)
+    const a = asks(points)
+    return `show “${String(i.title ?? 'untitled')}” · ${count(points.length, 'section')}${a > 0 ? ` · ${count(a, 'decision')}` : ''}`
+  }
+  if (name === 'patch') {
+    const ops = list(i.ops)
+    const what = ops.map(o => `${String(o.op ?? '?')}${o.id ? ` ${String(o.id)}` : ''}`)
+    return `patch · ${what.slice(0, 4).join(', ')}${what.length > 4 ? ` +${what.length - 4}` : ''}`
+  }
+  if (name === 'status') {
+    const ups = list(i.updates)
+    const what = ups.map(u => `${String(u.point ?? '?')} ${String(u.state ?? '')}${u.evidence ? ' +evidence' : ''}`)
+    return `status · ${what.slice(0, 4).join(', ')}${what.length > 4 ? ` +${what.length - 4}` : ''}`
+  }
+  if (name === 'note') return `note on ${String(i.point ?? '?')} · ${String(i.text ?? '').split('\n')[0]}`
+  if (name === 'guide') return 'guide · read the block reference'
+  return name
+}

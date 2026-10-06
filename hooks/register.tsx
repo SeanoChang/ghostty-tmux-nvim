@@ -4,8 +4,9 @@ import type { EngineInterface, Register, RenderElement, RenderInput } from 'clau
 import { NW } from './core.js'
 import { buildBrief, flatten, isRecord, patchRaw, pngSize, signature, text, toHunk } from './model.ts'
 import type { Built } from './model.ts'
-import { findPoint, labelOf, pointName, respondMessage, slug, tag, toMarkdown } from './helpers.ts'
+import { findPoint, labelOf, pointName, respondMessage, slug, tag, toMarkdown, toolLine } from './helpers.ts'
 import { machineSvg } from './svg.ts'
+import { COL_GAP, layoutTable, splitTables, type Table } from './table.ts'
 import { GUIDE, GUIDE_TOOL, NOTE, NOTE_DESCRIPTION, PATCH, PATCH_DESCRIPTION, REFERENCE, SHOW, SHOW_DESCRIPTION, STATUS, STATUS_DESCRIPTION } from './text.ts'
 import type { Brief, BriefAsk, BriefIndexEntry, BriefMode, BriefPoint, CallRow, DecisionEntry, Evidence, Exhibit, MockExhibit, TaskState, TaskStatus, ThreadNote, Tone } from '../types'
 
@@ -52,6 +53,10 @@ const pointSchema = block(
     seq: block({ source: S }, ['source']),
     machine: block({ source: S, screens: { type: 'object', additionalProperties: mockSchema } }, ['source']),
     tree: block({ source: S }, ['source']),
+    table: {
+      description: 'A Markdown table string, or {title, columns, rows}.',
+      anyOf: [S, block({ title: S, source: S, columns: { type: 'array', items: S }, rows: { type: 'array', items: { type: 'array', items: S } } })],
+    },
     mock: mockSchema,
     svg: S,
     svgAlt: S,
@@ -64,7 +69,7 @@ const pointSchema = block(
         options: {
           type: 'array',
           items: block(
-            { value: S, label: S, note: S, detail: S, pros: { type: 'array', items: S }, cons: { type: 'array', items: S }, image: block({ path: S, alt: S }, ['path']), mock: mockSchema, flow: block({ source: S }, ['source']), code: block({ source: S, language: S }) },
+            { value: S, label: S, note: S, detail: S, pros: { type: 'array', items: S }, cons: { type: 'array', items: S }, image: block({ path: S, alt: S }, ['path']), mock: mockSchema, flow: block({ source: S }, ['source']), table: { anyOf: [S, block({ columns: { type: 'array', items: S }, rows: { type: 'array', items: { type: 'array', items: S } } })] }, code: block({ source: S, language: S }) },
             ['value', 'label'],
           ),
         },
@@ -361,6 +366,7 @@ const KIND_LABEL: Record<Exhibit['kind'], string> = {
   tree: 'FILES',
   mock: 'MOCKUP',
   image: 'FIGURE',
+  table: 'TABLE',
 }
 
 const trunc = (s: string, n: number) => (n <= 1 ? '' : s.length <= n ? s : `${s.slice(0, n - 1)}…`)
@@ -374,11 +380,73 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
   const Input = e.surface !== 'mobile' && 'Input' in els ? els.Input : undefined
   const Image = e.surface === 'terminal' && 'Image' in els ? els.Image : undefined
   const cols = Math.max(40, e.props.bodyColumns || 80)
+  // Spacing scale. The desktop's rows are short, so it gets more air; the terminal pays a whole row per step.
+  const roomy = e.surface !== 'terminal'
+  const SP = { page: roomy ? 3 : 1, card: roomy ? 2 : 1, padY: roomy ? 1 : 0, padX: 2, inner: roomy ? 2 : 1 }
+  // The desktop draws a Button's hotkey as a badge, so the label leaves the letter out there.
+  const hk = (letter: string, label: string) => (roomy ? label : `${letter} ${label}`)
+  /** Text width inside a card's body: the frame, its padding and one level of indent. */
+  const inside = cols - 10
+
+  const tableView = (t: Table, k: string, width: number) => {
+    const L = layoutTable(t, width)
+    if (L.mode === 'grid') {
+      const wraps = t.rows.some(r => r.some((c, i) => c.length > (L.widths[i] ?? 0)))
+      const line = (r: string[], kk: string, isHead: boolean) => (
+        <Box key={kk} flexDirection="row" columnGap={COL_GAP}>
+          {r.map((c, i) => (
+            <Box key={`${kk}-${i}`} width={L.widths[i]} flexShrink={0}>
+              <Text bold={isHead || i === 0} dimColor={isHead}>{c}</Text>
+            </Box>
+          ))}
+        </Box>
+      )
+      const ruleW = L.widths.reduce((a, b) => a + b, 0) + COL_GAP * (L.widths.length - 1)
+      return (
+        <Box key={k} flexDirection="column" rowGap={wraps ? 1 : 0}>
+          <Box flexDirection="column">
+            {line(t.head, `${k}-h`, true)}
+            {!roomy && <Text dimColor>{'─'.repeat(ruleW)}</Text>}
+          </Box>
+          {t.rows.map((r, i) => line(r, `${k}-r${i}`, false))}
+        </Box>
+      )
+    }
+    return (
+      <Box key={k} flexDirection="column" rowGap={1}>
+        {t.rows.map((r, i) => (
+          <Box key={`${k}-s${i}`} flexDirection="column">
+            <Text bold>{`▸ ${r[0] ?? ''}`}</Text>
+            {r.slice(1).map((c, j) => (
+              <Box key={`${k}-s${i}-${j}`} flexDirection="row" columnGap={2} marginLeft={2}>
+                <Box width={L.labelWidth} flexShrink={0}>
+                  <Text dimColor>{t.head[j + 1] ?? ''}</Text>
+                </Box>
+                <Box flexGrow={1} flexShrink={1}>
+                  <Text>{c}</Text>
+                </Box>
+              </Box>
+            ))}
+          </Box>
+        ))}
+      </Box>
+    )
+  }
+  /** Markdown, with its tables drawn by tableView in the terminal (whose Markdown lays them out too wide). */
+  const md = (text: string, k: string, width = inside) => {
+    const parts = roomy ? [] : splitTables(text)
+    if (!parts.some(c => c.kind === 'table')) return <Markdown key={k} text={text} />
+    return (
+      <Box key={k} flexDirection="column" rowGap={1}>
+        {parts.map((c, i) => (c.kind === 'md' ? <Markdown key={`${k}-${i}`} text={c.text} /> : tableView(c.table, `${k}-${i}`, width)))}
+      </Box>
+    )
+  }
 
   const b = await read($, brief)
   if (!b) {
     return (
-      <Box flexDirection="column" borderStyle="round" borderDimColor paddingX={1}>
+      <Box flexDirection="column" borderStyle="round" borderDimColor paddingX={2} paddingY={1} gap={1}>
         <Text bold>Brief</Text>
         <Text dimColor>No brief yet. Ask Claude to "brief me on" a plan or an idea, and it shows up here.</Text>
       </Box>
@@ -524,11 +592,11 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
           <Box flexDirection="column" marginTop={1}>
             <Box flexDirection="row" gap={1} flexWrap="wrap">
               <Text color={FOCUS} bold>{`› ${chosen.name}`}</Text>
-              {chosen.excerpt && <Button key="row-code" hotkey="c" label={isOpen(chosen.key) ? 'c hide code' : 'c code'} onPress={toggle(chosen.key)} />}
+              {chosen.excerpt && <Button key="row-code" hotkey="c" label={hk('c', isOpen(chosen.key) ? 'hide code' : 'code')} onPress={toggle(chosen.key)} />}
               <Button
                 key="row-strike"
                 hotkey="x"
-                label={struckKeys.includes(chosen.key) ? 'x restore' : 'x strike'}
+                label={hk('x', struckKeys.includes(chosen.key) ? 'restore' : 'strike')}
                 onPress={async () => {
                   const at = rows.indexOf(chosen)
                   const end = rows.findIndex((q, i) => i > at && q.depth <= chosen.depth)
@@ -541,7 +609,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
               <Button
                 key="row-ask"
                 hotkey="a"
-                label="a ask"
+                label={hk('a', 'ask')}
                 onPress={() => void $.prompt.fill({ text: `[brief ${p.id} · calls › ${chosen.name}${chosen.loc ? ` @ ${chosen.loc}` : ''}] `, mode: 'insert' })}
               />
             </Box>
@@ -592,7 +660,9 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
   const exhibitBody = (p: BriefPoint, x: Exhibit): RenderElement => {
     switch (x.kind) {
       case 'markdown':
-        return <Markdown text={x.text} />
+        return md(x.text, `${p.id}-md`)
+      case 'table':
+        return tableView(x, `${p.id}-table`, inside)
       case 'code':
         return (
           <Box flexDirection="column">
@@ -708,14 +778,14 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
       )
     } else if (rich) {
       control = (
-        <Box flexDirection="column" rowGap={1}>
+        <Box flexDirection="column" rowGap={SP.inner}>
           {ask.options.map(o => {
             const isPicked = values.includes(o.value)
             const nextValue = ask.kind === 'one' ? o.value : (isPicked ? values.filter(v => v !== o.value) : [...values, o.value]).join(',')
             const box = ask.kind === 'one' ? (isPicked ? '◉' : '○') : isPicked ? '☑' : '☐'
             const fake: BriefPoint = { id: `${p.id}~${o.value}`, claim: o.label, exhibit: o.exhibit, points: [] }
             return (
-              <Box key={`opt-${p.id}-${o.value}`} flexDirection="column" borderStyle="round" borderColor={isPicked ? GREEN : undefined} borderDimColor={!isPicked} paddingX={1}>
+              <Box key={`opt-${p.id}-${o.value}`} flexDirection="column" borderStyle="round" borderColor={isPicked ? GREEN : undefined} borderDimColor={!isPicked} paddingX={SP.padX} paddingY={SP.padY} rowGap={roomy ? 1 : 0}>
                 <Box flexDirection="row" justifyContent="space-between" columnGap={1}>
                   <Button key={`ask-${p.id}-${o.value}`} plain label={`${box} ${o.label}${rec(o.value)}`} onPress={() => setAnswer(p.id, nextValue)} />
                   <Button
@@ -728,7 +798,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
                     }
                   />
                 </Box>
-                {o.detail && <Markdown text={o.detail} />}
+                {o.detail && md(o.detail, `opt-${p.id}-${o.value}-detail`, inside - 4)}
                 {(o.pros ?? []).map((x, i) => <Text key={`opt-${p.id}-${o.value}-p${i}`} color={GREEN}>{`+ ${x}`}</Text>)}
                 {(o.cons ?? []).map((x, i) => <Text key={`opt-${p.id}-${o.value}-c${i}`} color={RED}>{`− ${x}`}</Text>)}
                 {o.note && <Text dimColor>{o.note}</Text>}
@@ -786,7 +856,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
     const color = pick === undefined ? AMBER : GREEN
     const consequence = ask.then[value]
     return (
-      <Box flexDirection="column" borderStyle="round" borderColor={color} paddingX={1}>
+      <Box flexDirection="column" borderStyle="round" borderColor={color} paddingX={SP.padX} paddingY={SP.padY} rowGap={1}>
         <Box flexDirection="row" justifyContent="space-between">
           <Text bold color={color}>
             {pick === undefined ? '◆ DECIDE' : '✓ DECIDED'}
@@ -807,22 +877,22 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
   // ── detail ──────────────────────────────────────────────────────────
   const thread = (id: string) =>
     (threads[id] ?? []).map((n, i) => (
-      <Box key={`note-${id}-${i}`} flexDirection="column" paddingLeft={1} borderStyle="single" borderColor={n.from === 'claude' ? CLAUDE : undefined} borderDimColor={n.from === 'you'}>
+      <Box key={`note-${id}-${i}`} flexDirection="column" paddingX={1} paddingY={SP.padY} borderStyle="single" borderColor={n.from === 'claude' ? CLAUDE : undefined} borderDimColor={n.from === 'you'}>
         <Text bold color={n.from === 'claude' ? CLAUDE : undefined} dimColor={n.from === 'you'}>
           {n.from === 'claude' ? '✎ CLAUDE' : '› YOU'}
         </Text>
-        <Markdown text={n.text} />
+        {md(n.text, `note-${id}-${i}-text`)}
       </Box>
     ))
 
   const askRow = (id: string, claim: string, keys: boolean, withInput: boolean) => (
-    <Box flexDirection="column">
+    <Box flexDirection="column" rowGap={1}>
       <Box flexDirection="row" columnGap={2} flexWrap="wrap">
         <Text dimColor>{`ask about ${id === 'top' ? 'the brief' : id}`}</Text>
-        <Button key={`simpler-${id}`} plain hotkey={keys ? 's' : undefined} label={keys ? 's simpler' : 'simpler'} onPress={() => send($, id, claim, 'Explain this more simply, in plain words.')} />
-        <Button key={`example-${id}`} plain hotkey={keys ? 'e' : undefined} label={keys ? 'e example' : 'example'} onPress={() => send($, id, claim, 'Give me one concrete example of this.')} />
-        <Button key={`why-${id}`} plain hotkey={keys ? 'w' : undefined} label={keys ? 'w why?' : 'why?'} onPress={() => send($, id, claim, 'Why is this true? What would break if it were not?')} />
-        <Button key={`quote-${id}`} plain hotkey={keys ? 'q' : undefined} label={keys ? 'q quote ↗' : 'quote ↗'} onPress={() => void $.prompt.fill({ text: `${tag(id, claim)} `, mode: 'insert' })} />
+        <Button key={`simpler-${id}`} plain hotkey={keys ? 's' : undefined} label={keys ? hk('s', 'simpler') : 'simpler'} onPress={() => send($, id, claim, 'Explain this more simply, in plain words.')} />
+        <Button key={`example-${id}`} plain hotkey={keys ? 'e' : undefined} label={keys ? hk('e', 'example') : 'example'} onPress={() => send($, id, claim, 'Give me one concrete example of this.')} />
+        <Button key={`why-${id}`} plain hotkey={keys ? 'w' : undefined} label={keys ? hk('w', 'why?') : 'why?'} onPress={() => send($, id, claim, 'Why is this true? What would break if it were not?')} />
+        <Button key={`quote-${id}`} plain hotkey={keys ? 'q' : undefined} label={keys ? hk('q', 'quote ↗') : 'quote ↗'} onPress={() => void $.prompt.fill({ text: `${tag(id, claim)} `, mode: 'insert' })} />
       </Box>
       {Input && withInput && (
         <Input
@@ -844,9 +914,9 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
     exhibitBlock(p),
     p.caption ? <Text key={`${p.id}-cap`} dimColor italic>{`↳ ${p.caption}`}</Text> : null,
     p.note ? (
-      <Box key={`${p.id}-note`} flexDirection="column" paddingLeft={1} borderStyle="single" borderColor={TONE[p.note.tone]}>
+      <Box key={`${p.id}-note`} flexDirection="column" paddingX={1} paddingY={SP.padY} borderStyle="single" borderColor={TONE[p.note.tone]}>
         <Text bold color={TONE[p.note.tone]}>{TONE_LABEL[p.note.tone]}</Text>
-        <Markdown text={p.note.text} />
+        {md(p.note.text, `${p.id}-note-text`)}
       </Box>
     ) : null,
     p.ask ? decision(p) : null,
@@ -860,13 +930,13 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
     const t = tasks[p.id]
     if (list.length === 0 && !t?.note) return null
     return (
-      <Box key={`${p.id}-evidence`} flexDirection="column" paddingLeft={1} borderStyle="single" borderColor={t?.state === 'failed' ? RED : GREEN} borderDimColor={!t}>
+      <Box key={`${p.id}-evidence`} flexDirection="column" paddingX={1} paddingY={SP.padY} borderStyle="single" borderColor={t?.state === 'failed' ? RED : GREEN} borderDimColor={!t}>
         <Text bold color={t?.state === 'failed' ? RED : GREEN}>{`EVIDENCE${t ? ` · ${TASK[t.state].label}` : ''}${t?.agent ? ` · ${t.agent}` : ''}`}</Text>
-        {t?.note && <Markdown text={t.note} />}
+        {t?.note && md(t.note, `${p.id}-ev-note`)}
         {list.map((ev, i) => (
           <Box key={`${p.id}-ev-${i}`} flexDirection="column">
             {ev.title && <Text dimColor>{ev.title}</Text>}
-            {ev.kind === 'text' && <Markdown text={ev.text} />}
+            {ev.kind === 'text' && md(ev.text, `${p.id}-ev-${i}-text`)}
             {ev.kind === 'code' && <Code source={ev.source} language={ev.language} format={ev.isDiff ? 'diff' : 'source'} />}
             {ev.kind === 'image' && exhibitBody(p, { kind: 'image', png: ev.png, width: ev.width, height: ev.height, path: ev.path, alt: ev.title ?? 'evidence' })}
           </Box>
@@ -886,7 +956,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
           {marks(c, `where-${c.id}`)}
         </Box>
         {isOpen(k) && (
-          <Box flexDirection="column" marginLeft={2} gap={1}>
+          <Box flexDirection="column" marginLeft={2} marginTop={SP.padY} gap={SP.inner}>
             {body(c)}
           </Box>
         )}
@@ -896,13 +966,13 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
 
   // Level 2 ("how"): a paragraph inside its section, always shown.
   const childBlock = (c: BriefPoint) => !shows(c) ? hiddenLine(c) : (
-    <Box key={`child-${c.id}`} flexDirection="column" gap={1}>
+    <Box key={`child-${c.id}`} flexDirection="column" gap={1} marginTop={SP.padY}>
       <Box flexDirection="row" columnGap={1}>
         <Text bold>{`› ${c.claim}`}</Text>
         {marks(c, `child-${c.id}`)}
         <Button key={`ask-${c.id}-quote`} plain dimColor label="ask ↗" onPress={() => void $.prompt.fill({ text: `${tag(c.id, c.claim)} `, mode: 'insert' })} />
       </Box>
-      <Box flexDirection="column" marginLeft={2} gap={1}>
+      <Box flexDirection="column" marginLeft={2} gap={SP.inner}>
         {body(c)}
         {c.points.map(whereLine)}
       </Box>
@@ -915,7 +985,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
     const isFocus = p.id === focusId
     const folded = isOpen(`fold:${p.id}`)
     return (
-      <Box key={`sec-${p.id}`} flexDirection="column" borderStyle="round" borderColor={isFocus ? FOCUS : undefined} borderDimColor={!isFocus} paddingX={1} gap={1}>
+      <Box key={`sec-${p.id}`} flexDirection="column" borderStyle="round" borderColor={isFocus ? FOCUS : undefined} borderDimColor={!isFocus} paddingX={SP.padX} paddingY={SP.padY} gap={SP.card}>
         <Box flexDirection="row" justifyContent="space-between" columnGap={1}>
           <Button
             key={`fold-${p.id}`}
@@ -961,7 +1031,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
   const files = (ch?.new ?? 0) + (ch?.changed ?? 0) + (ch?.deleted ?? 0)
   const why = b.why ?? []
   const header = (
-    <Box key="header" flexDirection="column" paddingX={1}>
+    <Box key="header" flexDirection="column" paddingX={1} gap={1}>
       <Box flexDirection="row" justifyContent="space-between" columnGap={2}>
         <Text bold>{b.title}</Text>
         <Text>
@@ -971,7 +1041,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
           {ch?.deleted ? <Text color={RED}>{` −${ch.deleted}`}</Text> : null}
         </Text>
       </Box>
-      <Markdown text={b.gist} />
+      {md(b.gist, 'gist', cols - 2)}
       <Box flexDirection="row" justifyContent="space-between" alignItems="center" columnGap={2} flexWrap="wrap">
         <Box flexDirection="row" columnGap={2}>
           {asks.length > 0 && <Text color={toAnswer > 0 ? AMBER : GREEN}>{toAnswer > 0 ? `◆ ${toAnswer} of ${asks.length} decisions open` : `✓ all ${asks.length} decided`}</Text>}
@@ -983,7 +1053,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
           key="respond"
           variant="primary"
           hotkey="r"
-          label="Respond  r"
+          label={hk('r', 'Respond')}
           onPress={async () => {
             const message = respondMessage(b, picked, struckKeys, seenIds)
             // Responding accepts every suggestion still standing, so those decisions are no longer open.
@@ -1037,26 +1107,23 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
     </Box>
   )
 
-  // Contents strip: one line, jumps to a section.
+  // Contents: one line per section, the focused one marked; a line jumps to its section.
   const toc = (
-    <Box key="toc" flexDirection="row" flexWrap="wrap" paddingX={1}>
-      {sections.map((x, i) => {
-        const label = `${sectionName(x)} ${trunc(x.claim.replace(/[.。]$/, ''), 24)}`
-        return [
-          i > 0 ? <Text key={`toc-sep-${x.id}`} dimColor>{'  ·  '}</Text> : null,
-          x.id === focusId ? (
-            <Text key={`toc-on-${x.id}`} bold color={FOCUS}>{label}</Text>
-          ) : (
-            <Button key={`toc-${x.id}`} plain dimColor label={label} onPress={jump(x.id)} />
-          ),
-        ]
+    <Box key="toc" flexDirection="column" paddingX={1}>
+      {sections.map(x => {
+        const label = `${pad(sectionName(x), 3)}${trunc(x.claim.replace(/[.。]$/, ''), cols - 12)}`
+        return x.id === focusId ? (
+          <Text key={`toc-on-${x.id}`} bold color={FOCUS}>{`▸ ${label}`}</Text>
+        ) : (
+          <Button key={`toc-${x.id}`} plain dimColor label={`  ${label}`} onPress={jump(x.id)} />
+        )
       })}
     </Box>
   )
 
   const endCards = [
     b.terms.length > 0 ? (
-      <Box key="terms" flexDirection="column" borderStyle="round" borderDimColor paddingX={1}>
+      <Box key="terms" flexDirection="column" borderStyle="round" borderDimColor paddingX={SP.padX} paddingY={SP.padY}>
         <Text bold dimColor>Terms</Text>
         {b.terms.map(t => (
           <Text key={`term-${t.term}`}>
@@ -1067,7 +1134,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
       </Box>
     ) : null,
     decisions.length > 0 ? (
-      <Box key="log" flexDirection="column" borderStyle="round" borderDimColor paddingX={1}>
+      <Box key="log" flexDirection="column" borderStyle="round" borderDimColor paddingX={SP.padX} paddingY={SP.padY}>
         <Button key="open-log" plain dimColor label={`${isOpen('log') ? '▾' : '▸'} Decision log · ${decisions.length}`} onPress={toggle('log')} />
         {isOpen('log') &&
           decisions.slice(-20).map((d, i) => (
@@ -1080,7 +1147,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
           ))}
       </Box>
     ) : null,
-    <Box key="top" flexDirection="column" borderStyle="round" borderDimColor paddingX={1} gap={1}>
+    <Box key="top" flexDirection="column" borderStyle="round" borderDimColor paddingX={SP.padX} paddingY={SP.padY} gap={1}>
       <Text bold dimColor>The whole brief</Text>
       {thread('top')}
       {askRow('top', b.title, false, true)}
@@ -1089,16 +1156,15 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
 
   const footer = (
     <Box key="footer" flexDirection="row" columnGap={3} paddingX={1} flexWrap="wrap">
-      <Button key="nav-next" plain dimColor hotkey="j" label="j next section" onPress={jump(sections[fi + 1]?.id)} />
-      <Button key="nav-prev" plain dimColor hotkey="k" label="k previous" onPress={jump(sections[fi - 1]?.id)} />
-      <Text dimColor>click a title to fold · r respond</Text>
+      <Button key="nav-next" plain dimColor hotkey="j" label={hk('j', 'next section')} onPress={jump(sections[fi + 1]?.id)} />
+      <Button key="nav-prev" plain dimColor hotkey="k" label={hk('k', 'previous')} onPress={jump(sections[fi - 1]?.id)} />
+      <Text dimColor>{roomy ? 'click a title to fold' : 'click a title to fold · r respond'}</Text>
     </Box>
   )
 
   return (
-    <Box flexDirection="column" gap={1}>
+    <Box flexDirection="column" gap={SP.page} paddingY={SP.padY}>
       {header}
-      <Text dimColor>{'─'.repeat(Math.max(10, cols - 1))}</Text>
       {toc}
       {sections.map(card)}
       {endCards}
@@ -1327,4 +1393,23 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) => renderPane($, e))
+
+  // A brief tool's row is one line: what it did, not its whole JSON input. The pane shows the rest.
+  const BRIEF_TOOLS = new Set([SHOW, PATCH, NOTE, STATUS, GUIDE_TOOL])
+  on('ui.render', { component: 'ToolUse' }, async ($, e, next) => {
+    if (!BRIEF_TOOLS.has(e.props.tool)) return next(e)
+    const { Box, Text } = $.ui.resolve(e)
+    const p = e.props
+    const width = Math.max(30, (e.viewport?.columns ?? 100) - 12)
+    const line = toolLine(p.tool, p.input)
+    const look = p.isInterrupted ? { g: '⏹', c: undefined } : p.isErrored ? { g: '✕', c: RED } : p.isRunning ? { g: '◐', c: FOCUS } : { g: '◆', c: CLAUDE }
+    return (
+      <Box flexDirection="row" columnGap={1}>
+        <Text color={look.c} dimColor={!look.c}>{look.g}</Text>
+        <Text bold>Brief</Text>
+        <Text dimColor wrap="truncate-end">{trunc(line, width)}</Text>
+        {p.isInterrupted ? <Text dimColor>· interrupted</Text> : null}
+      </Box>
+    )
+  })
 }

@@ -158,7 +158,7 @@ for (const surface of SURFACES) {
     expect(filled.at(-1)).toBe('[brief 1.1 · calls › createScheduled() @ server/routes.ts:30] ')
     await ui.press({ key: 'row-1.1-r0' })
     await ui.press({ key: 'row-code' })
-    expect(await ui.find({ text: 'c hide code' })).toBeDefined()
+    expect(await ui.find({ text: surface === 'desktop' ? 'hide code' : 'c hide code' })).toBeDefined()
 
     await ui.press({ key: 'respond' })
     const msg = sent.at(-1) ?? ''
@@ -485,4 +485,81 @@ test('Respond accepts the standing suggestions, so no decision stays open', asyn
   expect(await ui.find({ text: '✓ all 1 decided' })).toBeDefined()
   await ui.press({ key: 'open-log' })
   expect(await ui.find({ text: 'Yes, 3 times' })).toBeDefined()
+})
+
+import { layoutTable, splitTables } from '../hooks/table.ts'
+
+const LANES = {
+  title: 'Review lanes',
+  columns: ['Lane', 'Owner', 'Scope', 'Status'],
+  rows: [
+    ['correctness', 'Opus', 'logic errors, off-by-one, null paths, wrong conditions in the scheduler', 'running'],
+    ['security', 'Opus', 'secrets in logs, file reads outside the project, injection through pane text', 'queued'],
+    ['tests', 'Sonnet', 'missing cases for the retry path and the clock edge', 'done'],
+  ],
+}
+
+test('tables: a grid when the columns fit, one record per row when they do not', () => {
+  const md = 'Intro line.\n\n| Lane | Owner |\n|---|:-:|\n| **a** | `x` |\n| b | y \\| z |\n\n```\n| not | a table |\n|---|---|\n```'
+  const parts = splitTables(md)
+  expect(parts.map(p => p.kind)).toEqual(['md', 'table', 'md'])
+  const t = parts[1] as { kind: 'table'; table: { head: string[]; rows: string[][] } }
+  expect(t.table.rows).toEqual([['a', 'x'], ['b', 'y | z']])
+  const lanes = { head: LANES.columns, rows: LANES.rows }
+  expect(layoutTable(lanes, 200).mode).toBe('grid')
+  const mid = layoutTable(lanes, 60)
+  expect(mid.mode).toBe('grid')
+  if (mid.mode === 'grid') expect(mid.widths.reduce((a, b) => a + b, 0) + 2 * 3).toBeLessThanOrEqual(60)
+  expect(layoutTable(lanes, 30).mode).toBe('stack')
+})
+
+for (const surface of SURFACES) {
+  test(`${surface}: a table exhibit fits the pane width`, async ($, on) => {
+    stub(on)
+    const shown = await show($, { title: 'Lanes', gist: 'Who reviews what.', points: [{ claim: 'Three lanes run at once.', table: LANES }] })
+    expect(shown.deny).toBeUndefined()
+    const wide = await $.ui.mount({ plugin: 'brief', surface, component: 'Pane', requestId: 'brief', props: { ...(PANE_PROPS as object), bodyColumns: 120 } as never })
+    expect(await wide.find({ key: '1-table-r0' })).toBeDefined()
+    expect(await wide.find({ text: 'TABLE · Review lanes' })).toBeDefined()
+    await wide.unmount()
+    const narrow = await $.ui.mount({ plugin: 'brief', surface, component: 'Pane', requestId: 'brief', props: { ...(PANE_PROPS as object), bodyColumns: 40 } as never })
+    expect(await narrow.find({ key: '1-table-s0' })).toBeDefined()
+    expect(await narrow.find({ text: '▸ correctness' })).toBeDefined()
+  })
+}
+
+test('terminal: a Markdown table inside detail is drawn natively; the desktop keeps Markdown', async ($, on) => {
+  stub(on)
+  const detail = 'Lanes:\n\n| Lane | Owner | Scope |\n|---|---|---|\n| correctness | Opus | logic errors and null paths in the scheduler |'
+  await show($, { title: 'Lanes', gist: 'Who reviews what.', points: [{ claim: 'Three lanes run at once.', detail }] })
+  const term = await $.ui.mount({ plugin: 'brief', surface: 'terminal', component: 'Pane', requestId: 'brief', props: PANE_PROPS })
+  expect(await term.find({ key: '1-md-1-r0' })).toBeDefined()
+  await term.unmount()
+  const desk = await $.ui.mount({ plugin: 'brief', surface: 'desktop', component: 'Pane', requestId: 'brief', props: PANE_PROPS })
+  expect(await desk.find({ key: '1-md-1-r0' })).toBeUndefined()
+})
+
+test('hotkey letters stay in terminal labels and leave desktop ones, where a badge shows them', async ($, on) => {
+  stub(on)
+  await show($, BRIEF)
+  const term = await $.ui.mount({ plugin: 'brief', surface: 'terminal', component: 'Pane', requestId: 'brief', props: PANE_PROPS })
+  expect(JSON.stringify(await term.find({ key: 'respond' }))).toContain('r Respond')
+  await term.unmount()
+  const desk = await $.ui.mount({ plugin: 'brief', surface: 'desktop', component: 'Pane', requestId: 'brief', props: PANE_PROPS })
+  const drawn = JSON.stringify(await desk.find({ key: 'respond' }))
+  expect(drawn).toContain('"Respond"')
+  expect(drawn).not.toContain('r Respond')
+})
+
+test('a brief tool call draws as one line', async ($, on) => {
+  stub(on)
+  const props = (tool: string, input: unknown) =>
+    ({ tool_use_id: 'tu1', tool, input, isRunning: false, isErrored: false, isInterrupted: false }) as never
+  const row = await $.ui.mount({ plugin: 'brief', surface: 'terminal', component: 'ToolUse', requestId: 'tu1', props: props('mcp__brief__show', BRIEF) })
+  const drawn = JSON.stringify(await row.drawn())
+  expect(drawn).toContain('show “Scheduling Sent Messages” · ')
+  expect(drawn).toContain('1 decision')
+  expect(drawn).not.toContain('"claim"')
+  const patch = await $.ui.mount({ plugin: 'brief', surface: 'desktop', component: 'ToolUse', requestId: 'tu2', props: props('mcp__brief__patch', { ops: [{ op: 'set', id: '2' }, { op: 'add', parent: '1' }] }) })
+  expect(JSON.stringify(await patch.drawn())).toContain('patch · set 2, add')
 })

@@ -20,7 +20,7 @@ A Brief pane sits beside the chat (tools ${GUIDE_TOOL}, ${SHOW}, ${PATCH}, ${NOT
 
 export const SHOW_DESCRIPTION = `Show a brief in the Brief pane beside the chat: a plan, design, explanation, comparison or review the user will read in parts or decide on. Call ${GUIDE_TOOL} once per session before your first show: it returns the block syntax.
 Shape: {title (3-7 words), gist (one sentence, the whole answer), why?, changes?, points, terms?, gate?}. points: 2 to 6 top-level claims that tell the whole story when read alone; each claim one true-or-false sentence, about 12 words; split by behaviour, never by file. Children answer "how", then "where" (at most 5 children, 3 levels). End with {aux:"shared"} and {aux:"scope"} when they apply.
-Each point has ONE exhibit: detail (markdown), code ({src, lines} reads a real file), schema, calls, flow, seq, machine, tree, mock, svg, or image (a PNG you rendered). Then optional caption, note {tone, text}, ask (a decision, 2 to 5 per plan; options may carry pros, cons and an exhibit), when ("2=no": shown only under that answer).
+Each point has ONE exhibit: detail (markdown), code ({src, lines} reads a real file), schema, calls, flow, seq, machine, tree, table, mock, svg, or image (a PNG you rendered). Then optional caption, note {tone, text}, ask (a decision, 2 to 5 per plan; options may carry pros, cons and an exhibit), when ("2=no": shown only under that answer).
 show refuses a brief that breaks the rules and says why. Use ${PATCH} for later changes. Answer messages tagged [brief <id>] with ${NOTE}. Do not build until the reader's Respond when the brief has open decisions that change what you build.`
 
 
@@ -44,6 +44,7 @@ Exhibits (html-plan block syntax; + new, - removed, ~ changed):
 - seq: {source} — "participants: a "A" b "B"", "a -> b : call", "b --> a : reply", "note over a: text", "--- phase ---". 3 lanes reads best.
 - machine: {source, screens:{state: mock}} — "machine m initial s", "state s final  # one sentence", "a -event-> b : label", grid rows "| a | b |". 8 states at most; every state reachable, every dead end final. The reader taps states to see each one's screen.
 - tree: {source} — indented paths, "+ new/", "~ changed.ts  # note".
+- table: {title, columns:["Lane","Owner",…], rows:[["a","b",…],…]} or a Markdown table string — for any comparison or list of records. The pane fits it to its width: a grid when the columns fit, one record per row when they do not. Put the row's name in the first column. Use this, not a table inside detail.
 - mock: {html, w:440, h, frame:"none|browser|phone|terminal", title, pins:[{at:"70%,40%", title, text}]} — the smallest region that makes the point, w 480 at most, inline styles. terminal: the text output.
 - svg: raw SVG with svgAlt (what to notice), for anything else.
 - image: {path, alt} — a PNG you render yourself, for charts and for flows too big or too tangled for the flow block. Render first, then show:

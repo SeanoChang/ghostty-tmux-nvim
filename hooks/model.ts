@@ -2,6 +2,7 @@
 
 import { NW, dedent } from './core.js'
 import { flowSvg, machineSvg, mockSvg, seqSvg } from './svg.ts'
+import { plain, splitTables } from './table.ts'
 import type {
   Brief,
   BriefAsk,
@@ -28,7 +29,7 @@ type Raw = Record<string, unknown>
 const MAX_TOP = 6
 const MAX_CHILDREN = 5
 const MAX_DEPTH = 3
-const EXHIBITS = ['detail', 'code', 'schema', 'calls', 'flow', 'machine', 'seq', 'tree', 'mock', 'svg', 'image'] as const
+const EXHIBITS = ['detail', 'code', 'schema', 'calls', 'flow', 'machine', 'seq', 'tree', 'mock', 'svg', 'image', 'table'] as const
 /** Svg source is capped at 131072 characters; leave room for the wrapper. */
 const MAX_PNG_BASE64 = 130000
 const TONES = new Set(['info', 'warn', 'risk', 'ok', 'idea'])
@@ -241,6 +242,23 @@ async function exhibitOf(item: Raw, at: string, ctx: Ctx): Promise<Exhibit | und
     return { kind: 'image', png, width: size.width, height: size.height, path, alt: text(block.alt) ?? text(item.claim) ?? 'figure' }
   }
   if (kind === 'mock') return mock(block, `point ${at}`, ctx)
+  if (kind === 'table') {
+    // A Markdown table, or {title, columns, rows}.
+    const md = typeof raw === 'string' ? raw : source
+    if (md) {
+      const t = splitTables(md).find(c => c.kind === 'table')
+      if (t?.kind === 'table') return { kind: 'table', title: text(block.title), ...t.table }
+      ctx.errors.push(`point ${at}: table needs a Markdown table (a header row, then a |---| row)`)
+      return undefined
+    }
+    const head = Array.isArray(block.columns) ? block.columns.map(c => plain(String(c))) : []
+    const rows = Array.isArray(block.rows) ? block.rows.filter(Array.isArray).map(r => head.map((_, k) => plain(String((r as unknown[])[k] ?? '')))) : []
+    if (head.length < 2 || rows.length === 0) {
+      ctx.errors.push(`point ${at}: table needs at least 2 columns and 1 row`)
+      return undefined
+    }
+    return { kind: 'table', title: text(block.title), head, rows }
+  }
   if (source === undefined) {
     ctx.errors.push(`point ${at}: ${kind} needs source`)
     return undefined

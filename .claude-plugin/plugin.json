@@ -1,6 +1,6 @@
 {
   "name": "brief",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Plans, designs and walkthroughs as a live, scrollable pane beside the chat: html-plan blocks, PNG figures, option cards, tagged questions, build status with evidence, and slim test-first / debugging / verification / review skills",
   "types": "./types/index.d.ts",
   "author": {

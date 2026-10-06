@@ -48,6 +48,9 @@ export type MockExhibit = {
 
 export type MarkdownExhibit = { kind: 'markdown'; text: string }
 
+/** A table the pane lays out itself: a grid when it fits, one record per row when it does not. */
+export type TableExhibit = { kind: 'table'; title?: string; head: string[]; rows: string[][] }
+
 /** A PNG Claude rendered (d2, mermaid, matplotlib), carried as base64. */
 export type ImageExhibit = { kind: 'image'; png: string; width: number; height: number; path: string; alt: string }
 
@@ -58,6 +61,7 @@ export type Exhibit =
   | SvgExhibit
   | MachineExhibit
   | TreeExhibit
+  | TableExhibit
   | MockExhibit
   | MarkdownExhibit
   | ImageExhibit
