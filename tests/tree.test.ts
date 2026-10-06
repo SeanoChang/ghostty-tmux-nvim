@@ -725,7 +725,7 @@ test('History header numbers and a sparkline whose domain comes from the data', 
   await ui.unmount()
 })
 
-test('/ searches names and outcomes; esc clears the search', async ($, on) => {
+test('/ searches names and outcomes; ctrl+u clears the search, since Escape never reaches the pane', async ($, on) => {
   const ui = await historyAt($, on, days)
   await ui.key({ in: KEY, key: '/' })
   for (const ch of 'billing') await ui.key({ in: KEY, key: ch })
@@ -733,13 +733,15 @@ test('/ searches names and outcomes; esc clears the search', async ($, on) => {
   expect(await ui.find({ in: KEY, text: 'Fix the login redirect' })).toBeUndefined()
   expect(await ui.find({ in: KEY, text: /1 match/ })).toBeDefined()
   // an outcome matches too: "redirects" is only in d1's result
-  await ui.key({ in: KEY, key: 'escape' })
+  await ui.key({ in: KEY, key: 'u', ctrl: true })
   await ui.key({ in: KEY, key: '/' })
   for (const ch of 'redirects') await ui.key({ in: KEY, key: ch })
   expect(await ui.find({ in: KEY, text: 'Fix the login redirect' })).toBeDefined()
   expect(await ui.find({ in: KEY, text: 'Map the billing module' })).toBeUndefined()
+  await ui.key({ in: KEY, key: 'k', ctrl: true }) // other ctrl keys are not typed into the search
+  expect(await ui.find({ in: KEY, text: 'Fix the login redirect' })).toBeDefined()
   await ui.key({ in: KEY, key: 'return' }) // keeps the search, typing stops
-  await ui.key({ in: KEY, key: 'escape' })
+  await ui.key({ in: KEY, key: 'u', ctrl: true })
   expect(await ui.find({ in: KEY, text: 'Map the billing module' })).toBeDefined()
   expect(await ui.find({ in: KEY, text: /match/ })).toBeUndefined()
   await ui.unmount()

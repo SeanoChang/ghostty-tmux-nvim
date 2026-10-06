@@ -679,7 +679,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
       rows.push({
         segs: [seg('/ ', C.accent, true), seg(s.query, C.ink, true), ...(s.searching ? [seg(T.cursor, C.accent)] : []),
           seg(`   ${matchCount} match${matchCount === 1 ? '' : 'es'}`, C.muted),
-          seg(s.searching ? '   enter keep · esc clear · ⌫ delete' : '   / edit · esc clear', C.faint)],
+          seg(s.searching ? '   enter keep · ctrl+u clear · ⌫ delete' : '   / edit · ctrl+u clear', C.faint)],
       })
     }
     return rows
@@ -997,10 +997,14 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     surface.setState({ ...s, sel, first, wheelSeen: wheel.seq, ...(s.wheelSeen >= 0 && wheel.by ? moveBy(Math.sign(wheel.by) * Math.min(3, Math.abs(wheel.by))) : {}) })
   }
 
-  surface.onKey(({ key }) => {
+  surface.onKey(({ key, ctrl, meta }) => {
+    // Escape never reaches a Client (it returns focus to the prompt), so ctrl+u clears the search.
+    const clearsSearch = ctrl === true && key === 'u'
     // while the search line takes typing, every printable key goes to it
     if (s.searching) {
       if (key === 'return') return set({ searching: false })
+      if (clearsSearch) return set({ searching: false, query: '', sel: 0, first: 0 })
+      if (ctrl || meta) return
       if (key === 'escape') return set({ searching: false, query: '', sel: 0, first: 0 })
       if (key === 'backspace' || key === 'delete') return s.query ? set({ query: s.query.slice(0, -1), sel: 0, first: 0 }) : set({ searching: false })
       if (key === 'down') return move(1)
@@ -1011,7 +1015,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     }
     if (isHistoryPage && !s.help) {
       if (key === '/') return set({ searching: true, sel: 0, first: 0 })
-      if (key === 'escape' && s.query) return set({ query: '', sel: 0, first: 0 })
+      if ((key === 'escape' || clearsSearch) && s.query) return set({ query: '', sel: 0, first: 0 })
       if (key === 'f') return set({ hfilter: HISTORY_FILTERS[(HISTORY_FILTERS.indexOf(s.hfilter) + 1) % HISTORY_FILTERS.length]!, sel: 0, first: 0 })
       if (key === 'o') return set({ olderOpen: !s.olderOpen })
     }
@@ -1186,7 +1190,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     ['i', 'next thing that needs a look'], ['h l', 'live · history, or the views of a run'], ['1 2', 'live, history'],
     ['a c o', 'agents, changes, output'], ['n p', 'next, previous file in a diff'], ['b  ⌫', 'back'],
     ['f', 'filter: all, running, failed · history: all, failed, changed files'], ['s', 'group the run list'],
-    ['/', 'search history: names and outcomes; enter keeps, esc clears'], ['o', 'show or hide history older than a week'],
+    ['/', 'search history: names and outcomes; enter keeps, ctrl+u clears'], ['o', 'show or hide history older than a week'],
     ['r', 'this repo · all repos (history)'],
     ['wheel', 'move, or scroll'], ['?', 'close this help'],
   ]
@@ -1197,7 +1201,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     if (mode === 'agents') {
       if (isHistoryPage && matchCount === 0 && (s.query || s.hfilter !== 'all')) {
         return [{ segs: [] }, { segs: [seg(' '), seg(s.query ? `No runs match "${s.query}".` : `No runs: ${HISTORY_FILTER_NAMES[s.hfilter]}.`, C.muted)] },
-          { segs: [seg(' '), seg(s.query ? '⌫ edits the search; esc clears it.' : 'f shows all runs again.', C.faint)] }]
+          { segs: [seg(' '), seg(s.query ? '⌫ edits the search; ctrl+u clears it.' : 'f shows all runs again.', C.faint)] }]
       }
       if (agentItems.length === 0) return emptyRows(listW)
       const draw = isHistoryPage ? historyRow : agentRow
