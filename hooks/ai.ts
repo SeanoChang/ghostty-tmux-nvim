@@ -94,7 +94,7 @@ export function parseStory(raw: string): string[] | undefined {
 
 export const EXPLAIN_SYSTEM = [
   'You explain one finished or running piece of AI agent work to the person who asked for it.',
-  'Write in Simplified Technical English, about 70% of the way:',
+  'Write in Simplified Technical English, about 60% of the way:',
   '- One idea per sentence. At most 15 words in a sentence.',
   '- Use active voice and plain words. Name agents, files and numbers exactly as the input gives them.',
   '- No hedging, no filler, no praise. Use only facts in the input; write "unknown" when it does not say.',
@@ -105,6 +105,7 @@ export const EXPLAIN_SYSTEM = [
   ' "connected": "1 or 2 sentences: how the parts fed each other",',
   ' "outcome": "1 or 2 sentences: what it achieved",',
   ' "open": ["what is still open or wrong"]}',
+  'The pane shows outcome first, as a heading. Its first sentence is the verdict: at most 12 words, with the key number.',
 ].join('\n')
 
 // The run's own report, its part reports, each agent's steps or result, and what needs a look.
@@ -167,7 +168,7 @@ export function parseBrief(raw: string): Omit<Brief, 'model' | 'at'> | undefined
 
 export const PATTERNS_SYSTEM = [
   'You read a list of past AI agent runs and find what repeats: failures with one cause, files many runs change, costly agent types, slow phases.',
-  'Write in Simplified Technical English, about 70% of the way: one idea per sentence, at most 15 words, active voice, plain words, exact names and numbers.',
+  'Write in Simplified Technical English, about 60% of the way: one idea per sentence, at most 15 words, active voice, plain words, exact names and numbers.',
   'Use only facts in the input. Each pattern must rest on at least 2 runs. No hedging, no filler.',
   'Write 2 to 4 patterns. Each has a short title, one evidence sentence with numbers, one concrete thing to try, and the exact names of the runs it rests on.',
   'Reply with JSON only, no markdown:',

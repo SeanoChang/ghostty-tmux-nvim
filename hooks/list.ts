@@ -389,6 +389,13 @@ export type Item =
 
 export const isSelectable = (it: Item | undefined) => it !== undefined && it.kind !== 'header' && it.kind !== 'info' && it.kind !== 'pattern'
 
+// Live and History as one list. A run that just finished is in both, so each id
+// is kept once, and the live copy wins: it is the newer one.
+export function joinNodes(live: AgentNode[], history: AgentNode[]): AgentNode[] {
+  const seen = new Set(live.map(n => n.id))
+  return [...live, ...history.filter(n => !seen.has(n.id))]
+}
+
 export function childrenOf(nodes: AgentNode[], id: string) {
   return nodes.filter(n => n.parentId === id)
 }

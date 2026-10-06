@@ -73,86 +73,127 @@ export function Empty(els: Els, t: DeskTokens, title: string, hint: string) {
   )
 }
 
-// ── the report: Result, Parts, Decisions, Problems, Next, Changed, Totals ─────
+// ── the report: verdict, what needs attention, parts, details, then the records ─
+// The desktop gives Text no sizes, so Markdown carries the hierarchy: its headings
+// are the only larger type the pane can draw. Buttons stay native, for presses.
 // Changed and Totals come from records, never from the model.
 // A part of a run: a workflow phase or a cluster member, with its own short result.
 export type Part = { id: string; label: string; status: NodeStatus; result: string; meta?: string }
 
+// Report text is the model's plain prose; keep Markdown from reading it as markup.
+export const mdText = (s: string) => s.replace(/([\\`*_[\]#<>|])/g, '\\$1')
+
+// A section heading: Markdown's h4, the one step up from body text.
+export function Heading(els: Els, text: string, key: string) {
+  const { Markdown } = els
+  return <Markdown key={key} text={`#### ${mdText(text)}`} />
+}
+
+// "the agent it came from", only when it adds something the line does not say.
+const sourceNote = (source: string | undefined, self: string) =>
+  source && source.toLowerCase() !== self.toLowerCase() ? ` — _${mdText(source)}_` : ''
+
 export function ReportBlock(els: Els, t: DeskTokens, n: AgentNode, all: AgentNode[], now: number, parts: Part[], onPart: (id: string) => void, partsBy = '') {
-  const { Box, Text, Button, Svg } = els
+  const { Box, Text, Button, Svg, Markdown } = els
   const r: Report | undefined = reportOf(n)
   const facts = reportFacts(all, { kind: 'node', id: n.id }, now)
   const names = shortPaths(facts.files.map(f => f.path))
   const max = Math.max(1, ...facts.files.map(f => f.added + f.removed))
-  const label = r?.model ? `${n.report ? 'Report' : 'Report · from what the run kept'} · ${aiLabel(r, now)}` : n.report ? 'Report' : 'Report · from what the run kept'
-  const row = (name: string, body: unknown) => (
-    <Box flexDirection="row" gap={2}>
-      <Box width={10}><Text color={t.muted} bold>{name}</Text></Box>
-      <Box flexDirection="column" flexGrow={1}>{body}</Box>
-    </Box>
-  )
+  const result = r?.result ?? (n.status === 'running' ? 'Still working.' : noReportReason(n))
+  // the verdict is the first sentence, drawn large; the rest of the result follows as body text
+  const verdict = firstSentence(result, 300)
+  const rest = result.slice(result.indexOf(verdict) + verdict.length).trim()
+  const by = r?.model ? `Report by ${aiLabel(r, now)}` : n.report ? 'Report' : 'Report from what the run kept (no model summary)'
+  const details = [
+    r?.done?.length ? `#### What it did\n\n${r.done.map(d => `- ${mdText(d)}`).join('\n')}` : '',
+    r?.decisions?.length ? `#### Decisions\n\n${r.decisions.map(d => `- ${mdText(d.text)}${sourceNote(d.source, n.label)}`).join('\n')}` : '',
+    r?.next ? `#### Next step\n\n${mdText(r.next)}` : '',
+  ].filter(Boolean).join('\n\n')
   return (
     <Box flexDirection="column" gap={1}>
-      <Text color={t.muted}>{label}</Text>
-      {row('Result', <Text bold>{r?.result ?? (n.status === 'running' ? 'Still working.' : noReportReason(n))}</Text>)}
-      {parts.length
-        ? row('Parts', <Box flexDirection="column">{partsBy ? <Text color={t.muted}>Part reports · {partsBy}</Text> : null}{parts.map(p => (
-          <Box key={`part-${p.id}`} flexDirection="row" gap={1}>
-            {StatusMark(els, t, p.status)}
-            <Button key={`part:${p.id}`} plain label={clip(p.label, 34)} onPress={() => onPart(p.id)} />
-            <Text color={t.muted}>{clip(p.result, 70)}</Text>
-            {p.meta ? <Text color={t.muted}>{p.meta}</Text> : null}
+      <Markdown key="verdict" text={`### ${mdText(verdict)}${rest ? `\n\n${mdText(rest)}` : ''}`} />
+      {r?.problems?.length
+        ? (
+          <Box key="attention" flexDirection="column" borderStyle="round" borderColor={t.bad} paddingX={1}>
+            <Box flexDirection="row" gap={1} alignItems="center">
+              <Svg source={iconSvg('warn', t.bad, 16)} alt="Needs your attention" width={16} height={16} />
+              <Text color={t.bad} bold>Needs your attention ({r.problems.length})</Text>
+            </Box>
+            <Markdown key="problems" text={r.problems.map(p => `- ${mdText(p.text)}${sourceNote(p.source, n.label)}`).join('\n')} />
           </Box>
-        ))}</Box>)
-        : r?.done?.length ? row('Done', <Box flexDirection="column">{r.done.map((d, i) => <Text key={`done-${i}`}>• {d}</Text>)}</Box>) : null}
-      {r?.decisions?.length ? row('Decisions', <Box flexDirection="column">{r.decisions.map((d, i) => <Text key={`dec-${i}`}>• {d.text}{d.source ? <Text color={t.muted}> [{d.source}]</Text> : ''}</Text>)}</Box>) : null}
-      {r?.problems?.length ? row('Problems', <Box flexDirection="column">{r.problems.map((p, i) => <Text key={`prob-${i}`} color={t.bad}>• <Text>{p.text}</Text>{p.source ? <Text color={t.muted}> [{p.source}]</Text> : ''}</Text>)}</Box>) : null}
-      {r?.next ? row('Next', <Text>{r.next}</Text>) : null}
-      {facts.files.length
-        ? row('Changed', <Box flexDirection="column">{facts.files.slice(0, 8).map(f => (
-          <Box key={`chg-${f.path}`} flexDirection="row" gap={1}>
-            <Box width={26}><Text wrap="truncate-start">{names.get(f.path) ?? f.path}</Text></Box>
-            <Svg source={diffBarSvg(t, f.added, f.removed, max)} alt={`+${f.added} −${f.removed}`} width={60} height={6} />
-            <Text color={t.add}>+{num(f.added)}</Text><Text color={t.del}>−{num(f.removed)}</Text>
-          </Box>
-        ))}{facts.files.length > 8 ? <Text color={t.muted}>and {facts.files.length - 8} more files</Text> : null}</Box>)
+        )
         : null}
-      {row('Totals', <Text color={t.muted}>{[
-        facts.phases ? `${facts.phases} phases` : '',
-        `${facts.agents} agent${facts.agents === 1 ? '' : 's'}`,
-        `${facts.files.length} file${facts.files.length === 1 ? '' : 's'}`,
-        `+${num(facts.added)} −${num(facts.removed)}`,
-        duration(facts.ms),
-        facts.tokens ? `${kTokens(facts.tokens)} tokens` : '',
-      ].filter(Boolean).join('  ·  ')}</Text>)}
+      {parts.length
+        ? (
+          <Box key="parts" flexDirection="column">
+            {Heading(els, `Parts (${parts.length})`, 'h-parts')}
+            {partsBy ? <Text color={t.muted}>Part reports by {partsBy}</Text> : null}
+            <Box flexDirection="column" gap={1}>
+              {parts.map(p => (
+                <Box key={`part-${p.id}`} flexDirection="column">
+                  <Box flexDirection="row" gap={1} alignItems="center">
+                    {StatusMark(els, t, p.status)}
+                    <Box flexGrow={1} flexShrink={1}><Button key={`part:${p.id}`} plain label={p.label} onPress={() => onPart(p.id)} /></Box>
+                    {p.meta ? <Box flexShrink={0}><Text color={t.muted}>{p.meta}</Text></Box> : null}
+                  </Box>
+                  <Box paddingLeft={3}><Text color={t.muted}>{clip(p.result, 220)}</Text></Box>
+                </Box>
+              ))}
+            </Box>
+          </Box>
+        )
+        : null}
+      {details ? <Markdown key="details" text={details} /> : null}
+      {facts.files.length
+        ? (
+          <Box key="changed" flexDirection="column">
+            {Heading(els, `Changed files (${facts.files.length})`, 'h-changed')}
+            {facts.files.slice(0, 8).map(f => (
+              <Box key={`chg-${f.path}`} flexDirection="row" gap={1} alignItems="center">
+                <Box flexGrow={1} flexShrink={1}><Text wrap="truncate-start">{names.get(f.path) ?? f.path}</Text></Box>
+                <Box flexShrink={0} flexDirection="row" gap={1} alignItems="center">
+                  <Svg source={diffBarSvg(t, f.added, f.removed, max)} alt={`+${f.added} −${f.removed}`} width={60} height={6} />
+                  <Text color={t.add}>+{num(f.added)}</Text><Text color={t.del}>−{num(f.removed)}</Text>
+                </Box>
+              </Box>
+            ))}
+            {facts.files.length > 8 ? <Text color={t.muted}>and {facts.files.length - 8} more files</Text> : null}
+          </Box>
+        )
+        : null}
+      <Box key="totals" flexDirection="column">
+        <Text color={t.muted}>{[
+          facts.phases ? `${facts.phases} phases` : '',
+          `${facts.agents} agent${facts.agents === 1 ? '' : 's'}`,
+          `${facts.files.length} file${facts.files.length === 1 ? '' : 's'} changed`,
+          facts.files.length ? `+${num(facts.added)} −${num(facts.removed)}` : '',
+          duration(facts.ms),
+          facts.tokens ? `${kTokens(facts.tokens)} tokens` : '',
+        ].filter(Boolean).join('  ·  ')}</Text>
+        <Text color={t.muted}>{by}</Text>
+      </Box>
     </Box>
   )
 }
 
 // "Explain this run": Sonnet's brief, with who wrote it, or that it is being written.
+// Outcome and open issues lead; how the work went follows.
 export function BriefBlock(els: Els, t: DeskTokens, b: Brief | undefined, writing: boolean, now: number) {
-  const { Box, Text } = els
-  const row = (name: string, body: unknown) => (
-    <Box flexDirection="row" gap={2}>
-      <Box width={16}><Text color={t.muted} bold>{name}</Text></Box>
-      <Box flexDirection="column" flexGrow={1}>{body}</Box>
-    </Box>
-  )
-  const label = writing ? 'Explain · writing… (Sonnet)' : `Explain · ${aiLabel(b, now)}`
+  const { Box, Text, Markdown } = els
+  const label = writing ? 'Explain · Sonnet is writing…' : `Explain · by ${aiLabel(b, now)}`
+  const md = !b ? '' : [
+    b.outcome ? `### ${mdText(b.outcome)}` : '',
+    b.open?.length ? `#### Still open\n\n${b.open.map(o => `- ${mdText(o)}`).join('\n')}` : '',
+    b.goal ? `#### Goal\n\n${mdText(b.goal)}` : '',
+    b.who?.length ? `#### Who did what\n\n${b.who.map(w => `- ${mdText(w)}`).join('\n')}` : '',
+    b.connected ? `#### How the parts connect\n\n${mdText(b.connected)}` : '',
+  ].filter(Boolean).join('\n\n')
   return (
     <Box flexDirection="column" gap={1} borderStyle="round" borderColor={t.accent} paddingX={1}>
       <Text color={t.accent} bold>{label}</Text>
       {!b
-        ? <Text color={t.muted}>Sonnet is reading the run's reports, steps and insights.</Text>
-        : (
-          <Box flexDirection="column" gap={1}>
-            {b.goal ? row('Goal', <Text>{b.goal}</Text>) : null}
-            {b.who?.length ? row('Who did what', <Box flexDirection="column">{b.who.map((w, i) => <Text key={`who-${i}`}>• {w}</Text>)}</Box>) : null}
-            {b.connected ? row('How it connected', <Text>{b.connected}</Text>) : null}
-            {b.outcome ? row('Outcome', <Text bold>{b.outcome}</Text>) : null}
-            {b.open?.length ? row('Open issues', <Box flexDirection="column">{b.open.map((o, i) => <Text key={`open-${i}`} color={t.bad}>• <Text>{o}</Text></Text>)}</Box>) : null}
-          </Box>
-        )}
+        ? <Text color={t.muted}>Sonnet reads the run's reports, steps and insights.</Text>
+        : <Markdown key="brief" text={md} />}
     </Box>
   )
 }

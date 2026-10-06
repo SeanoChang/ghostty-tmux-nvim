@@ -623,7 +623,7 @@ test('kitty rows carry one cat: the status', { options: { theme: 'kitty' } }, as
 test('two members on one file raise an overlap warning', async ($, on) => {
   const ui = await cartRun($, on)
   expect(await ui.find({ in: KEY, text: /cart\.ts edited by 2 members/ })).toBeDefined()
-  expect(await ui.find({ in: KEY, text: /cart\.ts edited by 2 agents/ })).toBeDefined() // the insights strip
+  expect(await ui.find({ in: KEY, text: /2 agents edited cart\.ts/ })).toBeDefined() // the insights strip
   await ui.unmount()
 })
 
@@ -673,7 +673,7 @@ test('insights name what needs a look, and i jumps to it', async ($, on) => {
   await $.tool.call({ tool: 'Read', tool_use_id: 'r1', agentId: 'q-b', file_path: '/repo/auth.ts' } as never)
   await clock.advance(30_000)
   const ui = await $.ui.mount({ plugin: 'agent-tree', surface: 'terminal', ...PANE })
-  expect(await ui.find({ in: KEY, text: /Verify cache\.ts quiet for 3m, no tool call/ })).toBeDefined()
+  expect(await ui.find({ in: KEY, text: /Verify cache\.ts made no tool call for 3m\./ })).toBeDefined()
   expect(await ui.find({ in: KEY, text: /Verify auth\.ts quiet/ })).toBeUndefined()
   await ui.key({ in: KEY, key: 'i' })
   const rows = contentRows(await ui.drawn({ in: KEY })).map(r => leaves(r).map(l => l.text).join(''))
@@ -694,7 +694,7 @@ test('insights from data: quiet, overlap, failures, slow phase, tokens', () => {
   ]
   const kinds = insights(all, all, now).map(i => i.kind)
   expect(kinds).toEqual(['quiet', 'overlap', 'failed', 'slow', 'tokens'])
-  expect(insights(all, all, now).find(i => i.kind === 'slow')!.text).toMatch(/^Verify took \d+% of the time$/)
+  expect(insights(all, all, now).find(i => i.kind === 'slow')!.text).toMatch(/^The Verify phase took \d+% of the time\.$/)
 })
 
 // ── phase 3: the History page and the finished-run report ─────────────────

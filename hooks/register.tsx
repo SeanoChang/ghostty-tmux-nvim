@@ -14,7 +14,7 @@ import {
   parseStory, patternsInput, storyInput, type AiMode, type Tier,
 } from './ai'
 import { criticalPath, idleGaps, insights, timelineRows } from './lens'
-import { DESK, pictureSvg, timelineSvg, traceSvg, type TimeBar } from './desktop/svg'
+import { DESK, pictureSvg, timelineHeight, timelineSvg, traceSvg, type TimeBar } from './desktop/svg'
 // phase 6: the desktop's own native view, drawn from the same data
 import { drawDesktop } from './desktop/pane'
 import { DESK_DEFAULT, deskUi } from './desktop/state'
@@ -1073,7 +1073,7 @@ async function exportPicture($: Engine, runId: string, lens: 'timeline' | 'trace
     const to = Math.max(...real.map(b => b.end))
     const inner = timelineSvg(t, bars, from, to, PICTURE_W, { idle: idle.gaps })
     const legend = [...(path && path.ids.length ? [`outlined: critical path (${path.ids.length})`] : []), ...(idle.ms ? [`shaded: idle ${pictureDuration(idle.ms)}`] : [])]
-    svg = pictureSvg(t, `${run.label} — timeline`, subtitle, legend, inner, PICTURE_W, 26 + bars.length * 22)
+    svg = pictureSvg(t, `${run.label} — timeline`, subtitle, legend, inner, PICTURE_W, timelineHeight(bars.length))
   } else {
     const built = await runTrace($, run, scope, all, zoom, now)
     if (!built.rows.length) return note($, 'Nothing to draw: no steps were recorded for this run.')
@@ -1083,7 +1083,7 @@ async function exportPicture($: Engine, runId: string, lens: 'timeline' | 'trace
     const marks = built.rows.map(r => ({ lane: r.lane, ...(r.to !== undefined ? { to: r.to } : {}), at: r.at || from, kind: r.kind, text: r.text }))
     const at = focus ? built.lanes.findIndex(L => L.id === focus) : -1
     const inner = traceSvg(t, built.lanes, marks, from, to, PICTURE_W, at >= 0 ? at : undefined)
-    svg = pictureSvg(t, `${run.label} — trace`, `${subtitle} · ${zoom} zoom`, ['● call · ◆ edit · ✕ ended', 'arrow: started or handed back', 'dashed arrow: message'], inner, PICTURE_W, 24 + built.lanes.length * 34 + 8)
+    svg = pictureSvg(t, `${run.label} — trace`, `${subtitle} · ${zoom} zoom`, ['● call · ◆ edit · ✕ ended', 'arrow: started or handed back', 'dashed arrow: message'], inner, PICTURE_W, 24 + built.lanes.length * 40 + 8)
   }
   const home = await $.env.get('HOME')
   const base = `${home ?? '.'}/Downloads/agent-tree/${slug(run.label)}-${lens}-${stamp}`

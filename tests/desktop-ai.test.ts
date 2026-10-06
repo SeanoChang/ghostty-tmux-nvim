@@ -123,7 +123,7 @@ describe('desktop AI', () => {
     await clock.advance(2 * HOUR)
     const ui = await $.ui.mount({ plugin: 'agent-tree', surface: 'desktop', ...PANE })
     await openCluster(ui)
-    expect(await has(ui, /^Report · Haiku · 640 tokens · 2h ago$/)).toBe(true)
+    expect(await has(ui, /^Report by Haiku · 640 tokens · 2h ago$/)).toBe(true)
     await ui.unmount()
   })
 
@@ -148,12 +148,15 @@ describe('desktop AI', () => {
     await ui.press({ key: 'explain' })
     await clock.advance(10)
     expect(calls.filter(c => c.system === EXPLAIN_SYSTEM).length).toBe(1)
-    expect(await has(ui, /Explain · writing… \(Sonnet\)/)).toBe(true)
+    expect(await has(ui, /Explain · Sonnet is writing…/)).toBe(true)
     hold.release!()
     for (let k = 0; k < 3; k++) await clock.advance(10)
-    expect(await has(ui, /^Explain · Sonnet · 640 tokens · just now$/)).toBe(true)
-    for (const label of ['Goal', 'Who did what', 'How it connected', 'Outcome', 'Open issues']) expect(await has(ui, new RegExp(`^${label}$`))).toBe(true)
-    expect(await has(ui, /Fix cart totals: Made totals multiply by quantity\./)).toBe(true)
+    expect(await has(ui, /^Explain · by Sonnet · 640 tokens · just now$/)).toBe(true)
+    // outcome and open issues lead, as Markdown headings
+    const brief = ((await ui.findAll({ type: 'Markdown' })) as unknown as { props?: { key?: string; text?: string } }[]).map(m => String(m.props?.text ?? '')).join('\n')
+    for (const h of ['#### Still open', '#### Goal', '#### Who did what', '#### How the parts connect']) expect(brief).toContain(h)
+    expect(brief.indexOf('#### Still open')).toBeLessThan(brief.indexOf('#### Goal'))
+    expect(brief).toContain('Fix cart totals: Made totals multiply by quantity.')
     // Output carries the brief too
     await ui.press({ key: 'view:output' })
     const md = (await ui.findAll({ type: 'Markdown' })) as unknown as { props?: { text?: string } }[]

@@ -63,6 +63,20 @@ export function timelineRows(run: AgentNode | undefined, nodes: AgentNode[], top
   return agentsUnder(nodes, run.id).filter(n => (run.kind === 'agent' || n.id !== run.id) && passes(n, [], filter)).sort(byStart).map(node => ({ kind: 'bar' as const, node }))
 }
 
+// The run list's timeline, opened up: each run as a heading with its agents under
+// it, newest runs first (at most `maxRuns`), so the picture shows who ran when.
+// A run that is one agent stays one bar, with no heading.
+export function listTimelineRows(nodes: AgentNode[], tops: AgentNode[], maxRuns = 8): { rows: TimeRow[]; runs: number; hidden: number } {
+  const shown = [...tops].sort((a, b) => b.startedAt - a.startedAt).slice(0, maxRuns).sort(byStart)
+  const rows: TimeRow[] = []
+  for (const top of shown) {
+    if (top.kind === 'agent' && !childrenOf(nodes, top.id).length) { rows.push({ kind: 'bar', node: top }); continue }
+    rows.push({ kind: 'label', text: top.label })
+    for (const node of agentsUnder(nodes, top.id).filter(n => n.id !== top.id || top.kind === 'agent').sort(byStart)) rows.push({ kind: 'bar', node })
+  }
+  return { rows, runs: shown.length, hidden: Math.max(0, tops.length - shown.length) }
+}
+
 // ── insights: what needs a look, each pointing at the item it names ─────────
 
 export const QUIET_MS = 120_000
@@ -80,13 +94,13 @@ export function insights(scope: AgentNode[], all: AgentNode[], now: number): Ins
   for (const n of agents) {
     if (n.status !== 'running') continue
     const since = now - (n.lastToolAt ?? n.startedAt)
-    if (since >= QUIET_MS) out.push({ kind: 'quiet', tone: 'warn', target: n.id, text: `${n.label} quiet for ${mins(since)}, no tool call` })
+    if (since >= QUIET_MS) out.push({ kind: 'quiet', tone: 'warn', target: n.id, text: `${n.label} made no tool call for ${mins(since)}.` })
   }
   for (const o of overlaps(agents)) {
-    out.push({ kind: 'overlap', tone: 'warn', target: o.by[0]!.id, text: `${short(o.path)} edited by ${o.by.length} agents (${list2(o.by.map(b => b.label))})` })
+    out.push({ kind: 'overlap', tone: 'warn', target: o.by[0]!.id, text: `${o.by.length} agents edited ${short(o.path)}: ${list2(o.by.map(b => b.label))}.` })
   }
   const failed = agents.filter(n => n.status === 'failed')
-  if (failed.length) out.push({ kind: 'failed', tone: 'bad', target: failed[0]!.id, text: `${failed.length} failed: ${list2(failed.map(f => f.label))}` })
+  if (failed.length) out.push({ kind: 'failed', tone: 'bad', target: failed[0]!.id, text: `${failed.length} agent${failed.length === 1 ? '' : 's'} failed: ${list2(failed.map(f => f.label))}.` })
   // the slowest phase of each workflow in scope, when it took most of the time
   for (const wf of scope.filter(n => n.kind === 'workflow')) {
     const spans = pipeline(wf, all).map(p => {
@@ -99,13 +113,13 @@ export function insights(scope: AgentNode[], all: AgentNode[], now: number): Ins
     const total = spans.reduce((a, p) => a + p.ms, 0)
     const top = [...spans].sort((a, b) => b.ms - a.ms)[0]!
     const share = total > 0 ? Math.round((top.ms / total) * 100) : 0
-    if (share >= 60 && total >= 10_000) out.push({ kind: 'slow', tone: 'info', target: wf.id, text: `${top.phase} took ${share}% of the time` })
+    if (share >= 60 && total >= 10_000) out.push({ kind: 'slow', tone: 'info', target: wf.id, text: `The ${top.phase} phase took ${share}% of the time.` })
   }
   const spent = agents.filter(n => (n.tokens ?? 0) > 0)
   if (spent.length >= 2) {
     const total = spent.reduce((a, n) => a + (n.tokens ?? 0), 0)
     const top = [...spent].sort((a, b) => (b.tokens ?? 0) - (a.tokens ?? 0))[0]!
-    out.push({ kind: 'tokens', tone: 'info', target: top.id, text: `${kTok(total)} tokens · most: ${top.label} ${kTok(top.tokens ?? 0)} (${Math.round(((top.tokens ?? 0) / total) * 100)}%)` })
+    out.push({ kind: 'tokens', tone: 'info', target: top.id, text: `${top.label} used ${Math.round(((top.tokens ?? 0) / total) * 100)}% of the tokens (${kTok(top.tokens ?? 0)} of ${kTok(total)}).` })
   }
   return out
 }

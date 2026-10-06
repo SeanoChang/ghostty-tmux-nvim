@@ -1,8 +1,8 @@
 import type { AgentNode, DeskUi, EditRecord, PatternsDoc, TraceZoom, ViewProps } from '../../types'
 import { HISTORY_FILTERS, HISTORY_FILTER_NAMES, historyItems, historyStats, outcomeOf, runTokens } from '../history'
-import { COLUMNS, aspects, boardLanes, criticalPath, idleGaps, insights, rollup, timelineRows, type Lane } from '../lens'
+import { aspects, boardLanes, criticalPath, idleGaps, insights, listTimelineRows, rollup, timelineRows, type Lane } from '../lens'
 import {
-  childrenOf, counts, fileRows, folderKey, lineDiff, noReportReason, overlaps, pipeline, prettyModel, prettyType, runKey,
+  childrenOf, counts, fileRows, folderKey, joinNodes, lineDiff, noReportReason, overlaps, pipeline, prettyModel, prettyType, runKey,
   runTree, scopeNodes, shortPaths, topItems, type Item,
 } from '../list'
 import { kTokens, reportOf } from '../report'
@@ -12,7 +12,7 @@ import {
   BriefBlock, Chip, Empty, KindMark, ReportBlock, SectionLabel, StatusMark, STATUS_WORD, aiLabel, briefMarkdown, changeTotals, clock, duration, metaLine, num,
   outputMarkdown, tokensOf, type Els, type Part,
 } from './parts'
-import { clip, diffBarSvg, iconSvg, sparkSvg, spriteSvg, statusBarSvg, statusColor, timelineSvg, traceSvg, walkSvg, type DeskTokens, type TimeBar } from './svg'
+import { STRIP_H, clip, diffBarSvg, iconSvg, rulerSvg, sparkSvg, spriteSvg, statusBarSvg, statusColor, stripSvg, traceSvg, walkSvg, type DeskTokens, type TimeBar } from './svg'
 
 // The desktop's own view of agent-tree: native controls, Svg pictures and pixel
 // cats, drawn straight into the pane (a Client's elements have no Svg). It takes
@@ -33,7 +33,7 @@ export type DeskActs = {
 // Below this many columns nothing fits well, so the pane says so. The desktop
 // lays panes out in character cells, as the terminal does; a cell is about 7.5 px.
 export const MIN_COLUMNS = 60
-export const WIDE_COLUMNS = 96
+export const WIDE_COLUMNS = 120
 const CELL_PX = 7.5
 
 export function drawDesktop(els: Els, data: ViewProps, ui: DeskUi, acts: DeskActs, columns: number) {
@@ -56,7 +56,7 @@ export function drawDesktop(els: Els, data: ViewProps, ui: DeskUi, acts: DeskAct
     })()
     : data.history
   const pool = ui.tab === 'live' ? data.nodes : history
-  const all = [...data.nodes, ...data.history]
+  const all = joinNodes(data.nodes, data.history)
   const run = ui.run ? (pool.find(n => n.id === ui.run) ?? all.find(n => n.id === ui.run)) : undefined
   const wide = columns >= WIDE_COLUMNS
   const ctx: Ctx = { els, t, ui, acts, now, all, pool, wide, columns, data }
@@ -101,46 +101,51 @@ function Header(c: Ctx, history: AgentNode[], run: AgentNode | undefined) {
   const running = liveTops.filter(n => n.status === 'running').length
   const histRuns = history.filter(n => !n.parentId || !history.some(m => m.id === n.parentId)).length
   const cnt = counts(c.pool.filter(n => n.kind === 'agent'))
-  const lenses: [DeskUi['lens'], string][] = [['tree', 'Tree'], ['board', 'Board'], ['timeline', 'Timeline'], ...(run ? [['trace', 'Trace'] as [DeskUi['lens'], string]] : [])]
+  // Board last: it is the view used least
+  const lenses: [DeskUi['lens'], string][] = [['tree', 'Tree'], ['timeline', 'Timeline'], ...(run ? [['trace', 'Trace'] as [DeskUi['lens'], string]] : []), ['board', 'Board']]
+  // a count draws in its colour only when it is not zero, so the eye lands on what is there
+  const tally = (n: number, word: string, color: string) => <Text color={n ? color : t.muted} {...(n ? { bold: true } : {})}>{n} {word}</Text>
   return (
     <Box flexDirection="column" gap={1}>
-      <Box flexDirection="row" gap={2} flexWrap="wrap" alignItems="center">
+      {/* row 1: what you look at */}
+      <Box flexDirection="row" columnGap={2} rowGap={1} flexWrap="wrap" alignItems="center">
         <Box flexDirection="row" gap={1} alignItems="center">
           {t.name === 'kitty'
             ? <Svg source={spriteSvg('pile', 20)} alt="Agents" width={20} height={20} />
             : <Svg source={iconSvg('workflow', t.accent, 18)} alt="Agents" width={18} height={18} />}
           <Text bold>Agents</Text>
         </Box>
-        {Segmented(c, 'scope', [['repo', 'This repo', 'r'], ['all', 'All']], ui.onlyRepo ? 'repo' : 'all', v => c.acts.set({ onlyRepo: v === 'repo' }))}
         {Segmented(c, 'tab', [['live', `Live ${running}`, '1'], ['history', `History ${histRuns}`, '2']], ui.tab, v => {
           c.acts.set({ tab: v, run: null, sel: null, file: null, view: 'overview', ...(ui.lens === 'trace' ? { lens: 'tree' as const } : {}) })
           if (ui.lens === 'trace') c.acts.askTrace(null, ui.zoom, 0)
         })}
+        {Segmented(c, 'scope', [['repo', 'This repo', 'r'], ['all', 'All repos']], ui.onlyRepo ? 'repo' : 'all', v => c.acts.set({ onlyRepo: v === 'repo' }))}
+      </Box>
+      {/* row 2: how you look at it */}
+      <Box flexDirection="row" columnGap={2} rowGap={1} flexWrap="wrap" alignItems="center">
         {Segmented(c, 'lens', lenses, ui.lens, v => {
           c.acts.set({ lens: v, traceOffset: 0 })
           c.acts.askTrace(v === 'trace' && run ? run.id : null, ui.zoom, 0)
         })}
         {ui.tab === 'history' && !run
-          ? <Input key="search" placeholder="Search names and outcomes" value={ui.query} onInput={(v: string) => c.acts.set({ query: v })} onSubmit={(v: string) => c.acts.set({ query: v })} />
+          ? <Box flexGrow={1} minWidth={24}><Input key="search" placeholder="Search names and outcomes" value={ui.query} onInput={(v: string) => c.acts.set({ query: v })} onSubmit={(v: string) => c.acts.set({ query: v })} /></Box>
           : null}
       </Box>
-      <Box flexDirection="row" gap={3} flexWrap="wrap">
-        <Text color={t.warn}>● {cnt.running} running</Text>
-        <Text color={t.ok}>✓ {cnt.done} done</Text>
-        <Text color={cnt.failed + cnt.stopped ? t.bad : t.muted}>✕ {cnt.failed + cnt.stopped} failed or stopped</Text>
-        <Text color={t.muted}>{ui.onlyRepo && c.data.repo ? shortHome(c.data.repo) : 'all repos'}</Text>
-        <Box flexDirection="row" gap={1} alignItems="center">
-          {Chip(c.els, t, `AI · ${c.data.ai ?? 'cheap'}`, c.data.ai === 'off' ? t.muted : t.accent)}
-          <Text color={t.muted}>change in /config</Text>
-        </Box>
+      {/* row 3: one quiet status line */}
+      <Box flexDirection="row" columnGap={1} flexWrap="wrap">
+        {tally(cnt.running, 'running', t.warn)}<Text color={t.muted}>·</Text>
+        {tally(cnt.done, 'done', t.ok)}<Text color={t.muted}>·</Text>
+        {tally(cnt.failed + cnt.stopped, 'failed or stopped', t.bad)}<Text color={t.muted}>·</Text>
+        <Text color={t.muted}>{ui.onlyRepo && c.data.repo ? shortHome(c.data.repo) : 'all repos'}</Text><Text color={t.muted}>·</Text>
+        <Text color={c.data.ai === 'off' ? t.muted : t.accent}>AI · {c.data.ai ?? 'cheap'}</Text>
+        <Text color={t.muted}>(change in /config)</Text>
       </Box>
       {ui.note ? <Text color={t.warn}>{ui.note}</Text> : null}
       {run
         ? (
-          <Box flexDirection="row" gap={1} alignItems="center">
+          <Box flexDirection="row" gap={1} alignItems="center" flexWrap="wrap">
             <Button key="back" plain label={`‹ ${ui.tab === 'live' ? 'Live' : 'History'}`} onPress={() => openRun(c, null)} />
-            <Text color={t.muted}>›</Text>
-            <Text bold>{clip(run.label, 80)}</Text>
+            <Box flexGrow={1} flexShrink={1}><Text bold wrap="truncate-end">{run.label}</Text></Box>
             {ExplainButton(c, run)}
           </Box>
         )
@@ -190,26 +195,36 @@ function Insights(c: Ctx, run: AgentNode | undefined) {
   const scope = run ? scopeNodes(c.all, { kind: 'node', id: run.id }) : c.pool
   const list = insights(scope, c.all, c.now)
   if (!list.length) return null
+  const go = (it: (typeof list)[number]) => {
+    if (!it.target) return
+    if (run) c.acts.set({ sel: it.target, view: it.kind === 'overlap' ? 'changes' : 'overview' })
+    else {
+      const byId = new Map(c.all.map(n => [n.id, n]))
+      let top = byId.get(it.target)
+      while (top?.parentId && byId.has(top.parentId)) top = byId.get(top.parentId)
+      if (top) c.acts.set({ run: top.id, sel: it.target, view: it.kind === 'overlap' ? 'changes' : 'overview', file: null })
+    }
+  }
+  // one insight per line; warnings and failures in a box, plain notes as a quiet line under it
+  const line = (it: (typeof list)[number], i: number) => (
+    <Box key={`ins-${i}`} flexDirection="row" gap={1} alignItems="center">
+      <Svg source={iconSvg(it.tone === 'bad' ? 'failed' : it.kind === 'quiet' ? 'quiet' : it.tone === 'info' ? 'info' : 'warn', it.tone === 'bad' ? t.bad : it.tone === 'warn' ? t.warn : t.muted, 14)} alt={it.kind} width={14} height={14} />
+      <Box flexShrink={1}><Button key={`insight:${i}`} plain {...(it.tone === 'info' ? { dimColor: true } : {})} label={it.text} onPress={() => go(it)} /></Box>
+    </Box>
+  )
+  const loud = list.map((it, i) => [it, i] as const).filter(([it]) => it.tone !== 'info')
+  const quiet = list.map((it, i) => [it, i] as const).filter(([it]) => it.tone === 'info')
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={t.rule} paddingX={1}>
-      <Text color={t.muted} bold>NEEDS A LOOK</Text>
-      <Box flexDirection="row" gap={2} flexWrap="wrap">
-        {list.map((it, i) => (
-          <Box key={`ins-${i}`} flexDirection="row" gap={1} alignItems="center">
-            <Svg source={iconSvg(it.tone === 'bad' ? 'failed' : it.kind === 'quiet' ? 'quiet' : 'warn', it.tone === 'bad' ? t.bad : it.tone === 'warn' ? t.warn : t.muted, 14)} alt={it.kind} width={14} height={14} />
-            <Button key={`insight:${i}`} plain label={clip(it.text, 70)} onPress={() => {
-              if (!it.target) return
-              if (run) c.acts.set({ sel: it.target, view: it.kind === 'overlap' ? 'changes' : 'overview' })
-              else {
-                const byId = new Map(c.all.map(n => [n.id, n]))
-                let top = byId.get(it.target)
-                while (top?.parentId && byId.has(top.parentId)) top = byId.get(top.parentId)
-                if (top) c.acts.set({ run: top.id, sel: it.target, view: it.kind === 'overlap' ? 'changes' : 'overview', file: null })
-              }
-            }} />
+    <Box flexDirection="column" gap={1}>
+      {loud.length
+        ? (
+          <Box flexDirection="column" borderStyle="round" borderColor={loud.some(([it]) => it.tone === 'bad') ? t.bad : t.warn} paddingX={1}>
+            <Text bold color={loud.some(([it]) => it.tone === 'bad') ? t.bad : t.warn}>Needs a look ({loud.length})</Text>
+            {loud.map(([it, i]) => line(it, i))}
           </Box>
-        ))}
-      </Box>
+        )
+        : null}
+      {quiet.length ? <Box flexDirection="column">{quiet.map(([it, i]) => line(it, i))}</Box> : null}
     </Box>
   )
 }
@@ -392,23 +407,27 @@ function RunView(c: Ctx, run: AgentNode) {
   const { ui } = c
   const nodes = c.all
   const target = targetOf(ui.sel, nodes) ?? { kind: 'node' as const, node: run }
-  const lensCols = c.wide ? Math.round(c.columns * (ui.lens === 'tree' ? 0.42 : 0.56)) : c.columns - 4
+  // Only the tree sits beside the detail, and only when both get room. The pictures
+  // (timeline, trace, board) need the full width, so they always sit above it.
+  const side = c.wide && ui.lens === 'tree'
+  const treeCols = Math.max(52, Math.round(c.columns * 0.4))
+  const full = c.columns - 4
   const lens = ui.lens === 'board'
-    ? Board(c, boardLanes(run, nodes, [], 'all'), run, lensCols)
+    ? Board(c, boardLanes(run, nodes, [], 'all'), run, full)
     : ui.lens === 'timeline'
-      ? Timeline(c, run, [], lensCols)
+      ? Timeline(c, run, [], full)
       : ui.lens === 'trace'
-        ? Trace(c, run, lensCols)
+        ? Trace(c, run, full)
         : Tree(c, run)
   const detail = Detail(c, run, target)
-  return c.wide
+  return side
     ? (
       <Box flexDirection="row" gap={2}>
-        <Box flexDirection="column" width={lensCols}>{lens}</Box>
-        <Box flexDirection="column" flexGrow={1}>{detail}</Box>
+        <Box flexDirection="column" width={treeCols} flexShrink={0} overflow="hidden">{lens}</Box>
+        <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={40}>{detail}</Box>
       </Box>
     )
-    : <Box flexDirection="column" gap={1}>{lens}{detail}</Box>
+    : <Box flexDirection="column" gap={2}>{lens}{detail}</Box>
 }
 
 type Target = { kind: 'node'; node: AgentNode } | { kind: 'phase'; wf: AgentNode; phase: string }
@@ -431,8 +450,20 @@ function Tree(c: Ctx, run: AgentNode) {
   const { Box, Text, Button, Svg } = c.els
   const { t, ui } = c
   const items = runTree(run, c.all, 'all', ui.flipped, ui.flipped)
+  // the picked row gets a tinted ground; its label never has to share space with a marker
+  const pickedBg = `${t.accent}26`
+  const INDENT = 3
+  // the right-hand facts sit in one block that never shrinks, so they line up and never spill
+  const facts = (parts: unknown[]) => <Box flexShrink={0} flexDirection="row" gap={1} alignItems="center">{parts}</Box>
+  const label = (key: string, text: string, onPress: () => void) => (
+    <Box flexGrow={1} flexShrink={1} minWidth={10} overflow="hidden"><Button key={key} plain label={text} onPress={onPress} /></Box>
+  )
+  const fold = (key: string, isOpen: boolean) => (
+    <Box width={2} flexShrink={0}><Button key={`fold:${key}`} plain label={isOpen ? '▾' : '▸'} onPress={() => c.acts.set({ flipped: toggle(ui.flipped, key) })} /></Box>
+  )
+  const noFold = <Box width={2} flexShrink={0} />
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" gap={0}>
       {items.map((it, i) => {
         if (it.kind === 'node') {
           const n = it.node
@@ -442,18 +473,17 @@ function Tree(c: Ctx, run: AgentNode) {
           const kids = n.kind === 'agent' ? [] : scopeNodes(c.all, { kind: 'node', id: n.id }).filter(k => k.kind === 'agent')
           const r = rollup(kids)
           return (
-            <Box key={`tn-${n.id}`} flexDirection="row" gap={1} alignItems="center" paddingLeft={it.depth * 2}>
-              <Text color={isSel ? t.accent : t.rule}>{isSel ? '▌' : ' '}</Text>
-              {it.fold
-                ? <Button key={`fold:${it.fold.key}`} plain label={it.fold.isOpen ? '▾' : '▸'} onPress={() => c.acts.set({ flipped: toggle(ui.flipped, it.fold!.key) })} />
-                : <Text> </Text>}
+            <Box key={`tn-${n.id}`} flexDirection="row" gap={1} alignItems="center" paddingLeft={it.depth * INDENT} paddingY={0} {...(isSel ? { backgroundColor: pickedBg } : {})}>
+              {it.fold ? fold(it.fold.key, it.fold.isOpen) : noFold}
               {StatusMark(c.els, t, n.status, 16, isQuiet(n, c.now))}
               {KindMark(c.els, t, n.kind)}
-              <Box flexGrow={1}><Button key={`sel:${n.id}`} plain label={clip(n.label, 48)} onPress={() => c.acts.set({ sel: n.id, file: null })} /></Box>
-              {kids.length ? <Svg source={statusBarSvg(t, r, 56, 5)} alt={`${r.finished} of ${r.total}`} width={56} height={5} /> : null}
-              {kids.length ? <Text color={t.muted}>{r.finished}/{r.total}</Text> : null}
-              {files.length ? <Text color={t.add}>+{ch.added} <Text color={t.del}>−{ch.removed}</Text></Text> : null}
-              <Text color={t.muted}>{duration((n.endedAt ?? c.now) - n.startedAt)}</Text>
+              {label(`sel:${n.id}`, n.label, () => c.acts.set({ sel: n.id, file: null }))}
+              {facts([
+                kids.length ? <Svg key="bar" source={statusBarSvg(t, r, 48, 5)} alt={`${r.finished} of ${r.total}`} width={48} height={5} /> : null,
+                kids.length ? <Text key="n" color={t.muted}>{r.finished}/{r.total}</Text> : null,
+                files.length ? <Text key="d" color={t.add}>+{ch.added} <Text color={t.del}>−{ch.removed}</Text></Text> : null,
+                <Box key="ms" width={8} justifyContent="flex-end"><Text color={t.muted}>{duration((n.endedAt ?? c.now) - n.startedAt)}</Text></Box>,
+              ])}
             </Box>
           )
         }
@@ -461,25 +491,27 @@ function Tree(c: Ctx, run: AgentNode) {
           const key = `phase:${it.wfId}:${it.phase}`
           const isSel = ui.sel === key
           return (
-            <Box key={`tp-${it.key}`} flexDirection="row" gap={1} alignItems="center" paddingLeft={2}>
-              <Text color={isSel ? t.accent : t.rule}>{isSel ? '▌' : ' '}</Text>
-              <Button key={`fold:${it.key}`} plain label={it.isOpen ? '▾' : '▸'} onPress={() => c.acts.set({ flipped: toggle(ui.flipped, it.key) })} />
-              <Box flexGrow={1}><Button key={`sel:${key}`} plain label={it.phase} onPress={() => c.acts.set({ sel: key, file: null })} /></Box>
-              <Svg source={statusBarSvg(t, it, 56, 5)} alt={`${it.done} of ${it.total}`} width={56} height={5} />
-              <Text color={t.muted}>{it.total - it.running}/{it.total}</Text>
+            <Box key={`tp-${it.key}`} flexDirection="row" gap={1} alignItems="center" paddingLeft={INDENT} {...(isSel ? { backgroundColor: pickedBg } : {})}>
+              {fold(it.key, it.isOpen)}
+              {label(`sel:${key}`, `${it.phase} phase`, () => c.acts.set({ sel: key, file: null }))}
+              {facts([
+                <Svg key="bar" source={statusBarSvg(t, it, 48, 5)} alt={`${it.done} of ${it.total}`} width={48} height={5} />,
+                <Box key="n" width={8} justifyContent="flex-end"><Text color={t.muted}>{it.total - it.running}/{it.total}</Text></Box>,
+              ])}
             </Box>
           )
         }
         if (it.kind === 'more') {
-          return <Box key={`tm-${i}`} paddingLeft={6}><Button key={`more:${it.key}`} plain label={`${it.count} more done`} onPress={() => c.acts.set({ flipped: toggle(ui.flipped, it.key) })} /></Box>
+          return <Box key={`tm-${i}`} paddingLeft={INDENT * 2 + 3}><Button key={`more:${it.key}`} plain label={`Show ${it.count} more finished`} onPress={() => c.acts.set({ flipped: toggle(ui.flipped, it.key) })} /></Box>
         }
         if (it.kind === 'info' && it.tone === 'warn') {
           const o = overlaps(scopeNodes(c.all, { kind: 'node', id: it.nodeId }).filter(k => k.id !== it.nodeId))[0]
-          return o ? <Box key={`tw-${i}`} paddingLeft={6}><Text color={t.warn}>⚠ {o.path.split('/').pop()} edited by {o.by.length} members</Text></Box> : null
+          return o ? <Box key={`tw-${i}`} paddingLeft={INDENT * 2 + 3}><Text color={t.warn}>⚠ {o.by.length} members edited {o.path.split('/').pop()}</Text></Box> : null
         }
         if (it.kind === 'info' && it.tone === 'outcome') {
           const n = c.all.find(x => x.id === it.nodeId)
-          return n ? <Box key={`to-${i}`} paddingLeft={6}><Text color={t.muted}>{clip(reportOf(n)?.result ?? '', 90)}</Text></Box> : null
+          // the outcome sits under the row it belongs to, indented past the marks
+          return n ? <Box key={`to-${i}`} paddingLeft={INDENT + 7} paddingBottom={1}><Text color={t.muted}>{clip(reportOf(n)?.result ?? '', 160)}</Text></Box> : null
         }
         return null
       })}
@@ -489,87 +521,123 @@ function Tree(c: Ctx, run: AgentNode) {
 
 const isQuiet = (n: AgentNode, now: number) => n.status === 'running' && now - (n.lastToolAt ?? n.startedAt) >= 120_000
 
-// ── Board: swimlanes × Running | Done | Failed or stopped ─────────────────────
+// ── Board: one card per lane, its agents by status, full names and outcomes ────
+// Three fixed status columns squeezed every name into a third of the width, and
+// most of them stood empty. Now status is the order and the mark: running first,
+// then failed or stopped, then done.
+const BOARD_ORDER: Record<AgentNode['status'], number> = { running: 0, failed: 1, killed: 2, done: 3 }
+const BOARD_CAP = 12
+
 function Board(c: Ctx, lanes: Lane[], run: AgentNode | undefined, cols = c.columns - 4) {
   const { Box, Text, Button } = c.els
   const { t, ui } = c
   if (!lanes.length) return Empty(c.els, t, 'Nothing to put on the board.', 'Agents show up here as cards, by status.')
-  const colOf = (n: AgentNode) => (n.status === 'running' ? 'running' : n.status === 'done' ? 'done' : 'failed')
-  // one width per column, shared by the headings and every lane, so they line up
-  const LABEL = 15
-  const colW = Math.max(14, Math.floor((cols - LABEL - 8) / 3))
-  const titles: Record<string, string> = { running: 'Running', done: 'Done', failed: colW >= 22 ? 'Failed or stopped' : 'Failed' }
+  const pick = (k: AgentNode) => {
+    if (run) return c.acts.set({ sel: k.id, file: null })
+    const byId = new Map(c.all.map(n => [n.id, n]))
+    let top: AgentNode | undefined = k
+    while (top?.parentId && byId.has(top.parentId)) top = byId.get(top.parentId)
+    if (top) c.acts.set({ run: top.id, sel: k.id, file: null })
+  }
+  // two lanes side by side when each still gets 56 columns
+  const twoUp = cols >= 116
+  const laneW = twoUp ? Math.floor((cols - 2) / 2) : undefined
+  const summary = (cards: AgentNode[]) => {
+    const cn = counts(cards)
+    return [cn.running ? `${cn.running} running` : '', cn.failed + cn.stopped ? `${cn.failed + cn.stopped} failed or stopped` : '', cn.done ? `${cn.done} done` : ''].filter(Boolean).join(' · ')
+  }
   return (
     <Box flexDirection="column" gap={1}>
-      <Box flexDirection="row" gap={1} paddingX={2}>
-        <Box width={LABEL}><Text color={t.muted} bold>LANE</Text></Box>
-        {COLUMNS.map(col => {
-          const n = lanes.reduce((a, l) => a + l.cards.filter(k => colOf(k) === col).length, 0)
-          return <Box key={`bh-${col}`} width={colW}><Text color={t.muted} bold>{titles[col]!.toUpperCase()} {n}</Text></Box>
+      {!run ? <Text color={t.muted}>Each card is one run. Press an agent to open its run.</Text> : null}
+      <Box flexDirection="row" flexWrap="wrap" columnGap={2} rowGap={1}>
+        {lanes.map(l => {
+          const cards = [...l.cards].sort((a, b) => BOARD_ORDER[a.status] - BOARD_ORDER[b.status] || a.startedAt - b.startedAt)
+          const bad = cards.some(k => k.status === 'failed' || k.status === 'killed')
+          return (
+            <Box key={`lane-${l.key}`} flexDirection="column" gap={1} borderStyle="round" borderColor={bad ? t.bad : cards.some(k => k.status === 'running') ? t.accent : t.rule} paddingX={1}
+              {...(laneW ? { width: laneW } : { flexGrow: 1 })}>
+              <Box flexDirection="column">
+                <Text bold>{l.title}</Text>
+                <Text color={bad ? t.bad : t.muted}>{summary(cards)}</Text>
+              </Box>
+              {cards.slice(0, BOARD_CAP).map(k => {
+                const outcome = k.status === 'running' ? (k.activity ?? '') : (reportOf(k)?.result ?? '')
+                return (
+                  <Box key={`card-${k.id}`} flexDirection="column" {...(ui.sel === k.id ? { backgroundColor: `${t.accent}26` } : {})}>
+                    <Box flexDirection="row" gap={1} alignItems="center">
+                      {StatusMark(c.els, t, k.status, 14, isQuiet(k, c.now))}
+                      <Box flexGrow={1} flexShrink={1} minWidth={10} overflow="hidden"><Button key={`bsel:${k.id}`} plain label={k.label} onPress={() => pick(k)} /></Box>
+                      <Box flexShrink={0}><Text color={t.muted}>{duration((k.endedAt ?? c.now) - k.startedAt)}</Text></Box>
+                    </Box>
+                    {outcome ? <Box paddingLeft={3}><Text color={t.muted}>{clip(outcome, 150)}</Text></Box> : null}
+                  </Box>
+                )
+              })}
+              {cards.length > BOARD_CAP ? <Text color={t.muted}>and {cards.length - BOARD_CAP} more</Text> : null}
+            </Box>
+          )
         })}
       </Box>
-      {lanes.map(l => (
-        <Box key={`lane-${l.key}`} flexDirection="row" gap={1} borderStyle="round" borderColor={t.rule} paddingX={1}>
-          <Box width={LABEL}><Text bold wrap="truncate-end">{l.title}</Text></Box>
-          {COLUMNS.map(col => {
-            const cards = l.cards.filter(k => colOf(k) === col)
-            return (
-              <Box key={`cell-${l.key}-${col}`} flexDirection="column" width={colW}>
-                {cards.slice(0, 6).map(k => (
-                  <Box key={`card-${k.id}`} flexDirection="row" gap={1} alignItems="center">
-                    {StatusMark(c.els, t, k.status, 14, isQuiet(k, c.now))}
-                    <Button key={`bsel:${k.id}`} plain label={clip(k.label, 22)} onPress={() => {
-                      if (run) c.acts.set({ sel: k.id, file: null })
-                      else {
-                        const byId = new Map(c.all.map(n => [n.id, n]))
-                        let top: AgentNode | undefined = k
-                        while (top?.parentId && byId.has(top.parentId)) top = byId.get(top.parentId)
-                        if (top) c.acts.set({ run: top.id, sel: k.id, file: null })
-                      }
-                    }} />
-                  </Box>
-                ))}
-                {cards.length > 6 ? <Text color={t.muted}>+{cards.length - 6} more</Text> : null}
-              </Box>
-            )
-          })}
-        </Box>
-      ))}
-      {ui.lens === 'board' && !run ? <Text color={t.muted}>Pick a card to open its run.</Text> : null}
     </Box>
   )
 }
 
 // ── Timeline: bars on a shared ruler ──────────────────────────────────────────
 function Timeline(c: Ctx, run: AgentNode | undefined, tops: AgentNode[], cols = c.columns - 4) {
-  const { Svg } = c.els
+  const { Box, Text, Button, Svg } = c.els
   const { t, ui } = c
-  const rows = timelineRows(run, c.all, tops, 'all')
+  // on the run list, each run opens into its agents (newest 8 runs), so the bars are not 4 thin lines
+  const list = run ? undefined : listTimelineRows(c.all, tops)
+  const rows = run ? timelineRows(run, c.all, tops, 'all') : list!.rows
   // inside a run: the chain that set its end time, outlined, and the idle time, shaded
   const agents = rows.flatMap(r => (r.kind === 'bar' ? [r.node] : []))
   const path = run ? criticalPath(agents, c.now) : undefined
   const idle = run ? idleGaps(agents, c.now) : { gaps: [], ms: 0 }
   const onPath = new Set(path?.ids ?? [])
-  const bars: TimeBar[] = rows.map(r => (r.kind === 'label'
-    ? { label: r.text, start: 0, end: 0, status: 'done' as const, isHeader: true }
-    : { label: r.node.label, start: r.node.startedAt, end: r.node.endedAt ?? c.now, status: r.node.status, isSelected: ui.sel === r.node.id, isCritical: onPath.has(r.node.id) }))
-  const real = bars.filter(b => !b.isHeader)
-  if (!real.length) return Empty(c.els, t, 'No timeline yet.', 'Bars appear as agents start and finish.')
-  const from = Math.min(...real.map(b => b.start))
-  const to = Math.max(...real.map(b => b.end))
-  const w = Math.max(320, Math.round(cols * CELL_PX))
-  const svg = timelineSvg(t, bars, from, to, w, { idle: idle.gaps })
-  const picture = <Svg source={svg} alt={`Timeline of ${real.length} agents over ${duration(to - from)}`} width={w} height={26 + bars.length * 22} />
-  if (!run) return picture
-  const { Box, Text, Button } = c.els
+  if (!agents.length) return Empty(c.els, t, 'No timeline yet.', 'Bars appear as agents start and finish.')
+  const from = Math.min(...agents.map(n => n.startedAt))
+  const to = Math.max(...agents.map(n => n.endedAt ?? c.now))
+  // labels are native text in their own column (they follow the theme and can be
+  // pressed); each bar is a strip picture as wide as the rest of the pane
+  const LABEL = Math.max(18, Math.min(44, Math.round(cols * 0.32)))
+  const w = Math.max(200, Math.round((cols - LABEL - 2) * CELL_PX))
+  const pick = (n: AgentNode) => {
+    if (run) return c.acts.set({ sel: n.id, file: null })
+    const byId = new Map(c.all.map(x => [x.id, x]))
+    let top: AgentNode | undefined = n
+    while (top?.parentId && byId.has(top.parentId)) top = byId.get(top.parentId)
+    if (top) c.acts.set({ run: top.id, sel: n.id, file: null })
+  }
   return (
     <Box flexDirection="column" gap={1}>
-      <Box flexDirection="row" gap={2} alignItems="center" flexWrap="wrap">
-        {path ? <Text color={t.accent}>Critical path {path.ids.length} agent{path.ids.length === 1 ? '' : 's'} · {duration(path.ms)} of {duration(path.span)}</Text> : null}
+      <Box flexDirection="row" columnGap={2} alignItems="center" flexWrap="wrap">
+        {path ? <Text color={t.accent}>Critical path: {path.ids.length} agent{path.ids.length === 1 ? '' : 's'}, {duration(path.ms)} of {duration(path.span)} (outlined)</Text> : null}
         {idle.ms ? <Text color={t.muted}>Idle {duration(idle.ms)} (shaded)</Text> : null}
-        <Button key="save-timeline" plain label="Save picture" hotkey="x" onPress={() => c.acts.exportPic(run.id, 'timeline', ui.zoom)} />
+        {list ? <Text color={t.muted}>{list.runs} newest run{list.runs === 1 ? '' : 's'}, {agents.length} agents{list.hidden ? `; ${list.hidden} older runs not shown` : ''}. Press a name to open it.</Text> : null}
+        {run ? <Button key="save-timeline" plain label="Save picture" hotkey="x" onPress={() => c.acts.exportPic(run.id, 'timeline', ui.zoom)} /> : null}
       </Box>
-      {picture}
+      <Box flexDirection="column" gap={0}>
+        <Box flexDirection="row" gap={1}>
+          <Box width={LABEL} flexShrink={0} />
+          <Svg source={rulerSvg(t, from, to, w)} alt={`Timeline of ${agents.length} agents over ${duration(to - from)}`} width={w} height={20} />
+        </Box>
+        {rows.map((r, i) => {
+          if (r.kind === 'label') {
+            return <Box key={`tlh-${i}`} paddingTop={i ? 1 : 0}><Text bold wrap="truncate-end">{r.text}</Text></Box>
+          }
+          const n = r.node
+          const isSel = ui.sel === n.id
+          const bar: TimeBar = { label: n.label, start: n.startedAt, end: n.endedAt ?? c.now, status: n.status, isCritical: onPath.has(n.id) }
+          return (
+            <Box key={`tl-${n.id}`} flexDirection="row" gap={1} alignItems="center" {...(isSel ? { backgroundColor: `${t.accent}26` } : {})}>
+              <Box width={LABEL} flexShrink={0} overflow="hidden" paddingLeft={1}>
+                <Button key={`tsel:${n.id}`} plain {...(onPath.has(n.id) || !run ? {} : { dimColor: true })} label={n.label} onPress={() => pick(n)} />
+              </Box>
+              <Svg source={stripSvg(t, bar, from, to, w, idle.gaps)} alt={`${n.label}: ${STATUS_WORD[n.status]}, ${duration(bar.end - bar.start)}`} width={w} height={STRIP_H} />
+            </Box>
+          )
+        })}
+      </Box>
     </Box>
   )
 }
@@ -600,7 +668,7 @@ function Trace(c: Ctx, run: AgentNode, cols: number) {
   const marks = tr.rows.map(r => ({ lane: r.lane, ...(r.to !== undefined ? { to: r.to } : {}), at: r.at || from, kind: r.kind, text: r.text }))
   // the agent picked in the tree or the timeline: its lane stands out, the others fade
   const focus = ui.sel ? tr.lanes.findIndex(l => l.id === ui.sel) : -1
-  const svgH = 24 + lanes.length * 34 + 8
+  const svgH = 24 + lanes.length * 40 + 8
   return (
     <Box flexDirection="column" gap={1}>
       <Box flexDirection="row" gap={2} alignItems="center">

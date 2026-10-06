@@ -69,12 +69,16 @@ describe('desktop: a native view', () => {
     await ui.unmount()
   })
 
-  test('a run opens with its report: Result, Parts, Problems, Next, Changed, Totals', async ($, on) => {
+  test('a run opens with its report: verdict, what needs attention, parts, next, changed files', async ($, on) => {
     const ui = await desk($, on)
     await ui.press({ key: 'tab:history' })
     await ui.press({ key: 'run:w1' })
-    for (const s of ['Result', 'Parts', 'Problems', 'Next', 'Changed', 'Totals']) expect(await ui.find({ text: s })).toBeDefined()
-    expect(await ui.find({ text: 'Found 3 issues; 2 confirmed by verifiers.' })).toBeDefined()
+    const md = ((await ui.findAll({ type: 'Markdown' })) as unknown as Found[]).map(m => String(m.props?.text ?? '')).join('\n')
+    // the verdict is the large heading; each section has its own heading
+    expect(md).toContain('### Found 3 issues; 2 confirmed by verifiers.')
+    for (const h of ['#### Parts (2)', '#### Next step', '#### Changed files (1)']) expect(md).toContain(h)
+    expect(await ui.find({ text: 'Needs your attention (1)' })).toBeDefined()
+    expect(md).toContain('- retry-after ran out of turns. — _verify:retry-after_')
     expect(await ui.find({ key: 'part:phase:w1:Review' })).toBeDefined()
     // the tree beside it: phases, whose finished agents start folded
     expect(await ui.find({ key: 'sel:phase:w1:Review' })).toBeDefined()
@@ -115,7 +119,7 @@ describe('desktop: a native view', () => {
     await ui.press({ key: 'tab:history' })
     await ui.press({ key: 'run:w1' })
     await ui.press({ key: 'lens:board' })
-    expect(await ui.find({ text: /FAILED( OR STOPPED)? 1/ })).toBeDefined()
+    expect(await ui.find({ text: /^1 failed or stopped$/ })).toBeDefined()
     expect(await ui.find({ key: 'bsel:w1b' })).toBeDefined()
     await ui.press({ key: 'lens:timeline' })
     const tl = (await svgs(ui)).find(s => String(s.props?.alt ?? '').startsWith('Timeline of'))
@@ -194,7 +198,10 @@ test('desktop: a run\'s timeline names its critical path and saves a picture', a
   await ui.press({ key: 'tab:history' })
   await ui.press({ key: 'run:w1' })
   await ui.press({ key: 'lens:timeline' })
-  expect(await ui.find({ text: /Critical path 2 agents/ })).toBeDefined()
+  expect(await ui.find({ text: /Critical path: 2 agents/ })).toBeDefined()
+  // each bar's label is a native button that picks the agent
+  await ui.press({ key: 'tsel:w1b' })
+  expect(await ui.find({ key: 'tsel:w1b' })).toBeDefined()
   await ui.press({ key: 'save-timeline' })
   await ui.advance(600)
   expect(writes.some(p => /^\/home\/test\/Downloads\/agent-tree\/review-changed-files-across-dimensions-timeline-.*\.svg$/.test(p))).toBe(true)

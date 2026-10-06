@@ -10,7 +10,7 @@ import {
   GROUPS, GROUP_NAMES, childrenOf, counts, dayLabel, diffCounts, fileRows, firstSentence, isSelectable, lineDiff,
   noReportReason, overlaps, phaseWords, pipeline, plain, prettyModel, prettyType, readableResult, runTree, scopeNodes, shortPaths,
   taskText, topItems, whereLabel, workSummary, type DiffLine, type FileRow, type Filter, type Group, type Item,
-  folderKey, runKey,
+  folderKey, joinNodes, runKey,
 } from './list'
 import { cellWidth, fit, kindGlyph, padEnd, padStart, themeOf, type Theme } from './theme'
 import {
@@ -386,7 +386,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   const noRepoRuns = props.history.filter(n => !n.parentId && !runKey(n)).length
   const isHistory = s.tab === 'history'
   const nodes = isHistory ? repoHistory : props.nodes
-  const allNodes = [...props.nodes, ...props.history]
+  const allNodes = joinNodes(props.nodes, props.history)
   const run = s.path ? nodes.find(n => n.id === s.path) : undefined
   const isInWorkflow = (n: AgentNode) => !!n.parentId && nodes.some(p => p.id === n.parentId && p.kind === 'workflow')
   // a trace needs a run open; on the run list the lens falls back to the tree

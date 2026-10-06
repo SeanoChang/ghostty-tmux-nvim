@@ -90,6 +90,7 @@ const ICON: Record<string, string> = {
   worktree: '<circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="5" r="1.5"/><path d="M4.5 5v6M11.5 6.5c0 3-7 1.8-7 4.5"/>',
   file: '<path d="M4 2.25h5l3 3v8.5H4Z"/><path d="M9 2.25v3h3"/>',
   warn: '<path d="M8 2.5 14 13H2Z"/><path d="M8 6.5v3M8 11.2v.1"/>',
+  info: '<circle cx="8" cy="8" r="6"/><path d="M8 7.5v3.5M8 5v.1"/>',
   empty: '<circle cx="8" cy="8" r="6" stroke-dasharray="2 2"/>',
 }
 
@@ -143,34 +144,89 @@ export type TimeBar = { label: string; start: number; end: number; status: NodeS
 // `idle`: stretches when no agent ran, shaded across every row.
 export type TimelineOpts = { idle?: { from: number; to: number }[] }
 
-export function timelineSvg(t: DeskTokens, bars: TimeBar[], from: number, to: number, w: number, opts: TimelineOpts = {}): string {
-  const LABEL = Math.min(200, Math.round(w * 0.28))
-  const plot = Math.max(80, w - LABEL - 16)
+// Type sizes for the pictures. An Svg is the one place the pane sets its own type
+// size, so labels match the native text (about 13 px) instead of shrinking below it.
+export const PIC = { body: 13, small: 12, head: 12, rowH: 32, barH: 14, font: 'font-family="-apple-system, BlinkMacSystemFont, sans-serif"' } as const
+// About how many characters of 13 px text fit in a width.
+const fits = (px: number, size: number = PIC.body) => Math.max(6, Math.floor(px / (size * 0.56)))
+// The height a timeline of these rows draws at, for the Svg box.
+export const timelineHeight = (rows: number) => 30 + rows * PIC.rowH + 6
+
+// The pane's timeline draws its labels as native text (they follow the theme and
+// can be pressed), so its pictures are a ruler and one strip per bar.
+const QUARTERS = [0, 0.25, 0.5, 0.75, 1]
+export const STRIP_H = 24
+export function rulerSvg(t: DeskTokens, from: number, to: number, w: number): string {
   const span = Math.max(1, to - from)
-  const rowH = 22
-  const h = 26 + bars.length * rowH
+  const pad = 4
+  const marks = QUARTERS.map(f => {
+    const tx = pad + f * (w - 2 * pad - 56)
+    return `<text x="${tx.toFixed(1)}" y="15" font-size="${PIC.small}" fill="${t.muted}" text-anchor="${f === 0 ? 'start' : f === 1 ? 'end' : 'middle'}" ${PIC.font}>${esc(clockOff(span * f))}</text>`
+  }).join('')
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="20" viewBox="0 0 ${w} 20">${marks}</svg>`
+}
+export function stripSvg(t: DeskTokens, b: TimeBar, from: number, to: number, w: number, idleGaps: { from: number; to: number }[] = []): string {
+  const span = Math.max(1, to - from)
+  const pad = 4
+  const plot = w - 2 * pad - 56
+  const x = (at: number) => pad + ((at - from) / span) * plot
+  const h = STRIP_H
+  const mid = h / 2
+  const grid = QUARTERS.map(f => `<line x1="${(pad + f * plot).toFixed(1)}" y1="0" x2="${(pad + f * plot).toFixed(1)}" y2="${h}" stroke="${t.rule}" stroke-opacity=".3"/>`).join('')
+  const idle = idleGaps.map(g => {
+    const x0 = x(Math.max(from, g.from))
+    const x1 = x(Math.min(to, g.to))
+    return x1 - x0 < 1 ? '' : `<rect x="${x0.toFixed(1)}" y="0" width="${(x1 - x0).toFixed(1)}" height="${h}" fill="${t.rule}" opacity=".16"/>`
+  }).join('')
+  const x0 = x(b.start)
+  const x1 = Math.max(x0 + 4, x(b.end))
+  const color = statusColor(t, b.status)
+  const crit = b.isCritical ? ` stroke="${t.accent}" stroke-width="2.5"` : ''
+  const live = b.status === 'running' ? `<rect x="${(x1 - 8).toFixed(1)}" y="${mid - PIC.barH / 2}" width="8" height="${PIC.barH}" fill="${color}" opacity=".5"/>` : ''
+  const bar = `<rect x="${x0.toFixed(1)}" y="${mid - PIC.barH / 2}" width="${(x1 - x0).toFixed(1)}" height="${PIC.barH}" rx="4" fill="${color}" opacity="${b.status === 'running' ? 0.75 : 0.92}"${crit}/>`
+  const dur = `<text x="${(x1 + 6).toFixed(1)}" y="${mid + 4}" font-size="${PIC.small}" fill="${t.muted}" ${PIC.font}>${esc(clockOff(b.end - b.start).slice(1))}</text>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${idle}${grid}${bar}${live}${dur}</svg>`
+}
+
+export function timelineSvg(t: DeskTokens, bars: TimeBar[], from: number, to: number, w: number, opts: TimelineOpts = {}): string {
+  // labels get their own column; bars never run under them
+  const LABEL = Math.min(300, Math.max(150, Math.round(w * 0.32)))
+  const DUR = 64
+  const plot = Math.max(80, w - LABEL - DUR - 12)
+  const span = Math.max(1, to - from)
+  const rowH = PIC.rowH
+  const top = 30
+  const h = timelineHeight(bars.length)
+  const F = PIC.font
   const x = (at: number) => LABEL + ((at - from) / span) * plot
   const ticks = [0, 0.25, 0.5, 0.75, 1].map(f => {
     const tx = LABEL + f * plot
-    return `<line x1="${tx}" y1="18" x2="${tx}" y2="${h}" stroke="${t.rule}" stroke-opacity=".35"/><text x="${tx}" y="12" font-size="9" fill="${t.muted}" text-anchor="${f === 0 ? 'start' : f === 1 ? 'end' : 'middle'}" font-family="-apple-system, sans-serif">${esc(clockOff(span * f))}</text>`
+    return `<line x1="${tx}" y1="${top - 6}" x2="${tx}" y2="${h}" stroke="${t.rule}" stroke-opacity=".3"/><text x="${tx}" y="16" font-size="${PIC.small}" fill="${t.muted}" text-anchor="${f === 0 ? 'start' : f === 1 ? 'end' : 'middle'}" ${F}>${esc(clockOff(span * f))}</text>`
   }).join('')
   const idle = (opts.idle ?? []).map(g => {
     const x0 = x(Math.max(from, g.from))
     const x1 = x(Math.min(to, g.to))
-    return x1 - x0 < 1 ? '' : `<rect x="${x0.toFixed(1)}" y="18" width="${(x1 - x0).toFixed(1)}" height="${h - 18}" fill="${t.rule}" opacity=".18"><title>idle ${esc(clockOff(g.to - g.from).slice(1))}</title></rect>`
+    return x1 - x0 < 1 ? '' : `<rect x="${x0.toFixed(1)}" y="${top - 6}" width="${(x1 - x0).toFixed(1)}" height="${h - top + 6}" fill="${t.rule}" opacity=".16"><title>idle ${esc(clockOff(g.to - g.from).slice(1))}</title></rect>`
   }).join('')
   const rows = bars.map((b, i) => {
-    const y = 26 + i * rowH
-    if (b.isHeader) return `<text x="0" y="${y + 13}" font-size="10" font-weight="600" fill="${t.muted}" font-family="-apple-system, sans-serif">${esc(clip(b.label, 34).toUpperCase())}</text>`
+    const y = top + i * rowH
+    const mid = y + rowH / 2
+    if (b.isHeader) {
+      // a run or phase heading: full width, with a rule above it
+      return `<line x1="0" y1="${y + 2}" x2="${w}" y2="${y + 2}" stroke="${t.rule}" stroke-opacity=".45"/><text x="0" y="${mid + 6}" font-size="${PIC.head}" font-weight="700" fill="${t.muted}" ${F}>${esc(clip(b.label, fits(w, PIC.head)))}</text>`
+    }
     const x0 = x(b.start)
-    const x1 = Math.max(x0 + 3, x(b.end))
+    const x1 = Math.max(x0 + 4, x(b.end))
     const color = statusColor(t, b.status)
-    const sel = b.isSelected ? `<rect x="0" y="${y - 2}" width="${w}" height="${rowH - 2}" fill="${t.accent}" opacity=".12" rx="4"/>` : ''
-    const live = b.status === 'running' ? `<rect x="${x1 - 6}" y="${y + 3}" width="6" height="10" fill="${color}" opacity=".5"/>` : ''
+    const sel = b.isSelected ? `<rect x="0" y="${y + 2}" width="${w}" height="${rowH - 4}" fill="${t.accent}" opacity=".14" rx="5"/>` : ''
+    const live = b.status === 'running' ? `<rect x="${x1 - 8}" y="${mid - PIC.barH / 2}" width="8" height="${PIC.barH}" fill="${color}" opacity=".5"/>` : ''
     // the critical path: an accent outline, and the label in bold
-    const crit = b.isCritical ? ` stroke="${t.accent}" stroke-width="2"` : ''
+    const crit = b.isCritical ? ` stroke="${t.accent}" stroke-width="2.5"` : ''
     const weight = b.isCritical ? ' font-weight="600"' : ''
-    return `${sel}<text x="0" y="${y + 12}" font-size="11" fill="${t.muted}"${weight} font-family="-apple-system, sans-serif">${esc(clip(b.label, 30))}</text><rect x="${x0.toFixed(1)}" y="${y + 3}" width="${(x1 - x0).toFixed(1)}" height="10" rx="3" fill="${color}" opacity="${b.status === 'running' ? 0.75 : 0.9}"${crit}/>${live}`
+    const label = `<text x="12" y="${mid + 5}" font-size="${PIC.body}" fill="${t.muted}"${weight} ${F}>${esc(clip(b.label, fits(LABEL - 20)))}<title>${esc(b.label)}</title></text>`
+    const bar = `<rect x="${x0.toFixed(1)}" y="${mid - PIC.barH / 2}" width="${(x1 - x0).toFixed(1)}" height="${PIC.barH}" rx="4" fill="${color}" opacity="${b.status === 'running' ? 0.75 : 0.92}"${crit}/>`
+    const dur = `<text x="${(x1 + 6).toFixed(1)}" y="${mid + 4}" font-size="${PIC.small}" fill="${t.muted}" ${F}>${esc(clockOff(b.end - b.start).slice(1))}</text>`
+    return `${sel}${label}${bar}${live}${dur}`
   }).join('')
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">${idle}${ticks}${rows}</svg>`
 }
@@ -180,19 +236,19 @@ export type TraceMark = { lane: number; to?: number; at: number; kind: string; t
 
 // `focus`: the lane of the agent picked elsewhere; the other lanes draw faint.
 export function traceSvg(t: DeskTokens, lanes: { label: string; chip: string; status: NodeStatus }[], marks: TraceMark[], from: number, to: number, w: number, focus?: number): string {
-  const LABEL = Math.min(170, Math.round(w * 0.24))
+  const LABEL = Math.min(240, Math.max(140, Math.round(w * 0.28)))
   const plot = Math.max(80, w - LABEL - 20)
   const span = Math.max(1, to - from)
-  const laneH = 34
+  const laneH = 40
   const h = 24 + lanes.length * laneH + 8
   const x = (at: number) => LABEL + ((at - from) / span) * plot
   const yOf = (lane: number) => 24 + lane * laneH + laneH / 2
   const color = (lane: number) => t.lanes[lane % t.lanes.length]!
-  const ruler = [0, 0.5, 1].map(f => `<text x="${LABEL + f * plot}" y="12" font-size="9" fill="${t.muted}" text-anchor="${f === 0 ? 'start' : f === 1 ? 'end' : 'middle'}" font-family="-apple-system, sans-serif">${esc(clockOff(span * f))}</text>`).join('')
+  const ruler = [0, 0.5, 1].map(f => `<text x="${LABEL + f * plot}" y="14" font-size="${PIC.small}" fill="${t.muted}" text-anchor="${f === 0 ? 'start' : f === 1 ? 'end' : 'middle'}" font-family="-apple-system, sans-serif">${esc(clockOff(span * f))}</text>`).join('')
   const faint = (lane: number) => (focus !== undefined && focus >= 0 && lane !== focus ? ' opacity=".3"' : '')
   const laneRows = lanes.map((l, i) => {
     const y = yOf(i)
-    return `<g${faint(i)}><circle cx="8" cy="${y}" r="4" fill="${statusColor(t, l.status)}"/><text x="18" y="${y + 4}" font-size="11" fill="${t.muted}" font-family="-apple-system, sans-serif">${esc(clip(l.label, 22))}</text><line x1="${LABEL}" y1="${y}" x2="${LABEL + plot}" y2="${y}" stroke="${color(i)}" stroke-opacity=".35" stroke-width="2"/></g>`
+    return `<g${faint(i)}><circle cx="8" cy="${y}" r="4" fill="${statusColor(t, l.status)}"/><text x="18" y="${y + 5}" font-size="${PIC.body}" fill="${t.muted}" font-family="-apple-system, sans-serif">${esc(clip(l.label, fits(LABEL - 26)))}</text><line x1="${LABEL}" y1="${y}" x2="${LABEL + plot}" y2="${y}" stroke="${color(i)}" stroke-opacity=".35" stroke-width="2"/></g>`
   }).join('')
   const arrows = marks.filter(m => m.to !== undefined && m.to !== m.lane).map(m => {
     const x0 = x(m.at)
