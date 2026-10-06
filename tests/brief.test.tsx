@@ -148,7 +148,8 @@ for (const surface of SURFACES) {
     const ui = await $.ui.mount({ plugin: 'brief', surface, component: 'Pane', requestId: 'brief', props: PANE_PROPS })
     await ui.press({ key: '2-st-failed' })
     expect(await ui.find({ text: 'retry → sending' })).toBeDefined()
-    await ui.select({ key: 'ask-2', value: 'no' })
+    if (surface === 'desktop') await ui.press({ key: 'ask-2-no' })
+    else await ui.select({ key: 'ask-2', value: 'no' })
     expect(await ui.find({ text: '⚠ then: The retry arrow goes.' })).toBeDefined()
     expect(await ui.find({ text: '✓ DECIDED' })).toBeDefined()
 
@@ -313,7 +314,7 @@ test('the brief and the answers are saved to the store', async ($, on) => {
   const { store } = stub(on)
   await show($, BRIEF)
   const ui = await $.ui.mount({ plugin: 'brief', surface: 'desktop', component: 'Pane', requestId: 'brief', props: PANE_PROPS })
-  await ui.select({ key: 'ask-2', value: 'no' })
+  await ui.press({ key: 'ask-2-no' })
   expect(store['last:/proj']).toBe('scheduling-sent-messages')
   const last = store['brief:scheduling-sent-messages'] as { brief?: { title?: string }; answers?: Record<string, string> }
   expect(last.brief?.title).toBe('Scheduling Sent Messages')
@@ -340,7 +341,7 @@ test('patch changes one point, and answers follow their points when ids shift', 
   stub(on)
   await show($, BRIEF)
   const ui = await $.ui.mount({ plugin: 'brief', surface: 'desktop', component: 'Pane', requestId: 'brief', props: PANE_PROPS })
-  await ui.select({ key: 'ask-2', value: 'no' })
+  await ui.press({ key: 'ask-2-no' })
   const patched = (await $.tool.call({
     tool: 'mcp__brief__patch',
     ops: [
@@ -363,7 +364,7 @@ test('a brief with another title opens fresh; /brief open brings the first back 
   stub(on)
   await show($, BRIEF)
   const ui = await $.ui.mount({ plugin: 'brief', surface: 'desktop', component: 'Pane', requestId: 'brief', props: PANE_PROPS })
-  await ui.select({ key: 'ask-2', value: 'no' })
+  await ui.press({ key: 'ask-2-no' })
   await show($, { title: 'Another Plan', gist: 'Other.', points: [{ claim: 'One.', detail: 'x', ask: { question: 'Pick?', options: [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }], recommended: 'a' } }] })
   expect(await ui.find({ text: 'Another Plan' })).toBeDefined()
   expect(await ui.find({ text: '◆ 1 of 1 decisions open' })).toBeDefined()
@@ -562,4 +563,29 @@ test('a brief tool call draws as one line', async ($, on) => {
   expect(drawn).not.toContain('"claim"')
   const patch = await $.ui.mount({ plugin: 'brief', surface: 'desktop', component: 'ToolUse', requestId: 'tu2', props: props('mcp__brief__patch', { ops: [{ op: 'set', id: '2' }, { op: 'add', parent: '1' }] }) })
   expect(JSON.stringify(await patch.drawn())).toContain('patch · set 2, add')
+})
+
+test('desktop: plain options are rows with the full note; quick actions wait for hover', async ($, on) => {
+  stub(on)
+  const note = 'Small line edits across about fifteen notes, with no restructuring of any section at all.'
+  await show($, {
+    title: 'Vault fixes',
+    gist: 'Fix the errors first.',
+    points: [
+      { claim: 'Errors are fixed in place first.', detail: 'x', ask: { kind: 'one', question: 'What should I do first?', options: [{ value: 'fix', label: 'Fix verified errors in place', note }, { value: 'pilot', label: 'Rewrite 02-05 as a pilot', note: 'One note rebuilt end to end.' }], recommended: 'fix' } },
+      { claim: 'Nothing else changes.', detail: 'y' },
+    ],
+  })
+  const ui = await $.ui.mount({ plugin: 'brief', surface: 'desktop', component: 'Pane', requestId: 'brief', props: PANE_PROPS })
+  expect(await ui.find({ text: note })).toBeDefined()
+  expect(await ui.find({ key: 'ask-1-pilot' })).toBeDefined()
+  expect(await ui.find({ text: '★ suggested' })).toBeDefined()
+  await ui.press({ key: 'ask-1-pilot' })
+  expect(await ui.find({ text: '✓ DECIDED' })).toBeDefined()
+  const drawn = JSON.stringify(await ui.drawn())
+  expect(drawn).toContain('"display":"none"')
+  expect(drawn).toContain('"backgroundColor":"userMessageBackground"')
+  await ui.unmount()
+  const term = await $.ui.mount({ plugin: 'brief', surface: 'terminal', component: 'Pane', requestId: 'brief', props: PANE_PROPS })
+  expect(JSON.stringify(await term.drawn())).not.toContain('"display":"none"')
 })

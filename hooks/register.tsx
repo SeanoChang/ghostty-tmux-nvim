@@ -345,6 +345,8 @@ const GREEN = 'success' //     ✓ + done, new
 const RED = 'error' //         − ✕ removed, struck, risk
 const PURPLE = 'permission' // ● changed since the last version
 const CLAUDE = 'claude' //     ✎ written by Claude
+const TINT = 'userMessageBackground' //  a quiet band: section titles, the picked option, exhibit grounds
+const TINT_HOVER = 'userMessageBackgroundHover'
 const TONE: Record<Tone, string> = { info: FOCUS, warn: AMBER, risk: RED, ok: GREEN, idea: PURPLE }
 const TONE_LABEL: Record<Tone, string> = { info: 'NOTE', warn: 'WARNING', risk: 'RISK', ok: 'OK', idea: 'IDEA' }
 const MARK: Record<string, { g: string; c?: string }> = {
@@ -570,12 +572,23 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
         {rows.map(r => {
           const isStruck = struckKeys.includes(r.key)
           const m = isStruck ? { g: '✕', c: RED } : (MARK[r.mark] ?? { g: '·' })
-          const label = pad(' '.repeat(r.depth * 2) + trunc(r.name, nameW - r.depth * 2 - 1), nameW)
+          const name = trunc(r.name, nameW - r.depth * 2 - 1)
+          const label = pad(' '.repeat(r.depth * 2) + name, nameW)
           const isCur = r.key === row
           return (
             <Box key={`row-${r.key}`} flexDirection="row">
               <Text color={m.c} dimColor={!m.c} bold>{`${m.g} `}</Text>
-              {isCur ? (
+              {roomy ? (
+                <Box width={nameW} flexShrink={0} paddingLeft={r.depth * 2}>
+                  {isCur ? (
+                    <Text inverse bold>{name}</Text>
+                  ) : r.mark === ' ' || r.isGap ? (
+                    <Text dimColor>{name}</Text>
+                  ) : (
+                    <Button key={`row-${r.key}`} plain label={name} dimColor={isStruck} onPress={() => update($, rowSel, () => r.key)} />
+                  )}
+                </Box>
+              ) : isCur ? (
                 <Text inverse bold>
                   {label}
                 </Text>
@@ -692,6 +705,15 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
               const guide = r.last.slice(0, r.depth).map(l => (l ? '   ' : '│  ')).join('') + (r.depth > 0 ? (r.last[r.depth] ? '└─ ' : '├─ ') : '')
               const mark = r.mark === 'new' ? '+ ' : r.mark === 'gone' ? '− ' : r.mark === 'mod' ? '~ ' : ''
               const c = r.mark === 'new' ? GREEN : r.mark === 'gone' ? RED : r.mark === 'mod' ? AMBER : undefined
+              if (roomy)
+                return (
+                  <Box key={`${p.id}-tree-${i}`} paddingLeft={r.depth * 2}>
+                    <Text>
+                      <Text color={c} strikethrough={r.mark === 'gone'}>{`${mark}${r.name}`}</Text>
+                      {r.note ? <Text dimColor>{`  # ${r.note}`}</Text> : null}
+                    </Text>
+                  </Box>
+                )
               return (
                 <Text key={`${p.id}-tree-${i}`}>
                   <Text dimColor>{guide}</Text>
@@ -748,7 +770,13 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
             )}
           </Box>
         )}
-        {exhibitBody(p, x)}
+        {roomy && (x.kind === 'calls' || x.kind === 'tree' || x.kind === 'table') ? (
+          <Box flexDirection="column" backgroundColor={TINT} paddingX={1} paddingY={1}>
+            {exhibitBody(p, x)}
+          </Box>
+        ) : (
+          exhibitBody(p, x)
+        )}
       </Box>
     )
   }
@@ -808,20 +836,40 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
           })}
         </Box>
       )
-    } else if ((ask.kind === 'one' || ask.kind === 'scale') && Select) {
+    } else if ((ask.kind === 'scale' || (ask.kind === 'one' && !roomy)) && Select) {
       const options =
         ask.kind === 'scale'
           ? Array.from({ length: (ask.max ?? 10) - (ask.min ?? 0) + 1 }, (_, i) => String((ask.min ?? 0) + i)).map(v => ({ value: v, label: `${v}${rec(v)}` }))
           : ask.options.map(o => ({ value: o.value, label: `${o.label}${rec(o.value)}${o.note ? `  · ${o.note}` : ''}` }))
       control = <Select key={`ask-${p.id}`} value={value} options={options} onSelect={v => setAnswer(p.id, v)} />
     } else if (ask.kind === 'one' || ask.kind === 'many') {
+      // One row per option: the label, a suggested tag, and the note in full beneath (a dropdown row cuts it).
       control = (
-        <Box flexDirection="column">
+        <Box flexDirection="column" rowGap={roomy ? 1 : 0}>
           {ask.options.map(o => {
             const isPicked = values.includes(o.value)
             const nextValue = ask.kind === 'one' ? o.value : (isPicked ? values.filter(v => v !== o.value) : [...values, o.value]).join(',')
             const box = ask.kind === 'one' ? (isPicked ? '◉' : '○') : isPicked ? '☑' : '☐'
-            return <Button key={`ask-${p.id}-${o.value}`} plain label={`${box} ${o.label}${rec(o.value)}${o.note ? `  · ${o.note}` : ''}`} onPress={() => setAnswer(p.id, nextValue)} />
+            const isRec = ask.recommended.split(',').includes(o.value)
+            return (
+              <Box
+                key={`optrow-${p.id}-${o.value}`}
+                flexDirection="column"
+                paddingX={roomy ? 1 : 0}
+                backgroundColor={roomy && isPicked ? TINT : undefined}
+                hover={roomy ? { backgroundColor: TINT_HOVER } : undefined}
+              >
+                <Box flexDirection="row" columnGap={2}>
+                  <Button key={`ask-${p.id}-${o.value}`} plain label={`${box} ${o.label}`} onPress={() => setAnswer(p.id, nextValue)} />
+                  {isRec ? <Text color={AMBER}>★ suggested</Text> : null}
+                </Box>
+                {o.note ? (
+                  <Box marginLeft={2}>
+                    <Text dimColor>{o.note}</Text>
+                  </Box>
+                ) : null}
+              </Box>
+            )
           })}
         </Box>
       )
@@ -887,7 +935,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
 
   const askRow = (id: string, claim: string, keys: boolean, withInput: boolean) => (
     <Box flexDirection="column" rowGap={1}>
-      <Box flexDirection="row" columnGap={2} flexWrap="wrap">
+      <Box flexDirection="row" columnGap={2} flexWrap="wrap" display={roomy ? 'none' : undefined} hover={roomy ? { display: 'flex' } : undefined}>
         <Text dimColor>{`ask about ${id === 'top' ? 'the brief' : id}`}</Text>
         <Button key={`simpler-${id}`} plain hotkey={keys ? 's' : undefined} label={keys ? hk('s', 'simpler') : 'simpler'} onPress={() => send($, id, claim, 'Explain this more simply, in plain words.')} />
         <Button key={`example-${id}`} plain hotkey={keys ? 'e' : undefined} label={keys ? hk('e', 'example') : 'example'} onPress={() => send($, id, claim, 'Give me one concrete example of this.')} />
@@ -970,7 +1018,9 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
       <Box flexDirection="row" columnGap={1}>
         <Text bold>{`› ${c.claim}`}</Text>
         {marks(c, `child-${c.id}`)}
-        <Button key={`ask-${c.id}-quote`} plain dimColor label="ask ↗" onPress={() => void $.prompt.fill({ text: `${tag(c.id, c.claim)} `, mode: 'insert' })} />
+        <Box display={roomy ? 'none' : undefined} hover={roomy ? { display: 'flex' } : undefined}>
+          <Button key={`ask-${c.id}-quote`} plain dimColor label="ask ↗" onPress={() => void $.prompt.fill({ text: `${tag(c.id, c.claim)} `, mode: 'insert' })} />
+        </Box>
       </Box>
       <Box flexDirection="column" marginLeft={2} gap={SP.inner}>
         {body(c)}
@@ -986,7 +1036,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
     const folded = isOpen(`fold:${p.id}`)
     return (
       <Box key={`sec-${p.id}`} flexDirection="column" borderStyle="round" borderColor={isFocus ? FOCUS : undefined} borderDimColor={!isFocus} paddingX={SP.padX} paddingY={SP.padY} gap={SP.card}>
-        <Box flexDirection="row" justifyContent="space-between" columnGap={1}>
+        <Box flexDirection="row" justifyContent="space-between" columnGap={1} backgroundColor={roomy ? TINT : undefined} paddingX={roomy ? 1 : 0}>
           <Button
             key={`fold-${p.id}`}
             plain
@@ -1111,7 +1161,21 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
   const toc = (
     <Box key="toc" flexDirection="column" paddingX={1}>
       {sections.map(x => {
-        const label = `${pad(sectionName(x), 3)}${trunc(x.claim.replace(/[.。]$/, ''), cols - 12)}`
+        const claim = trunc(x.claim.replace(/[.。]$/, ''), cols - 12)
+        const label = `${pad(sectionName(x), 3)}${claim}`
+        if (roomy)
+          return (
+            <Box key={`tocrow-${x.id}`} flexDirection="row">
+              <Box width={4} flexShrink={0}>
+                <Text bold={x.id === focusId} color={x.id === focusId ? FOCUS : undefined} dimColor={x.id !== focusId}>{x.aux ? '·' : x.id}</Text>
+              </Box>
+              {x.id === focusId ? (
+                <Text key={`toc-on-${x.id}`} bold color={FOCUS}>{claim}</Text>
+              ) : (
+                <Button key={`toc-${x.id}`} plain dimColor label={claim} onPress={jump(x.id)} />
+              )}
+            </Box>
+          )
         return x.id === focusId ? (
           <Text key={`toc-on-${x.id}`} bold color={FOCUS}>{`▸ ${label}`}</Text>
         ) : (
