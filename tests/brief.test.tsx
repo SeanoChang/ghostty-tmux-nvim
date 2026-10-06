@@ -83,6 +83,13 @@ function stub(on: On) {
     return { value: undefined } as never
   })
   on('store.get', ($, e) => ({ value: store[e.key] }) as never)
+  const written: Record<string, string> = {}
+  on('fs.write', ($, e) => {
+    written[e.path] = e.text
+    return { value: undefined } as never
+  })
+  on('prompt.compose', () => ({ sections: [{ id: 'intro', text: 'base', scope: 'shared' }] }) as never)
+  on('command.register', () => ({ value: undefined }) as never)
   on('ui.scroll', ($, e) => {
     scrolls.push(e)
     return {} as never
@@ -105,7 +112,7 @@ function stub(on: On) {
     filled.push(e.text)
     return { isFilled: true } as never
   })
-  return { sent, filled, reads, scrolls, store }
+  return { sent, filled, reads, scrolls, store, written }
 }
 
 const show = async ($: { tool: { call: (i: never) => Promise<unknown> } }, input: unknown) =>
@@ -306,7 +313,155 @@ test('the brief and the answers are saved to the store', async ($, on) => {
   await show($, BRIEF)
   const ui = await $.ui.mount({ plugin: 'brief', surface: 'desktop', component: 'Pane', requestId: 'brief', props: PANE_PROPS })
   await ui.select({ key: 'ask-2', value: 'no' })
-  const last = store.last as { brief?: { title?: string }; answers?: Record<string, string> }
+  expect(store.last).toBe('scheduling-sent-messages')
+  const last = store['brief:scheduling-sent-messages'] as { brief?: { title?: string }; answers?: Record<string, string> }
   expect(last.brief?.title).toBe('Scheduling Sent Messages')
   expect(last.answers?.['2']).toBe('no')
+})
+
+// ── phase 1: default use, patch, many briefs, save ─────────────────────
+
+const COMPOSE = { model: 'claude-opus-5-5', promptModel: 'claude-opus-5-5', surfaces: ['desktop'], tools: [], outputStyle: null, traits: [] } as never
+
+test('the system prompt carries the pane guide unless auto is off', async ($, on) => {
+  stub(on)
+  const withGuide = await $.prompt.compose(COMPOSE)
+  expect(JSON.stringify(withGuide.sections)).toContain('brief:guide')
+  expect(JSON.stringify(withGuide.sections)).toContain('Use it without being asked')
+  const said = await $.command.run({ command: 'brief', args: 'auto off' } as never)
+  expect(JSON.stringify(said)).toContain('Brief auto mode: off')
+  expect(JSON.stringify((await $.prompt.compose(COMPOSE)).sections)).not.toContain('brief:guide')
+  await $.command.run({ command: 'brief', args: 'auto suggest' } as never)
+  expect(JSON.stringify((await $.prompt.compose(COMPOSE)).sections)).toContain('Use it when the user asks')
+})
+
+test('patch changes one point, and answers follow their points when ids shift', async ($, on) => {
+  stub(on)
+  await show($, BRIEF)
+  const ui = await $.ui.mount({ plugin: 'brief', surface: 'desktop', component: 'Pane', requestId: 'brief', props: PANE_PROPS })
+  await ui.select({ key: 'ask-2', value: 'no' })
+  const patched = (await $.tool.call({
+    tool: 'mcp__brief__patch',
+    ops: [
+      { op: 'remove', id: '1' },
+      { op: 'add', point: { claim: 'A brand new section.', detail: 'New.' } },
+      { op: 'set', id: '3', point: { claim: 'A worker and the API share one new table.', detail: 'Changed.' } },
+    ],
+  } as never)) as { result?: string; deny?: string }
+  expect(patched.deny).toBeUndefined()
+  expect(String(patched.result)).toContain('Brief v2')
+  // decision 2 is now 1, and its answer moved with it
+  expect(await ui.find({ text: '✓ DECIDED' })).toBeDefined()
+  await ui.press({ key: 'respond' })
+  expect(await ui.find({ key: 'fold-4' })).toBeDefined()
+  const bad = (await $.tool.call({ tool: 'mcp__brief__patch', ops: [{ op: 'remove', id: '9' }] } as never)) as { deny?: string }
+  expect(String(bad.deny)).toContain('no point 9')
+})
+
+test('a brief with another title opens fresh; /brief open brings the first back with its answers', async ($, on) => {
+  stub(on)
+  await show($, BRIEF)
+  const ui = await $.ui.mount({ plugin: 'brief', surface: 'desktop', component: 'Pane', requestId: 'brief', props: PANE_PROPS })
+  await ui.select({ key: 'ask-2', value: 'no' })
+  await show($, { title: 'Another Plan', gist: 'Other.', points: [{ claim: 'One.', detail: 'x', ask: { question: 'Pick?', options: [{ value: 'a', label: 'A' }, { value: 'b', label: 'B' }], recommended: 'a' } }] })
+  expect(await ui.find({ text: 'Another Plan' })).toBeDefined()
+  expect(await ui.find({ text: '◆ 1 of 1 decisions open' })).toBeDefined()
+  const listed = await $.command.run({ command: 'brief', args: 'list' } as never)
+  expect(JSON.stringify(listed)).toContain('Scheduling Sent Messages')
+  await $.command.run({ command: 'brief', args: 'open scheduling' } as never)
+  expect(await ui.find({ text: 'Scheduling Sent Messages' })).toBeDefined()
+  expect(await ui.find({ text: '✓ all 1 decided' })).toBeDefined()
+})
+
+test('/brief save writes the brief as Markdown into docs/briefs', async ($, on) => {
+  const { written } = stub(on)
+  await show($, BRIEF)
+  const said = await $.command.run({ command: 'brief', args: 'save' } as never)
+  expect(JSON.stringify(said)).toContain('docs/briefs/scheduling-sent-messages.md')
+  const md = Object.entries(written).find(([k]) => k.endsWith('docs/briefs/scheduling-sent-messages.md'))?.[1] ?? ''
+  expect(md).toContain('# Scheduling Sent Messages')
+  expect(md).toContain('**Decision · Should a failed send retry on its own?** → **Yes, 3 times**')
+})
+
+// ── phase 2: option cards, compare, explore, conditions, decision log ──
+
+const RICH = {
+  title: 'Queue Choice',
+  gist: 'Pick where scheduled sends wait.',
+  points: [
+    {
+      claim: 'Scheduled sends wait in one store.',
+      detail: 'Two choices.',
+      ask: {
+        question: 'Where do scheduled sends wait?',
+        options: [
+          { value: 'db', label: 'A Postgres table', pros: ['No new service'], cons: ['Polling load'], detail: 'Rows with a send time.' },
+          { value: 'queue', label: 'A delay queue', pros: ['Exact timing'], cons: ['New service to run'], code: { source: 'queue.add(msg, { delay })', language: 'ts' } },
+        ],
+        recommended: 'db',
+      },
+      points: [{ claim: 'The worker polls every minute.', detail: 'x', when: '1=db' }, { claim: 'The queue calls back at the time.', detail: 'y', when: '1=queue' }],
+    },
+  ],
+}
+
+test('rich options draw as cards, compare side by side, and explore asks Claude', async ($, on) => {
+  const { sent } = stub(on)
+  const shown = await show($, RICH)
+  expect(shown.deny).toBeUndefined()
+  const ui = await $.ui.mount({ plugin: 'brief', surface: 'desktop', component: 'Pane', requestId: 'brief', props: { ...(PANE_PROPS as object), bodyColumns: 120 } as never })
+  expect(await ui.find({ text: '+ No new service' })).toBeDefined()
+  expect(await ui.find({ text: '− New service to run' })).toBeDefined()
+  expect(await ui.find({ text: 'CODE' })).toBeDefined()
+  await ui.press({ key: 'compare-1' })
+  expect(await ui.find({ key: 'cmp-1-queue' })).toBeDefined()
+  await ui.press({ key: 'compare-1' })
+  await ui.press({ key: 'ask-1-explore-queue' })
+  expect(sent.at(-1)).toContain('Explore option “A delay queue”')
+})
+
+test('when-points follow the decision, and every pick lands in the decision log', async ($, on) => {
+  stub(on)
+  await show($, RICH)
+  const ui = await $.ui.mount({ plugin: 'brief', surface: 'desktop', component: 'Pane', requestId: 'brief', props: PANE_PROPS })
+  expect(await ui.find({ text: '› The worker polls every minute.' })).toBeDefined()
+  expect(await ui.find({ text: '› The queue calls back at the time.' })).toBeUndefined()
+  await ui.press({ key: 'ask-1-queue' })
+  expect(await ui.find({ text: '› The queue calls back at the time.' })).toBeDefined()
+  expect(await ui.find({ text: '› The worker polls every minute.' })).toBeUndefined()
+  await ui.press({ key: 'open-log' })
+  expect(await ui.find({ text: 'A delay queue' })).toBeDefined()
+  const bad = await show($, { title: 'x', gist: 'y', points: [{ claim: 'a', detail: 'b', when: '7=zz' }] })
+  expect(String(bad.deny)).toContain('when names 7, which is not a decision')
+})
+
+// ── phase 3: status, evidence, agent links ─────────────────────────────
+
+test('status shows progress; done without evidence is flagged; evidence attaches to its point', async ($, on) => {
+  stub(on)
+  await show($, BRIEF)
+  const res = (await $.tool.call({
+    tool: 'mcp__brief__status',
+    updates: [
+      { point: '3', state: 'done' },
+      { point: '4', state: 'done', evidence: { title: 'worker tests', code: { source: '✓ 12 passed', language: 'text' } } },
+      { point: '2', state: 'failed', note: 'Retry test fails.' },
+    ],
+  } as never)) as { result?: string }
+  expect(String(res.result)).toContain('3 status updates applied')
+  expect(String(res.result)).toContain('Done without evidence: 3')
+  const ui = await $.ui.mount({ plugin: 'brief', surface: 'desktop', component: 'Pane', requestId: 'brief', props: PANE_PROPS })
+  expect(await ui.find({ text: '✓ done · no evidence' })).toBeDefined()
+  expect(await ui.find({ text: 'EVIDENCE · done' })).toBeDefined()
+  expect(await ui.find({ text: ' · ✕ 1 failed' })).toBeDefined()
+})
+
+test('a subagent tagged [brief 3] runs on point 3, then waits for review', async ($, on) => {
+  stub(on)
+  on('tool.call', { tool: 'Agent' }, () => ({ result: 'built it' }) as never)
+  await show($, BRIEF)
+  const ui = await $.ui.mount({ plugin: 'brief', surface: 'desktop', component: 'Pane', requestId: 'brief', props: PANE_PROPS })
+  await $.tool.call({ tool: 'Agent', description: '[brief 3] build the worker', prompt: 'go' } as never)
+  expect(await ui.find({ text: '◎ needs review' })).toBeDefined()
+  expect(await ui.find({ text: 'EVIDENCE · needs review · build the worker' })).toBeDefined()
 })

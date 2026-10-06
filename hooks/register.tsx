@@ -2,10 +2,11 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, RenderElement, RenderInput } from 'claude-code'
 
 import { NW } from './core.js'
-import { buildBrief, flatten, signature, text } from './model.ts'
-import { findPoint, labelOf, pointName, respondMessage, tag } from './helpers.ts'
+import { buildBrief, flatten, isRecord, patchRaw, pngSize, signature, text, toHunk } from './model.ts'
+import type { Built } from './model.ts'
+import { findPoint, labelOf, pointName, respondMessage, slug, tag, toMarkdown } from './helpers.ts'
 import { machineSvg } from './svg.ts'
-import type { Brief, BriefAsk, BriefPoint, CallRow, Exhibit, MockExhibit, ThreadNote, Tone } from '../types'
+import type { Brief, BriefAsk, BriefIndexEntry, BriefMode, BriefPoint, CallRow, DecisionEntry, Evidence, Exhibit, MockExhibit, TaskState, TaskStatus, ThreadNote, Tone } from '../types'
 
 const brief = atom({ plugin: 'brief', key: 'brief' } as const, null)
 const open = atom({ plugin: 'brief', key: 'open' } as const, [])
@@ -18,10 +19,30 @@ const machineAt = atom({ plugin: 'brief', key: 'machineAt' } as const, {})
 const replyNonce = atom({ plugin: 'brief', key: 'replyNonce' } as const, 0)
 const selected = atom({ plugin: 'brief', key: 'selected' } as const, '')
 const rowSel = atom({ plugin: 'brief', key: 'rowSel' } as const, '')
+const raw = atom({ plugin: 'brief', key: 'raw' } as const, null)
+const key = atom({ plugin: 'brief', key: 'key' } as const, '')
+const mode = atom({ plugin: 'brief', key: 'mode' } as const, 'on')
+const offer = atom({ plugin: 'brief', key: 'offer' } as const, '')
+const busy = atom({ plugin: 'brief', key: 'busy' } as const, false)
+const log = atom({ plugin: 'brief', key: 'log' } as const, [])
+const status = atom({ plugin: 'brief', key: 'status' } as const, {})
+const evidence = atom({ plugin: 'brief', key: 'evidence' } as const, {})
+const responded = atom({ plugin: 'brief', key: 'responded' } as const, 0)
 
 const PANE = 'brief'
 const SHOW = 'mcp__brief__show'
 const NOTE = 'mcp__brief__note'
+const PATCH = 'mcp__brief__patch'
+const STATUS = 'mcp__brief__status'
+
+/** The system-prompt section that makes the pane the default, by mode. */
+const GUIDE: Record<Exclude<BriefMode, 'off'>, string> = {
+  on: `# The Brief pane
+A Brief pane sits beside the chat (tools ${SHOW}, ${PATCH}, ${NOTE}, ${STATUS}; load them with ToolSearch if they are deferred). Use it without being asked whenever your answer is something the user will read in parts, explore or decide on: a plan or design, how a system or an area of the code works, a comparison of approaches, a review, a debugging diagnosis, or a "show me", "walk me through" or "what would it take" question. Then keep the chat reply to two or three lines that point at the pane. Keep quick facts, short answers and routine edits in chat. If the user says "in chat" or "just tell me", answer in chat.
+Keep one living brief per task. Lay out the design space as sections with decisions (rich options: pros, cons and one exhibit each). Change it with ${PATCH}; never resend a whole brief for a small change. Answer messages tagged [brief <id>] with ${NOTE} on that point. When open decisions change what you build, wait for the user's Respond before building. While building, set each plan point's status with ${STATUS} (running, then review, then done or failed) and attach the evidence (test output, a diff, a figure) to the point it proves; a point is done only with evidence. Put [brief <id>] in a subagent's description so the pane links it to that point. For the discipline itself, use this plugin's skills: test-first, debugging, verification and review.`,
+  suggest: `# The Brief pane
+A Brief pane sits beside the chat (tools ${SHOW}, ${PATCH}, ${NOTE}, ${STATUS}; load them with ToolSearch if they are deferred). Use it when the user asks to see something as a plan, a brief or a diagram, or asks to open an answer as a brief. Change a shown brief with ${PATCH} and answer messages tagged [brief <id>] with ${NOTE}.`,
+}
 
 const SHOW_DESCRIPTION = `Show a brief in the Brief pane beside the chat: a plan, design, explanation or review the user must understand or decide on. Use it when the user asks for a plan, an RFC, a design or a brief. It is html-plan, drawn natively.
 
@@ -84,11 +105,18 @@ const pointSchema = block(
     svg: S,
     svgAlt: S,
     image: block({ path: S, alt: S }, ['path']),
+    when: { type: 'string', description: 'Show only under an answer: "2=no" or "2!=no".' },
     ask: block(
       {
         kind: { type: 'string', enum: ['one', 'many', 'text', 'scale', 'rank'] },
         question: S,
-        options: { type: 'array', items: block({ value: S, label: S, note: S }, ['value', 'label']) },
+        options: {
+          type: 'array',
+          items: block(
+            { value: S, label: S, note: S, detail: S, pros: { type: 'array', items: S }, cons: { type: 'array', items: S }, image: block({ path: S, alt: S }, ['path']), mock: mockSchema, flow: block({ source: S }, ['source']), code: block({ source: S, language: S }) },
+            ['value', 'label'],
+          ),
+        },
         recommended: S,
         min: N,
         max: N,
@@ -110,11 +138,49 @@ const showSchema = block(
     changes: block({ new: N, changed: N, deleted: N }),
     points: { type: 'array', items: pointSchema },
     terms: { type: 'array', items: block({ term: S, meaning: S }, ['term', 'meaning']) },
+    gate: { type: 'boolean', description: 'True when building must wait for the reader to Respond.' },
   },
   ['title', 'gist', 'points'],
 )
 
 const noteSchema = block({ point: S, text: S }, ['point', 'text'])
+
+const PATCH_DESCRIPTION = `Change the brief in the Brief pane without resending it. ops, applied in order:
+- {op:"set", id, point}: replace point id with point (same fields as show; its children stay unless point.points is given).
+- {op:"add", parent?, after?, point}: add a point as a child of parent (top level when absent), after the point "after" or at the end.
+- {op:"remove", id}.
+- {op:"meta", title?, gist?, why?, changes?, terms?, gate?}.
+Ids are the ones the pane shows ("2.1", "shared"). Answers, notes and statuses follow their points when ids shift. Changed and added points are marked for the reader.`
+
+const STATUS_DESCRIPTION = `Report build progress on brief points. updates: [{point, state, note?, evidence?}]. state: queued, running, review (work finished, not yet proved), done, failed or blocked. evidence proves the point: {title?, text?} or {title?, code: {source, language?, diff?}} (test output, a diff) or {title?, image: "path to a PNG"}. Mark a point done only with evidence; the pane flags done points that have none.`
+
+const patchSchema = block(
+  {
+    ops: {
+      type: 'array',
+      items: block({ op: { type: 'string', enum: ['set', 'add', 'remove', 'meta'] }, id: S, parent: S, after: S, point: { type: 'object' }, title: S, gist: S, gate: B }, ['op']),
+    },
+  },
+  ['ops'],
+)
+
+const statusSchema = block(
+  {
+    updates: {
+      type: 'array',
+      items: block(
+        {
+          point: S,
+          state: { type: 'string', enum: ['queued', 'running', 'review', 'done', 'failed', 'blocked'] },
+          note: S,
+          evidence: block({ title: S, text: S, code: block({ source: S, language: S, diff: B }, ['source']), image: S }),
+        },
+        ['point', 'state'],
+      ),
+    },
+  },
+  ['updates'],
+)
 
 
 /** From html-plan's pack.mjs: file names that hold secrets. Checked on the real path. */
@@ -149,7 +215,21 @@ async function fenceCheck($: EngineInterface, path: string): Promise<string | un
 async function send($: EngineInterface, id: string, claim: string, message: string) {
   const note: ThreadNote = { from: 'you', text: message }
   await update($, notes, all => ({ ...all, [id]: [...(all[id] ?? []), note] }))
-  void $.prompt.submit({ text: `${tag(id, claim)} ${message}`, asUser: true })
+  await deliver($, `${tag(id, claim)} ${message}`)
+}
+
+/** To Claude now: into the running turn when one runs (seen at its next step), else as a new turn. */
+async function deliver($: EngineInterface, text: string) {
+  if (await read($, busy)) {
+    const added = await $.session
+      .append({ message: { type: 'user', content: [{ type: 'text', text: `${text}\n(sent from the Brief pane while you were working)` }] } })
+      .catch(() => ({ deny: 'refused' }))
+    if (!('deny' in added && added.deny)) {
+      $.ui.toast('Claude sees this at its next step')
+      return
+    }
+  }
+  void $.prompt.submit({ text, asUser: true })
   $.ui.toast('Sent to Claude')
 }
 
@@ -164,18 +244,148 @@ async function select($: EngineInterface, id: string) {
   await persist($)
 }
 
-/** Keeps the brief and the reader's answers past the session (restored at session start). */
+type Snapshot = {
+  brief: Brief
+  raw: unknown
+  answers: Record<string, string>
+  struck: string[]
+  notes: Record<string, ThreadNote[]>
+  seen: string[]
+  log: DecisionEntry[]
+  status: Record<string, TaskStatus>
+  evidence: Record<string, Evidence[]>
+  responded: number
+}
+
+/** Keeps every brief and the reader's answers past the session, by key; "last" reopens at session start. */
 async function persist($: EngineInterface) {
   const b = await read($, brief)
   if (!b) return
-  await $.store.set('last', {
+  const k = (await read($, key)) || slug(b.title)
+  const snap: Snapshot = {
     brief: b,
+    raw: await read($, raw),
     answers: await read($, answers),
     struck: await read($, struck),
     notes: await read($, notes),
     seen: await read($, seen),
-    savedAt: await $.clock.now(),
-  })
+    log: await read($, log),
+    status: await read($, status),
+    evidence: await read($, evidence),
+    responded: await read($, responded),
+  }
+  const now = await $.clock.now()
+  await $.store.set(`brief:${k}`, snap)
+  const index = ((await $.store.get('brief:index')) as BriefIndexEntry[] | undefined) ?? []
+  const entry: BriefIndexEntry = { key: k, title: b.title, version: b.version, savedAt: now }
+  await $.store.set('brief:index', [entry, ...index.filter(x => x.key !== k)].slice(0, 30))
+  await $.store.set('last', k)
+}
+
+/** Loads a saved brief into the pane, or clears the pane for a new one. */
+async function load($: EngineInterface, k: string): Promise<boolean> {
+  const snap = (await $.store.get(`brief:${k}`)) as Snapshot | undefined
+  await update($, key, () => k)
+  await update($, brief, () => snap?.brief ?? null)
+  await update($, raw, () => snap?.raw ?? null)
+  await update($, answers, () => snap?.answers ?? {})
+  await update($, struck, () => snap?.struck ?? [])
+  await update($, notes, () => snap?.notes ?? {})
+  await update($, seen, () => snap?.seen ?? [])
+  await update($, log, () => snap?.log ?? [])
+  await update($, status, () => snap?.status ?? {})
+  await update($, evidence, () => snap?.evidence ?? {})
+  await update($, responded, () => snap?.responded ?? 0)
+  await update($, changed, () => [])
+  await update($, open, () => [])
+  await update($, selected, () => '')
+  await update($, rowSel, () => '')
+  await update($, machineAt, () => ({}))
+  return !!snap
+}
+
+type ReadText = (path: string) => Promise<string | { refused: string } | undefined>
+
+function readers($: EngineInterface): { readFile: ReadText; readBytes: ReadText } {
+  return {
+    readFile: async (path: string) => {
+      const why = await fenceCheck($, path)
+      if (why) return { refused: why }
+      try {
+        return await $.fs.read(path)
+      } catch {
+        return undefined
+      }
+    },
+    readBytes: async (path: string) => {
+      const why = await fenceCheck($, path)
+      if (why) return { refused: why }
+      try {
+        const got = await $.fs.read(path, { as: 'bytes' })
+        return typeof got === 'string' ? undefined : got.base64
+      } catch {
+        return undefined
+      }
+    },
+  }
+}
+
+/**
+ * Puts a built brief in the pane. Without a map, state follows ids by position (show);
+ * with one (patch), each old id moves to its new id. Changed points lose their answers.
+ */
+async function apply($: EngineInterface, built: Built, input: unknown, map?: Record<string, string>) {
+  const made = built.brief as Omit<Brief, 'version'>
+  const k = slug(made.title)
+  if (!map && (await read($, key)) !== k) {
+    await persist($)
+    await load($, k)
+  }
+  const before = await read($, brief)
+  const next: Brief = { ...made, version: (before?.version ?? 0) + 1 }
+  const all = flatten(next.points)
+  const ids = new Set(all.map(p => p.id))
+  const to = (id: string) => (map ? map[id] : ids.has(id) ? id : undefined)
+  const old = new Map(flatten(before?.points ?? []).flatMap(p => (to(p.id) ? [[to(p.id) as string, signature(p)]] : [])))
+  const diff = before ? all.filter(p => old.get(p.id) !== signature(p)).map(p => p.id) : []
+  const keep = (id: string) => ids.has(id) && !diff.includes(id)
+  const rowKeys = new Set(all.flatMap(p => (p.exhibit?.kind === 'calls' ? p.exhibit.rows.map(r => r.key) : [])))
+  /** Moves a key whose first part is a point id ("2.1", "2.1-r3", "fold:2.1"). */
+  const moveKey = (k2: string) => {
+    const m = /^(fold:|where:|compare:)?([\w.]+?)(-r\d+)?$/.exec(k2)
+    if (!m) return k2
+    const id = to(m[2] as string)
+    return id ? `${m[1] ?? ''}${id}${m[3] ?? ''}` : undefined
+  }
+  const moveRecord = <T,>(rec: Record<string, T>, onlyUnchanged: boolean) =>
+    Object.fromEntries(
+      Object.entries(rec).flatMap(([id, v]) => {
+        if (id === 'top') return [[id, v]]
+        const n = to(id)
+        return n && (!onlyUnchanged || keep(n)) ? [[n, v]] : []
+      }),
+    ) as Record<string, T>
+
+  await update($, key, () => k)
+  await update($, brief, () => next)
+  await update($, raw, () => input)
+  await update($, changed, () => diff)
+  await update($, open, list => list.flatMap(x => (x === 'why' ? [x] : (moveKey(x) ? [moveKey(x) as string] : []))))
+  await update($, selected, id => to(id) ?? all[0]?.id ?? '')
+  await update($, rowSel, r => (moveKey(r) && rowKeys.has(moveKey(r) as string) ? (moveKey(r) as string) : ''))
+  await update($, seen, list => list.flatMap(id => (to(id) && keep(to(id) as string) ? [to(id) as string] : [])))
+  await update($, answers, a => moveRecord(a, true))
+  await update($, struck, list => list.flatMap(r => (moveKey(r) && rowKeys.has(moveKey(r) as string) && keep((moveKey(r) as string).replace(/-r\d+$/, '')) ? [moveKey(r) as string] : [])))
+  await update($, machineAt, a => moveRecord(a, true))
+  await update($, notes, a => moveRecord(a, false))
+  await update($, status, a => moveRecord(a, false))
+  await update($, evidence, a => moveRecord(a, false))
+  await persist($)
+  const opened = await $.ui.open({ id: PANE, title: next.title })
+  const asks = all.filter(p => p.ask).length
+  const where = opened.isPlaced === false ? ' The pane is not seated yet; the user can run /brief to open it.' : ''
+  const warn = built.warnings.length > 0 ? `\nWarnings (fix if they matter):\n- ${built.warnings.join('\n- ')}` : ''
+  return `Brief v${next.version} shown in the Brief pane: ${all.length} points, ${asks} decisions, ${diff.length} changed since the last version.${where}${warn}`
 }
 
 // One meaning per color, each a key of the user's Claude Code theme (so light, dark and
@@ -241,6 +451,12 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
   const nonce = await read($, replyNonce)
   const sel = await read($, selected)
   const row = await read($, rowSel)
+  const decisions = await read($, log)
+  const tasks = await read($, status)
+  const proofs = await read($, evidence)
+  const respondedAt = await read($, responded)
+  const currentKey = await read($, key)
+  const index = (((await $.store.get('brief:index')) as BriefIndexEntry[] | undefined) ?? []).filter(x => x.key !== currentKey)
 
   const all = flatten(b.points)
   const sections = b.points
@@ -253,7 +469,48 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
   const toggle = (id: string) => () => update($, open, list => (list.includes(id) ? list.filter(x => x !== id) : [...list, id]))
   const setAnswer = async (id: string, value: string) => {
     await update($, answers, a => ({ ...a, [id]: value }))
+    const ask = all.find(p => p.id === id)?.ask
+    if (ask) {
+      const entry: DecisionEntry = { id, question: ask.question, value, label: labelOf(ask, value), suggested: ask.recommended, at: await $.clock.now() }
+      await update($, log, l => [...l, entry].slice(-100))
+    }
     await persist($)
+  }
+  /** A point with `when` shows only while its decision (answer, else suggestion) matches. */
+  const shows = (p: BriefPoint) => {
+    if (!p.when) return true
+    const target = all.find(q => q.id === p.when?.id)
+    if (!target?.ask) return true
+    const values = (picked[target.id] ?? target.ask.recommended).split(',')
+    return values.includes(p.when.value) !== p.when.negate
+  }
+  const hiddenLine = (p: BriefPoint) => {
+    const target = all.find(q => q.id === p.when?.id)
+    const label = target?.ask ? labelOf(target.ask, p.when?.value ?? '') : p.when?.value
+    return (
+      <Text key={`hidden-${p.id}`} dimColor italic>
+        {`⋯ ${trunc(p.claim, 48)}  (only if ${p.when?.id} ${p.when?.negate ? 'is not' : 'is'} “${label}”)`}
+      </Text>
+    )
+  }
+  const TASK: Record<TaskState, { g: string; c?: string; label: string }> = {
+    queued: { g: '○', label: 'queued' },
+    running: { g: '◐', c: FOCUS, label: 'running' },
+    review: { g: '◎', c: AMBER, label: 'needs review' },
+    done: { g: '✓', c: GREEN, label: 'done' },
+    failed: { g: '✕', c: RED, label: 'failed' },
+    blocked: { g: '⏸', c: AMBER, label: 'blocked' },
+  }
+  const taskChip = (p: BriefPoint, key: string) => {
+    const t = tasks[p.id]
+    if (!t) return null
+    const look = TASK[t.state]
+    const unproved = t.state === 'done' && (proofs[p.id] ?? []).length === 0
+    return (
+      <Text key={`${key}-task`} color={unproved ? AMBER : look.c} dimColor={!look.c && !unproved}>
+        {`${look.g} ${look.label}${unproved ? ' · no evidence' : ''}`}
+      </Text>
+    )
   }
   const sectionName = (p: BriefPoint) => (p.aux === 'shared' ? 'Shared' : p.aux === 'scope' ? 'Not changing' : p.id)
   const jump = (id: string | undefined) => async () => {
@@ -269,6 +526,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
       pending > 0 ? <Text key={`${key}-m-ask`} color={AMBER}>{`◆ ${pending}`}</Text> : null,
       under.some(q => changedIds.includes(q.id)) ? <Text key={`${key}-m-ch`} color={PURPLE}>●</Text> : null,
       under.some(q => (threads[q.id] ?? []).some(n => n.from === 'claude')) ? <Text key={`${key}-m-note`} color={CLAUDE}>✎</Text> : null,
+      taskChip(p, key),
     ].filter(Boolean)
   }
 
@@ -489,7 +747,54 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
     const values = value.split(',').filter(Boolean)
     const rec = (v: string) => (ask.recommended.split(',').includes(v) ? '  ★ suggested' : '')
     let control: RenderElement
-    if ((ask.kind === 'one' || ask.kind === 'scale') && Select) {
+    const rich = ask.kind !== 'scale' && ask.kind !== 'text' && ask.options.some(o => o.detail || o.pros || o.cons || o.exhibit)
+    const comparing = isOpen(`compare:${p.id}`)
+    if (rich && comparing) {
+      // Side by side: one column per option, the trade-offs aligned.
+      control = (
+        <Box flexDirection={cols >= 100 ? 'row' : 'column'} columnGap={1} rowGap={1}>
+          {ask.options.map(o => (
+            <Box key={`cmp-${p.id}-${o.value}`} flexDirection="column" flexGrow={1} borderStyle="single" borderColor={values.includes(o.value) ? GREEN : undefined} borderDimColor={!values.includes(o.value)} paddingX={1}>
+              <Text bold>{`${o.label}${rec(o.value)}`}</Text>
+              {(o.pros ?? []).map((x, i) => <Text key={`cmp-${p.id}-${o.value}-p${i}`} color={GREEN}>{`+ ${x}`}</Text>)}
+              {(o.cons ?? []).map((x, i) => <Text key={`cmp-${p.id}-${o.value}-c${i}`} color={RED}>{`− ${x}`}</Text>)}
+            </Box>
+          ))}
+        </Box>
+      )
+    } else if (rich) {
+      control = (
+        <Box flexDirection="column" rowGap={1}>
+          {ask.options.map(o => {
+            const isPicked = values.includes(o.value)
+            const nextValue = ask.kind === 'one' ? o.value : (isPicked ? values.filter(v => v !== o.value) : [...values, o.value]).join(',')
+            const box = ask.kind === 'one' ? (isPicked ? '◉' : '○') : isPicked ? '☑' : '☐'
+            const fake: BriefPoint = { id: `${p.id}~${o.value}`, claim: o.label, exhibit: o.exhibit, points: [] }
+            return (
+              <Box key={`opt-${p.id}-${o.value}`} flexDirection="column" borderStyle="round" borderColor={isPicked ? GREEN : undefined} borderDimColor={!isPicked} paddingX={1}>
+                <Box flexDirection="row" justifyContent="space-between" columnGap={1}>
+                  <Button key={`ask-${p.id}-${o.value}`} plain label={`${box} ${o.label}${rec(o.value)}`} onPress={() => setAnswer(p.id, nextValue)} />
+                  <Button
+                    key={`ask-${p.id}-explore-${o.value}`}
+                    plain
+                    dimColor
+                    label="explore ↗"
+                    onPress={() =>
+                      send($, p.id, p.claim, `Explore option “${o.label}” for “${ask.question}”: what it takes, its risks, and what changes elsewhere. Add it under point ${p.id} with patch.`)
+                    }
+                  />
+                </Box>
+                {o.detail && <Markdown text={o.detail} />}
+                {(o.pros ?? []).map((x, i) => <Text key={`opt-${p.id}-${o.value}-p${i}`} color={GREEN}>{`+ ${x}`}</Text>)}
+                {(o.cons ?? []).map((x, i) => <Text key={`opt-${p.id}-${o.value}-c${i}`} color={RED}>{`− ${x}`}</Text>)}
+                {o.note && <Text dimColor>{o.note}</Text>}
+                {o.exhibit && exhibitBlock(fake)}
+              </Box>
+            )
+          })}
+        </Box>
+      )
+    } else if ((ask.kind === 'one' || ask.kind === 'scale') && Select) {
       const options =
         ask.kind === 'scale'
           ? Array.from({ length: (ask.max ?? 10) - (ask.min ?? 0) + 1 }, (_, i) => String((ask.min ?? 0) + i)).map(v => ({ value: v, label: `${v}${rec(v)}` }))
@@ -544,7 +849,10 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
           </Text>
           <Text dimColor>{pick === undefined ? 'suggestion stands until you pick' : pick === ask.recommended ? 'kept the suggestion' : 'changed'}</Text>
         </Box>
-        <Text bold>{ask.question}</Text>
+        <Box flexDirection="row" justifyContent="space-between" columnGap={1}>
+          <Text bold>{ask.question}</Text>
+          {rich && <Button key={`compare-${p.id}`} plain dimColor label={comparing ? '▾ cards' : '⇆ compare'} onPress={toggle(`compare:${p.id}`)} />}
+        </Box>
         {control}
         {(ask.kind === 'text' || ask.kind === 'scale') && <Text dimColor>{`★ suggested: ${ask.recommended}`}</Text>}
         {consequence && <Text color={AMBER}>{`⚠ then: ${consequence}`}</Text>}
@@ -598,11 +906,34 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
       </Box>
     ) : null,
     p.ask ? decision(p) : null,
+    evidenceBlock(p),
     ...thread(p.id),
   ].filter(Boolean)
 
+  /** The proof attached to a point, newest last. */
+  function evidenceBlock(p: BriefPoint) {
+    const list = proofs[p.id] ?? []
+    const t = tasks[p.id]
+    if (list.length === 0 && !t?.note) return null
+    return (
+      <Box key={`${p.id}-evidence`} flexDirection="column" paddingLeft={1} borderStyle="single" borderColor={t?.state === 'failed' ? RED : GREEN} borderDimColor={!t}>
+        <Text bold color={t?.state === 'failed' ? RED : GREEN}>{`EVIDENCE${t ? ` · ${TASK[t.state].label}` : ''}${t?.agent ? ` · ${t.agent}` : ''}`}</Text>
+        {t?.note && <Markdown text={t.note} />}
+        {list.map((ev, i) => (
+          <Box key={`${p.id}-ev-${i}`} flexDirection="column">
+            {ev.title && <Text dimColor>{ev.title}</Text>}
+            {ev.kind === 'text' && <Markdown text={ev.text} />}
+            {ev.kind === 'code' && <Code source={ev.source} language={ev.language} format={ev.isDiff ? 'diff' : 'source'} />}
+            {ev.kind === 'image' && exhibitBody(p, { kind: 'image', png: ev.png, width: ev.width, height: ev.height, path: ev.path, alt: ev.title ?? 'evidence' })}
+          </Box>
+        ))}
+      </Box>
+    )
+  }
+
   // Level 3 ("where"): one line that opens in place.
   const whereLine = (c: BriefPoint) => {
+    if (!shows(c)) return hiddenLine(c)
     const k = `where:${c.id}`
     return (
       <Box key={`where-${c.id}`} flexDirection="column">
@@ -620,7 +951,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
   }
 
   // Level 2 ("how"): a paragraph inside its section, always shown.
-  const childBlock = (c: BriefPoint) => (
+  const childBlock = (c: BriefPoint) => !shows(c) ? hiddenLine(c) : (
     <Box key={`child-${c.id}`} flexDirection="column" gap={1}>
       <Box flexDirection="row" columnGap={1}>
         <Text bold>{`› ${c.claim}`}</Text>
@@ -636,6 +967,7 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
 
   // Level 1: one card per section; the focused card is the only coloured frame.
   const card = (p: BriefPoint) => {
+    if (!shows(p)) return hiddenLine(p)
     const isFocus = p.id === focusId
     const folded = isOpen(`fold:${p.id}`)
     return (
@@ -659,6 +991,27 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
     )
   }
 
+  /** Build progress across every point with a status. */
+  function buildLine() {
+    const states = Object.values(tasks).map(t => t.state)
+    const done = states.filter(x => x === 'done').length
+    const w = 12
+    const f = Math.round((done / states.length) * w)
+    const n = (st: TaskState) => states.filter(x => x === st).length
+    return (
+      <Text>
+        <Text dimColor>build </Text>
+        <Text color={GREEN}>{'▰'.repeat(f)}</Text>
+        <Text dimColor>{'▱'.repeat(w - f)}</Text>
+        <Text dimColor>{` ${done}/${states.length} done`}</Text>
+        {n('running') > 0 ? <Text color={FOCUS}>{` · ◐ ${n('running')} running`}</Text> : null}
+        {n('review') > 0 ? <Text color={AMBER}>{` · ◎ ${n('review')} to review`}</Text> : null}
+        {n('failed') > 0 ? <Text color={RED}>{` · ✕ ${n('failed')} failed`}</Text> : null}
+        {n('blocked') > 0 ? <Text color={AMBER}>{` · ⏸ ${n('blocked')} blocked`}</Text> : null}
+      </Text>
+    )
+  }
+
   // ── header ──────────────────────────────────────────────────────────
   const ch = b.changes
   const files = (ch?.new ?? 0) + (ch?.changed ?? 0) + (ch?.deleted ?? 0)
@@ -679,18 +1032,40 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
         <Box flexDirection="row" columnGap={2}>
           {asks.length > 0 && <Text color={toAnswer > 0 ? AMBER : GREEN}>{toAnswer > 0 ? `◆ ${toAnswer} of ${asks.length} decisions open` : `✓ all ${asks.length} decided`}</Text>}
           {changedIds.length > 0 && <Text color={PURPLE}>{`● ${changedIds.length} changed`}</Text>}
+          {b.gate && respondedAt < b.version && <Text color={AMBER}>⏸ building waits for Respond</Text>}
+          {b.gate && respondedAt >= b.version && <Text color={GREEN}>▶ cleared to build</Text>}
         </Box>
         <Button
           key="respond"
           variant="primary"
           hotkey="r"
           label="Respond  r"
-          onPress={() => {
-            void $.prompt.submit({ text: respondMessage(b, picked, struckKeys, seenIds), asUser: true })
-            $.ui.toast('Response sent to Claude')
+          onPress={async () => {
+            await update($, responded, () => b.version)
+            await persist($)
+            await deliver($, respondMessage(b, picked, struckKeys, seenIds))
           }}
         />
       </Box>
+      {Object.keys(tasks).length > 0 && buildLine()}
+      {index.length > 0 && (
+        <Box flexDirection="column">
+          <Button key="open-briefs" plain dimColor label={`${isOpen('briefs') ? '▾' : '▸'} other briefs · ${index.length}`} onPress={toggle('briefs')} />
+          {isOpen('briefs') &&
+            index.slice(0, 10).map(x => (
+              <Button
+                key={`brief-${x.key}`}
+                plain
+                label={`  ${x.title}  · v${x.version}`}
+                onPress={async () => {
+                  await persist($)
+                  await load($, x.key)
+                  await $.ui.open({ id: PANE, title: x.title })
+                }}
+              />
+            ))}
+        </Box>
+      )}
       {why.length > 0 && (
         <Box flexDirection="column">
           <Button key="open-why" plain dimColor label={`${isOpen('why') ? '▾' : '▸'} why · ${why.length} ${why.length === 1 ? 'request' : 'requests'}`} onPress={toggle('why')} />
@@ -735,6 +1110,20 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
         ))}
       </Box>
     ) : null,
+    decisions.length > 0 ? (
+      <Box key="log" flexDirection="column" borderStyle="round" borderDimColor paddingX={1}>
+        <Button key="open-log" plain dimColor label={`${isOpen('log') ? '▾' : '▸'} Decision log · ${decisions.length}`} onPress={toggle('log')} />
+        {isOpen('log') &&
+          decisions.slice(-20).map((d, i) => (
+            <Text key={`log-${i}`}>
+              <Text dimColor>{`${new Date(d.at).toISOString().slice(11, 16)}  [${d.id}] `}</Text>
+              <Text>{`${trunc(d.question, 40)} → `}</Text>
+              <Text bold color={d.value === d.suggested ? undefined : PURPLE}>{d.label}</Text>
+              {d.value !== d.suggested ? <Text dimColor> (changed)</Text> : null}
+            </Text>
+          ))}
+      </Box>
+    ) : null,
     <Box key="top" flexDirection="column" borderStyle="round" borderDimColor paddingX={1} gap={1}>
       <Text bold dimColor>The whole brief</Text>
       {thread('top')}
@@ -762,28 +1151,75 @@ async function renderPane($: EngineInterface, e: RenderInput<'Pane'>): Promise<R
   )
 }
 
+/** True when an answer is long enough that reading it as a brief would help. */
+const isLong = (answer: string) => {
+  const lines = answer.split('\n').length
+  const heads = (answer.match(/^#{1,4} /gm) ?? []).length
+  return lines >= 40 || heads >= 3 || answer.length >= 3000
+}
+
+const COMMAND_HELP = 'Usage: /brief · /brief auto on|suggest|off · /brief list · /brief open <number or title> · /brief save'
+
 export const register: Register = on => {
+  let shownThisTurn = false
+
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'brief', description: 'Open the Brief pane' })
+    await $.command.register({ name: 'brief', description: 'Open the Brief pane (auto · list · open · save)', argumentHint: '[auto on|suggest|off · list · open <n> · save]' })
     await $.tool.register({ name: 'show', description: SHOW_DESCRIPTION, inputSchema: showSchema })
+    await $.tool.register({ name: 'patch', description: PATCH_DESCRIPTION, inputSchema: patchSchema })
     await $.tool.register({ name: 'note', description: NOTE_DESCRIPTION, inputSchema: noteSchema })
+    await $.tool.register({ name: 'status', description: STATUS_DESCRIPTION, inputSchema: statusSchema })
+    const saved = (await $.store.get('mode')) as BriefMode | undefined
+    if (saved === 'on' || saved === 'suggest' || saved === 'off') await update($, mode, () => saved)
     // A new session starts empty: bring back the last brief and the reader's answers.
     if (!(await read($, brief))) {
-      const last = (await $.store.get('last')) as
-        | { brief?: Brief; answers?: Record<string, string>; struck?: string[]; notes?: Record<string, ThreadNote[]>; seen?: string[] }
-        | undefined
-      if (last?.brief) {
-        await update($, brief, () => last.brief as Brief)
-        await update($, answers, () => last.answers ?? {})
-        await update($, struck, () => last.struck ?? [])
-        await update($, notes, () => last.notes ?? {})
-        await update($, seen, () => last.seen ?? [])
-      }
+      const last = await $.store.get('last')
+      if (typeof last === 'string') await load($, last)
     }
     return next(e)
   })
 
-  on('command.run', { command: 'brief' }, async $ => {
+  // The pane is the default without a cue: a short section of the system prompt says when to use it.
+  on('prompt.compose', async ($, e, next) => {
+    const res = await next(e)
+    const m = await read($, mode)
+    if (m === 'off') return res
+    return { ...res, sections: [...res.sections, { id: 'brief:guide', text: GUIDE[m], scope: 'session' as const }] }
+  })
+
+  on('command.run', { command: 'brief' }, async ($, e) => {
+    const [verb = '', ...rest] = e.args.trim().split(/\s+/).filter(Boolean)
+    const arg = rest.join(' ')
+    if (verb === 'auto') {
+      if (arg !== 'on' && arg !== 'suggest' && arg !== 'off') return { text: `Brief auto mode is ${await read($, mode)}. ${COMMAND_HELP}` }
+      await update($, mode, () => arg)
+      await $.store.set('mode', arg)
+      const say = { on: 'Claude uses the Brief pane on its own for plans, designs and walkthroughs.', suggest: 'Claude uses the pane when asked; long answers offer "open as brief".', off: 'The pane is used only when you ask.' }
+      return { text: `Brief auto mode: ${arg}. ${say[arg]}` }
+    }
+    if (verb === 'list') {
+      const index = ((await $.store.get('brief:index')) as BriefIndexEntry[] | undefined) ?? []
+      if (index.length === 0) return { text: 'No saved briefs yet.' }
+      return { text: index.map((x, i) => `${i + 1}. ${x.title} · v${x.version} · ${new Date(x.savedAt).toISOString().slice(0, 16).replace('T', ' ')}`).join('\n') }
+    }
+    if (verb === 'open') {
+      const index = ((await $.store.get('brief:index')) as BriefIndexEntry[] | undefined) ?? []
+      const n = Number(arg)
+      const hit = Number.isInteger(n) && n >= 1 ? index[n - 1] : index.find(x => x.key === slug(arg) || x.title.toLowerCase().includes(arg.toLowerCase()))
+      if (!hit) return { text: `No saved brief matches "${arg}". Try /brief list.` }
+      await persist($)
+      await load($, hit.key)
+      await $.ui.open({ id: PANE, title: hit.title, focus: true })
+      return { text: `Opened brief: ${hit.title} (v${hit.version}).` }
+    }
+    if (verb === 'save') {
+      const b = await read($, brief)
+      if (!b) return { text: 'No brief to save.' }
+      const path = `docs/briefs/${(await read($, key)) || slug(b.title)}.md`
+      await $.fs.write(path, toMarkdown(b, await read($, answers), await read($, status), await read($, log)))
+      return { text: `Saved the brief to ${path}.` }
+    }
+    if (verb !== '') return { text: COMMAND_HELP }
     const b = await read($, brief)
     await $.ui.open({ id: PANE, title: b?.title ?? 'Brief', focus: true })
     return { text: b ? `Brief pane opened: ${b.title}.` : 'Brief pane opened. It is empty until Claude shows a brief.' }
@@ -791,58 +1227,89 @@ export const register: Register = on => {
 
   on('tool.call', { tool: SHOW }, async ($, e) => {
     const input = e as unknown as Record<string, unknown>
-    const readFile = async (path: string) => {
-      const why = await fenceCheck($, path)
-      if (why) return { refused: why }
-      try {
-        return await $.fs.read(path)
-      } catch {
-        return undefined
-      }
-    }
-    const readBytes = async (path: string) => {
-      const why = await fenceCheck($, path)
-      if (why) return { refused: why }
-      try {
-        const got = await $.fs.read(path, { as: 'bytes' })
-        return typeof got === 'string' ? undefined : got.base64
-      } catch {
-        return undefined
-      }
-    }
+    const { readFile, readBytes } = readers($)
     const built = await buildBrief(input, readFile, readBytes)
     if (!built.brief) {
       const warn = built.warnings.length > 0 ? `\nAlso:\n- ${built.warnings.join('\n- ')}` : ''
       return { deny: `The brief was not shown. Fix these and call show again:\n- ${built.errors.join('\n- ')}${warn}` }
     }
-    const before = await read($, brief)
-    const next: Brief = { ...built.brief, version: (before?.version ?? 0) + 1 }
-    const all = flatten(next.points)
-    const ids = new Set(all.map(p => p.id))
-    const old = new Map(flatten(before?.points ?? []).map(p => [p.id, signature(p)]))
-    const diff = before ? all.filter(p => old.get(p.id) !== signature(p)).map(p => p.id) : []
-    const rowKeys = new Set(all.flatMap(p => (p.exhibit?.kind === 'calls' ? p.exhibit.rows.map(r => r.key) : [])))
-    const keep = (id: string) => ids.has(id) && !diff.includes(id)
+    shownThisTurn = true
+    const { tool: _tool, tool_use_id: _id, consent: _consent, ...clean } = input
+    return { result: await apply($, built, clean) }
+  })
 
-    await update($, brief, () => next)
-    await update($, changed, () => diff)
-    await update($, open, list => list.filter(id => id === 'why' || id.startsWith('fold:') || id.startsWith('where:') || rowKeys.has(id)))
-    await update($, selected, id => (ids.has(id) ? id : (all[0]?.id ?? '')))
-    await update($, rowSel, key => (rowKeys.has(key) ? key : ''))
-    await update($, seen, list => list.filter(keep))
-    await update($, answers, picked => Object.fromEntries(Object.entries(picked).filter(([id]) => keep(id))))
-    await update($, struck, list => list.filter(k => rowKeys.has(k)))
-    await update($, machineAt, at => Object.fromEntries(Object.entries(at).filter(([id]) => keep(id))))
-    await update($, notes, all => Object.fromEntries(Object.entries(all).filter(([id]) => id === 'top' || ids.has(id))))
-    await persist($)
-    const opened = await $.ui.open({ id: PANE, title: next.title })
+  on('tool.call', { tool: PATCH }, async ($, e) => {
+    const input = e as unknown as Record<string, unknown>
+    const current = await read($, raw)
+    if (!isRecord(current)) return { deny: 'No brief to patch. Call show first.' }
+    const patched = patchRaw(current, input.ops)
+    if (!patched.raw) return { deny: `The patch was not applied:\n- ${patched.errors.join('\n- ')}` }
+    const { readFile, readBytes } = readers($)
+    const built = await buildBrief(patched.raw, readFile, readBytes)
+    if (!built.brief) return { deny: `The patched brief does not hold together:\n- ${built.errors.join('\n- ')}` }
+    shownThisTurn = true
+    return { result: await apply($, built, patched.raw, patched.map) }
+  })
 
-    const asks = all.filter(p => p.ask).length
-    const where = opened.isPlaced === false ? ' The pane is not seated yet; the user can run /brief to open it.' : ''
-    const warn = built.warnings.length > 0 ? `\nWarnings (fix if they matter):\n- ${built.warnings.join('\n- ')}` : ''
-    return {
-      result: `Brief v${next.version} shown in the Brief pane: ${all.length} points, ${asks} decisions, ${diff.length} changed since the last version.${where}${warn}`,
+  on('tool.call', { tool: STATUS }, async ($, e) => {
+    const input = e as unknown as Record<string, unknown>
+    const b = await read($, brief)
+    if (!b) return { deny: 'No brief is shown. Call show first.' }
+    const ids = new Set(flatten(b.points).map(p => p.id))
+    const { readBytes } = readers($)
+    const now = await $.clock.now()
+    const problems: string[] = []
+    let n = 0
+    for (const u of (Array.isArray(input.updates) ? input.updates : []).filter(isRecord)) {
+      const id = text(u.point)
+      const state = text(u.state) as TaskState | undefined
+      if (!id || !ids.has(id) || !state || !['queued', 'running', 'review', 'done', 'failed', 'blocked'].includes(state)) {
+        problems.push(`skipped ${JSON.stringify(u.point)}: needs a known point and a state`)
+        continue
+      }
+      const prev = (await read($, status))[id]
+      const st: TaskStatus = { state, note: text(u.note), agent: prev?.agent, at: now }
+      await update($, status, all => ({ ...all, [id]: st }))
+      const ev = isRecord(u.evidence) ? u.evidence : undefined
+      if (ev) {
+        const title = text(ev.title)
+        let made: Evidence | undefined
+        if (isRecord(ev.code) && typeof ev.code.source === 'string') {
+          const isDiff = ev.code.diff === true
+          made = { kind: 'code', title, source: isDiff ? toHunk(ev.code.source) : ev.code.source, language: text(ev.code.language), isDiff, at: now }
+        } else if (text(ev.image)) {
+          const path = text(ev.image) as string
+          const png = await readBytes(path)
+          const size = typeof png === 'string' ? pngSize(png) : undefined
+          if (typeof png !== 'string' || !size || png.length > 130000) problems.push(`${id}: image ${path} ${typeof png === 'object' && png ? png.refused : 'is missing, not a PNG, or over 95 KB'}`)
+          else made = { kind: 'image', title, png, width: size.width, height: size.height, path, at: now }
+        } else if (text(ev.text)) made = { kind: 'text', title, text: text(ev.text) as string, at: now }
+        if (made) await update($, evidence, all => ({ ...all, [id]: [...(all[id] ?? []), made as Evidence].slice(-6) }))
+      }
+      n++
     }
+    await persist($)
+    const proofsNow = await read($, evidence)
+    const unproved = Object.entries(await read($, status)).filter(([id, t]) => t.state === 'done' && (proofsNow[id] ?? []).length === 0)
+    return { result: `${n} status update${n === 1 ? '' : 's'} applied.${problems.length ? `\n- ${problems.join('\n- ')}` : ''}${unproved.length ? `\nDone without evidence: ${unproved.map(([id]) => id).join(', ')}.` : ''}` }
+  })
+
+  // A subagent whose description carries [brief <id>] is linked to that point while it runs.
+  on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
+    const tagged = /\[brief ([\w.]+)\]/.exec(`${e.description} ${e.prompt}`)
+    const b = tagged ? await read($, brief) : null
+    const id = tagged?.[1]
+    if (!b || !id || !findPoint(b, id)) return next(e)
+    const start: TaskStatus = { state: 'running', note: undefined, agent: e.description.replace(/\[brief [\w.]+\]\s*/, ''), at: await $.clock.now() }
+    await update($, status, all => ({ ...all, [id]: start }))
+    const res = await next(e)
+    const now = (await read($, status))[id]
+    if (now?.state === 'running') {
+      const after: TaskStatus = { ...now, state: 'review', note: 'The agent finished. Check its work and attach evidence.', at: await $.clock.now() }
+      await update($, status, all => ({ ...all, [id]: after }))
+    }
+    await persist($)
+    return res
   })
 
   on('tool.call', { tool: NOTE }, async ($, e) => {
@@ -861,6 +1328,43 @@ export const register: Register = on => {
     }
     await persist($)
     return { result: `Note added under ${id === 'top' ? 'the brief' : `point ${id}`}.` }
+  })
+
+  // While a turn runs, pane messages join it; after a long answer, offer to open it as a brief.
+  on('turn.start', async ($, e, next) => {
+    shownThisTurn = false
+    await update($, busy, () => true)
+    await update($, offer, () => '')
+    return next(e)
+  })
+
+  on('turn.complete', async ($, e, next) => {
+    if (!e.agentId) {
+      await update($, busy, () => false)
+      if ((await read($, mode)) !== 'off' && !shownThisTurn && !e.isAborted && isLong(e.answer)) await update($, offer, () => e.turnId)
+    }
+    return next(e)
+  })
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const turn = await read($, offer)
+    if (!turn || e.props.hasSurvey) return next(e)
+    const { Box, Text, Button } = $.ui.resolve(e)
+    return (
+      <Box flexDirection="row" columnGap={2}>
+        <Text dimColor>That was a long answer.</Text>
+        <Button
+          key="brief-offer"
+          variant="primary"
+          label="↗ open it as a brief"
+          onPress={async () => {
+            await update($, offer, () => '')
+            void $.prompt.submit({ text: 'Show your last answer in the Brief pane: the same content as sections, with exhibits where they help.', asUser: true })
+          }}
+        />
+        <Button key="brief-offer-dismiss" plain dimColor label="✕" onPress={() => update($, offer, () => '')} />
+      </Box>
+    )
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, ($, e) => renderPane($, e))

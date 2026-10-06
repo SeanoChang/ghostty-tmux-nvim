@@ -6,6 +6,7 @@ import type {
   Brief,
   BriefAsk,
   BriefNote,
+  BriefOption,
   BriefPin,
   BriefPoint,
   BriefQuote,
@@ -319,15 +320,21 @@ async function exhibitOf(item: Raw, at: string, ctx: Ctx): Promise<Exhibit | und
   return undefined
 }
 
-function askOf(raw: unknown, at: string, ctx: Ctx): BriefAsk | undefined {
+async function askOf(raw: unknown, at: string, ctx: Ctx): Promise<BriefAsk | undefined> {
   if (!isRecord(raw)) return undefined
   const kindIn = text(raw.kind) ?? 'one'
   const kind = (['one', 'many', 'text', 'scale', 'rank'].includes(kindIn) ? kindIn : 'one') as BriefAsk['kind']
   const question = text(raw.question)
-  const options = (Array.isArray(raw.options) ? raw.options : [])
-    .filter(isRecord)
-    .map(o => ({ value: String(o.value ?? '').trim(), label: String(o.label ?? '').trim(), note: text(o.note) }))
-    .filter(o => o.value !== '' && o.label !== '')
+  const options: BriefOption[] = []
+  for (const o of (Array.isArray(raw.options) ? raw.options : []).filter(isRecord)) {
+    const value = String(o.value ?? '').trim()
+    const label = String(o.label ?? '').trim()
+    if (value === '' || label === '') continue
+    const list = (v: unknown) => (Array.isArray(v) ? v.map(x => text(x)).filter((x): x is string => !!x) : undefined)
+    // An option may carry one exhibit of its own, in the same fields a point uses (detail is its prose).
+    const exhibit = await exhibitOf({ ...o, detail: undefined, claim: label }, `${at} option ${value}`, ctx)
+    options.push({ value, label, note: text(o.note), detail: text(o.detail), pros: list(o.pros), cons: list(o.cons), exhibit })
+  }
   const recommended = typeof raw.recommended === 'number' ? String(raw.recommended) : (text(raw.recommended) ?? '')
   const then = isRecord(raw.then) ? Object.fromEntries(Object.entries(raw.then).flatMap(([k, v]) => (text(v) ? [[k, String(v)]] : []))) : {}
   if (!question) {
@@ -348,6 +355,18 @@ function askOf(raw: unknown, at: string, ctx: Ctx): BriefAsk | undefined {
   if (kind === 'scale' && (min === undefined || max === undefined || max <= min || max - min > 20)) ctx.errors.push(`point ${at}: a scale ask needs min and max, at most 20 apart`)
   const rec = kind === 'rank' && picks.length === 0 ? options.map(o => o.value).join(',') : recommended
   return { kind, question, options, recommended: rec, min, max, then }
+}
+
+/** "2=no" shows the point only when decision 2 is "no"; "2!=no" when it is anything else. */
+function whenOf(raw: unknown, at: string, ctx: Ctx): BriefPoint['when'] {
+  const s = text(raw)
+  if (!s) return undefined
+  const m = /^\s*([\w.]+)\s*(!?=)\s*(.+?)\s*$/.exec(s)
+  if (!m) {
+    ctx.errors.push(`point ${at}: when must look like "2=no" or "2!=no"`)
+    return undefined
+  }
+  return { id: m[1] as string, value: m[3] as string, negate: m[2] === '!=' }
 }
 
 async function pointsOf(raw: unknown, prefix: string, depth: number, ctx: Ctx): Promise<BriefPoint[]> {
@@ -384,7 +403,8 @@ async function pointsOf(raw: unknown, prefix: string, depth: number, ctx: Ctx): 
       aux: auxKind,
       exhibit: await exhibitOf(item, id, ctx),
       caption: text(item.caption),
-      ask: askOf(item.ask, id, ctx),
+      ask: await askOf(item.ask, id, ctx),
+      when: whenOf(item.when, id, ctx),
       note,
       points: await pointsOf(item.points, id, depth + 1, ctx),
     })
@@ -406,7 +426,15 @@ export async function buildBrief(input: Raw, read: ReadFile, readBytes: ReadByte
   if (!gist) ctx.errors.push('gist is empty')
   const points = await pointsOf(input.points, '', 1, ctx)
   if (points.filter(p => !p.aux).length === 0) ctx.errors.push('a brief needs at least one point')
-  const asks = flatten(points).filter(p => p.ask).length
+  const all = flatten(points)
+  for (const p of all) {
+    if (!p.when) continue
+    const target = all.find(q => q.id === p.when?.id)
+    if (!target?.ask) ctx.errors.push(`point ${p.id}: when names ${p.when.id}, which is not a decision`)
+    else if (target.ask.options.length > 0 && !target.ask.options.some(o => o.value === p.when?.value))
+      ctx.errors.push(`point ${p.id}: when value "${p.when.value}" is not an option of decision ${p.when.id}`)
+  }
+  const asks = all.filter(p => p.ask).length
   if (asks > 5) ctx.warnings.push(`${asks} decisions; ask only about forks that change what you build (2 to 5)`)
 
   const why: BriefQuote[] = (Array.isArray(input.why) ? input.why : []).filter(isRecord).flatMap(q => {
@@ -421,8 +449,108 @@ export async function buildBrief(input: Raw, read: ReadFile, readBytes: ReadByte
   const changes = ch ? { new: num(ch.new), changed: num(ch.changed), deleted: num(ch.deleted) } : undefined
 
   if (ctx.errors.length > 0) return { errors: ctx.errors, warnings: ctx.warnings }
-  return { brief: { title: title as string, gist: gist as string, why, changes, points, terms }, errors: [], warnings: ctx.warnings }
+  return { brief: { title: title as string, gist: gist as string, why, changes, points, terms, gate: input.gate === true ? true : undefined }, errors: [], warnings: ctx.warnings }
 }
 
 /** What a point is, for change detection between versions. */
-export const signature = (p: BriefPoint) => JSON.stringify([p.claim, p.exhibit, p.ask, p.note])
+export const signature = (p: BriefPoint) => JSON.stringify([p.claim, p.exhibit, p.ask, p.note, p.when])
+
+// ── patch: change a brief without resending it ─────────────────────────
+
+type RawPoint = Raw & { points?: unknown; __prev?: string; __touched?: boolean }
+
+/** Walks the raw tree in the order buildBrief numbers it, giving each point its id. */
+function numberRaw(list: unknown, prefix: string, visit: (node: RawPoint, id: string) => void) {
+  let n = 0
+  for (const node of (Array.isArray(list) ? list : []).filter(isRecord) as RawPoint[]) {
+    const aux = node.aux === 'shared' || node.aux === 'scope' ? (node.aux as string) : undefined
+    const id = aux ?? (prefix ? `${prefix}.${++n}` : String(++n))
+    visit(node, id)
+    numberRaw(node.points, id, visit)
+  }
+}
+
+export type PatchOp =
+  | { op: 'set'; id: string; point: Raw }
+  | { op: 'add'; parent?: string; after?: string; point: Raw }
+  | { op: 'remove'; id: string }
+  | { op: 'meta'; title?: string; gist?: string; why?: unknown; changes?: unknown; terms?: unknown; gate?: boolean }
+
+export type Patched = { raw?: Raw; errors: string[]; map: Record<string, string>; touched: string[] }
+
+/** Applies ops to a copy of the raw input; answers which old ids became which new ids. */
+export function patchRaw(raw: Raw, ops: unknown): Patched {
+  const errors: string[] = []
+  const copy = JSON.parse(JSON.stringify(raw)) as Raw
+  if (!Array.isArray(copy.points)) copy.points = []
+  const byId = new Map<string, { node: RawPoint; siblings: RawPoint[] }>()
+  const index = (list: unknown, prefix: string) => {
+    let n = 0
+    for (const node of (Array.isArray(list) ? list : []).filter(isRecord) as RawPoint[]) {
+      const aux = node.aux === 'shared' || node.aux === 'scope' ? (node.aux as string) : undefined
+      const id = aux ?? (prefix ? `${prefix}.${++n}` : String(++n))
+      node.__prev = id
+      byId.set(id, { node, siblings: list as RawPoint[] })
+      if (!Array.isArray(node.points)) node.points = node.points ?? undefined
+      index(node.points, id)
+    }
+  }
+  index(copy.points, '')
+  const list = (Array.isArray(ops) ? ops : []).filter(isRecord)
+  if (list.length === 0) errors.push('ops is empty')
+  for (const [i, op] of list.entries()) {
+    const at = `op ${i + 1} (${String(op.op)})`
+    if (op.op === 'meta') {
+      for (const k of ['title', 'gist', 'why', 'changes', 'terms', 'gate'] as const) if (op[k] !== undefined) copy[k] = op[k]
+    } else if (op.op === 'set') {
+      const hit = byId.get(String(op.id))
+      if (!hit || !isRecord(op.point)) {
+        errors.push(`${at}: no point ${String(op.id)}, or no point object`)
+        continue
+      }
+      const keepKids = op.point.points === undefined ? hit.node.points : op.point.points
+      for (const k of Object.keys(hit.node)) if (k !== '__prev') delete hit.node[k]
+      Object.assign(hit.node, op.point, { points: keepKids, __touched: true })
+    } else if (op.op === 'add') {
+      if (!isRecord(op.point)) {
+        errors.push(`${at}: no point object`)
+        continue
+      }
+      const parentId = text(op.parent)
+      const parent = parentId ? byId.get(parentId)?.node : undefined
+      if (parentId && !parent) {
+        errors.push(`${at}: no parent ${parentId}`)
+        continue
+      }
+      const target: RawPoint[] = parent ? (Array.isArray(parent.points) ? (parent.points as RawPoint[]) : (parent.points = [] as RawPoint[])) : (copy.points as RawPoint[])
+      const afterId = text(op.after)
+      const node: RawPoint = { ...op.point, __touched: true }
+      const afterNode = afterId ? byId.get(afterId)?.node : undefined
+      let pos = afterNode ? target.indexOf(afterNode) + 1 : target.length
+      // A new main point goes before shared/scope at the top level.
+      if (!parent && !afterNode && !node.aux) {
+        const firstAux = target.findIndex(x => x.aux)
+        if (firstAux !== -1) pos = firstAux
+      }
+      if (afterId && !afterNode) errors.push(`${at}: no point ${afterId} to add after`)
+      target.splice(pos, 0, node)
+    } else if (op.op === 'remove') {
+      const hit = byId.get(String(op.id))
+      if (!hit) {
+        errors.push(`${at}: no point ${String(op.id)}`)
+        continue
+      }
+      hit.siblings.splice(hit.siblings.indexOf(hit.node), 1)
+    } else errors.push(`${at}: op must be set, add, remove or meta`)
+  }
+  const map: Record<string, string> = {}
+  const touched: string[] = []
+  numberRaw(copy.points, '', (node, id) => {
+    if (node.__prev) map[node.__prev] = id
+    if (node.__touched) touched.push(id)
+    delete node.__prev
+    delete node.__touched
+    if (node.points === undefined) delete node.points
+  })
+  return { raw: errors.length > 0 ? undefined : copy, errors, map, touched }
+}

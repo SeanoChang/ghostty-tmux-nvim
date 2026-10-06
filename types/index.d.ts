@@ -62,7 +62,16 @@ export type Exhibit =
   | MarkdownExhibit
   | ImageExhibit
 
-export type BriefOption = { value: string; label: string; note?: string }
+export type BriefOption = {
+  value: string
+  label: string
+  note?: string
+  /** Rich option cards (phase 2): a short case, trade-offs and one exhibit. */
+  detail?: string
+  pros?: string[]
+  cons?: string[]
+  exhibit?: Exhibit
+}
 
 export type BriefAsk = {
   kind: 'one' | 'many' | 'text' | 'scale' | 'rank'
@@ -76,9 +85,23 @@ export type BriefAsk = {
 
 export type BriefNote = { tone: Tone; text: string }
 
+export type TaskState = 'queued' | 'running' | 'review' | 'done' | 'failed' | 'blocked'
+
+export type TaskStatus = { state: TaskState; note?: string; agent?: string; at: number }
+
+/** Proof attached to a point: test output, a diff, a figure, or text. */
+export type Evidence =
+  | { kind: 'text'; title?: string; text: string; at: number }
+  | { kind: 'code'; title?: string; source: string; language?: string; isDiff?: boolean; at: number }
+  | { kind: 'image'; title?: string; png: string; width: number; height: number; path: string; at: number }
+
+export type DecisionEntry = { id: string; question: string; value: string; label: string; suggested: string; at: number }
+
 export type BriefPoint = {
   id: string
   claim: string
+  /** Shown only under an answer: "2=no" or "2!=no" (point id of the decision). */
+  when?: { id: string; value: string; negate: boolean }
   aux?: 'shared' | 'scope'
   exhibit?: Exhibit
   caption?: string
@@ -99,7 +122,13 @@ export type Brief = {
   points: BriefPoint[]
   terms: BriefTerm[]
   version: number
+  /** When true, the header says building waits for Respond. A signal, not a lock. */
+  gate?: boolean
 }
+
+export type BriefIndexEntry = { key: string; title: string; version: number; savedAt: number }
+
+export type BriefMode = 'on' | 'suggest' | 'off'
 
 export type ThreadNote = { from: 'claude' | 'you'; text: string }
 
@@ -117,6 +146,15 @@ declare module 'claude-code' {
       replyNonce: number
       selected: string
       rowSel: string
+      raw: unknown
+      key: string
+      mode: BriefMode
+      offer: string
+      busy: boolean
+      log: DecisionEntry[]
+      status: Record<string, TaskStatus>
+      evidence: Record<string, Evidence[]>
+      responded: number
     }
   }
 }
