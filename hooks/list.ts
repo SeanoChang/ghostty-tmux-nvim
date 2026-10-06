@@ -341,6 +341,11 @@ export function handbackOf(transcript: string): string | undefined {
   return lastText
 }
 
+// A root folder as Claude Code names its projects folder: every character
+// that is not a letter or digit becomes '-'. Runs compare by this key.
+export const folderKey = (path: string) => path.replace(/[^a-zA-Z0-9]/g, '-')
+export const runKey = (n: { repo?: string; repoKey?: string }) => n.repoKey ?? (n.repo ? folderKey(n.repo) : undefined)
+
 // Why a finished agent has no report, in words, instead of a bare "No report".
 export function noReportReason(n: { status: string }): string {
   if (n.status === 'running') return 'Still working.'
@@ -472,7 +477,7 @@ function emitTree(n: AgentNode, nodes: AgentNode[], o: TreeOpts, out: Item[], at
   if (!isOpen) return
   const more = hasKids ? `${at.prefix}│  ` : `${at.prefix}   `
   if (n.kind === 'group') {
-    out.push({ kind: 'info', tone: 'chips', nodeId: n.id, guide: more })
+    // no aspect chips here: the members are the rows right below
     if (overlaps(scopeNodes(nodes, { kind: 'node', id: n.id }).filter(k => k.id !== n.id)).length) out.push({ kind: 'info', tone: 'warn', nodeId: n.id, guide: more })
     if (n.summary && n.status !== 'running') out.push({ kind: 'info', tone: 'outcome', nodeId: n.id, guide: more })
   }

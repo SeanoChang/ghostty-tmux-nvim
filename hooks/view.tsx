@@ -9,6 +9,7 @@ import {
   GROUPS, GROUP_NAMES, childrenOf, counts, dayLabel, diffCounts, fileRows, firstSentence, isSelectable, lineDiff,
   noReportReason, overlaps, phaseWords, pipeline, plain, prettyModel, prettyType, readableResult, runTree, scopeNodes, shortPaths,
   taskText, topItems, whereLabel, workSummary, type DiffLine, type FileRow, type Filter, type Group, type Item,
+  folderKey, runKey,
 } from './list'
 import { cellWidth, fit, kindGlyph, padEnd, padStart, themeOf, type Theme } from './theme'
 import {
@@ -271,9 +272,10 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     if (!s.onlyRepo || !props.repo) return props.history
     const byId = new Map(props.history.map(n => [n.id, n]))
     const top = (n: AgentNode) => { let x = n; while (x.parentId && byId.has(x.parentId)) x = byId.get(x.parentId)!; return x }
-    return props.history.filter(n => top(n).repo === props.repo)
+    const here = folderKey(props.repo)
+    return props.history.filter(n => runKey(top(n)) === here)
   })()
-  const noRepoRuns = props.history.filter(n => !n.parentId && !n.repo).length
+  const noRepoRuns = props.history.filter(n => !n.parentId && !runKey(n)).length
   const isHistory = s.tab === 'history'
   const nodes = isHistory ? repoHistory : props.nodes
   const allNodes = [...props.nodes, ...props.history]
@@ -949,7 +951,8 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     const at = lens === 'tree' ? indexIn(run.id, undefined, 'tree') : 0
     set({ path: null, view: 'agents', sel: Math.max(0, at), first: 0, focus: null })
   }
-  const switchTab = (tab: Tab) => tab !== s.tab && set({ tab, path: null, view: 'agents', sel: 0, first: 0, diffFile: null, focus: null, insight: -1 })
+  // in a replay the History tab leads back to the History page
+  const switchTab = (tab: Tab) => (tab === s.tab && run && tab === 'history' ? back() : tab !== s.tab && set({ tab, path: null, view: 'agents', sel: 0, first: 0, diffFile: null, focus: null, insight: -1 }))
   const switchLens = (l: Lens) => {
     const leaving = diffOpen ? closeDiff() : {}
     const key = inAgents ? focusKey : s.focus
@@ -1236,12 +1239,8 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   }
   const tabsRow: Row = (() => {
     const t = tabRow([[`Live ${running}`, s.tab === 'live', () => switchTab('live')], [`History ${histTops.length}`, s.tab === 'history', () => switchTab('history')]])
-    if (run && isHistory) {
-      // a replay: the crumb leads back to the History page
-      const x = width(t.segs) + 3
-      t.segs.push(seg('   '), seg('‹ History', C.accent), seg('  ›  ', C.faint), seg(run.label, C.soft, true))
-      t.hit.push({ x0: x, x1: x + cellWidth('‹ History'), act: () => back() })
-    } else if (run) t.segs.push(seg('   ›  ', C.faint), seg(run.label, C.soft, true))
+    // the open run follows its tab; in a replay the History tab itself leads back
+    if (run) t.segs.push(seg('   ›  ', C.faint), seg(run.label, C.soft, true))
     return t
   })()
   // the lens switch, at the right of the caption: all three when there is room, else the current one

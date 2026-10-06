@@ -46,8 +46,6 @@ const TITLE_CONCURRENCY = 4
 
 const AGENT_TOOLS = new Set(['Agent', 'Task'])
 const excerpt = (s: string | undefined, n = 400) => (s ? s.slice(0, n) : undefined)
-// This session's repository, looked up once per load: '' when there is none.
-let repoRoot: string | undefined
 const scriptField = (script: string | undefined, field: string) =>
   new RegExp(`${field}:\\s*['"]([^'"]+)['"]`).exec(script ?? '')?.[1]
 
@@ -339,14 +337,36 @@ const addChange = (prev: AgentNode['changes'], e: { path: string; added: number;
 
 const slim = (n: AgentNode): AgentNode => ({ ...n, prompt: excerpt(n.prompt, 300), result: excerpt(n.result, 600), activity: undefined, act: undefined })
 
-// The git top level of the session's folder, else the folder itself.
+// The session's root folder: where it started, or where /cd moved it. A shell
+// cd does not move it, and neither does the folder the mod's commands run in.
 async function sessionRepo($: Engine): Promise<string | undefined> {
-  if (repoRoot === undefined) {
-    const git = await $.process.run(['git', 'rev-parse', '--show-toplevel']).catch(() => undefined)
-    const pwd = git?.exitCode === 0 ? git.stdout.trim() : (await $.process.run(['pwd']).catch(() => undefined))?.stdout.trim()
-    repoRoot = pwd ?? ''
-  }
-  return repoRoot || undefined
+  return (await $.session.root().catch(() => '')) || undefined
+}
+
+// Runs saved before the repo was the root folder get its key from where their
+// transcripts are kept: ~/.claude/projects/<root folder key>/..., once.
+async function backfillRepos($: Engine) {
+  const history = ((await $.store.get(HISTORY)) as AgentNode[] | undefined) ?? []
+  const byId = new Map(history.map(n => [n.id, n]))
+  const topOf = (n: AgentNode): AgentNode => (n.parentId && byId.has(n.parentId) ? topOf(byId.get(n.parentId)!) : n)
+  const tops = history.filter(n => topOf(n) === n && !n.repoTried)
+  if (tops.length === 0) return
+  const agentsUnder = new Map(tops.map(t => [t.id, history.filter(n => n.kind === 'agent' && topOf(n) === t).map(n => n.id)]))
+  const ids = [...new Set([...agentsUnder.values()].flat())]
+  const home = await $.env.get('HOME')
+  const names = ids.flatMap((id, i) => [...(i ? ['-o'] : []), '-name', `agent-${id}.jsonl`])
+  const found = ids.length
+    ? await $.process.run(['find', `${home}/.claude/projects`, '-maxdepth', '6', '(', ...names, ')'], { timeoutMs: 20000 }).catch(() => undefined)
+    : undefined
+  const keyOf = new Map((found?.stdout ?? '').split('\n').filter(Boolean).map(p => [p.replace(/^.*agent-|\.jsonl$/g, ''), p.split('/projects/')[1]?.split('/')[0]]))
+  const keys = new Map(tops.map(t => [t.id, (agentsUnder.get(t.id) ?? []).map(id => keyOf.get(id)).find(Boolean)]))
+  await $.store.set(HISTORY, history.map(n => {
+    if (!keys.has(n.id)) return n
+    const key = keys.get(n.id)
+    // a key from the transcript's folder wins over a repo recorded from the wrong folder
+    const { repo: _repo, ...rest } = n
+    return key ? { ...rest, repoKey: key, repoTried: true } : { ...n, repoTried: true }
+  }))
 }
 
 // The repo as a view prop: left out when there is none, since props hold no undefined.
@@ -385,7 +405,7 @@ async function archive($: Engine) {
   if (done.length === 0) return
   const prev = ((await $.store.get(HISTORY)) as AgentNode[] | undefined) ?? []
   const repo = await sessionRepo($)
-  const fresh = done.flat().map(slim).map(n => (repo && !n.repo ? { ...n, repo } : n))
+  const fresh = done.flat().map(slim).map(n => (repo && !n.repo ? { ...n, repo, repoTried: true } : n))
   const freshIds = new Set(fresh.map(n => n.id))
   const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
   if (fresh.every(f => prev.some(p => p.id === f.id && p.status === f.status && p.label === f.label && p.summary === f.summary && p.parentId === f.parentId
@@ -415,6 +435,7 @@ export const register: Register = (on, options) => {
     })
     await archive($)
     await backfillReports($)
+    await backfillRepos($)
     if ((await read($, nodes)).some(n => n.status === 'running')) ensureTimers($)
 
     return next(e)

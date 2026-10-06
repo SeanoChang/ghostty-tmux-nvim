@@ -50,8 +50,12 @@ export type AgentNode = {
   tokens?: number
   /** Set once Haiku has titled it (or the attempt failed), so it is asked once. */
   titled?: boolean
-  /** The repository (git top level, else the working folder) of the session that ran it. */
+  /** The root folder of the session that ran it ($.session.root()). */
   repo?: string
+  /** The root folder as Claude Code's projects folder names it, for runs saved before repo was the root. */
+  repoKey?: string
+  /** Set once the root folder was looked for in the transcript's location. */
+  repoTried?: boolean
   /** Set once a missing report was looked for in the transcript, so it is looked for once. */
   reportTried?: boolean
   /** The finished report, written once by Haiku in plain short sentences. */

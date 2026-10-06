@@ -3,7 +3,7 @@ import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 
 import {
-  changesLine, cleanTitle, describeTool, diffCounts, editRecords, editStats, fileRows, handbackOf, lineDiff, noReportReason, phaseWords, readableResult, firstPrompt, fitProps, markFor, parseDigest, parseJournal,
+  changesLine, cleanTitle, folderKey, describeTool, diffCounts, editRecords, editStats, fileRows, handbackOf, lineDiff, noReportReason, phaseWords, readableResult, firstPrompt, fitProps, markFor, parseDigest, parseJournal,
   pipeline, plain, prettyModel, prettyType, scopeNodes, shortPaths, taskText, topItems, transcriptEdits, workSummary, workflowItems,
 } from '../hooks/list'
 import { bar, unifiedHunks, viewProps, viewState, wrap } from '../hooks/view'
@@ -375,6 +375,7 @@ test('a report handed back through SubagentHandback is found in a transcript', (
 
 test('an agent that hands its report back through a tool shows that report', async ($, on) => {
   on('process.run', () => ranIn('/repo/a'))
+  on('session.root', () => ({ value: '/repo/a' }) as never)
   on('model.complete', () => ({ value: { isAnswered: false, reason: 'empty-reply', usage } }) as never)
   on('tool.call', { tool: 'SubagentHandback' }, () => ({ result: { success: true } }) as never)
   on('turn.complete', () => ({ text: '' }) as never)
@@ -395,6 +396,7 @@ test('History shows this repository first; r shows every repository', async ($, 
   const run = (id: string, label: string, repo?: string) => ({ id, kind: 'agent', label, status: 'done', startedAt: at, endedAt: at + 1000, tools: 1, result: 'ok', ...(repo ? { repo } : {}) })
   mock.store(on, { history: [run('h1', 'Run in repo A', '/repo/a'), run('h2', 'Run in repo B', '/repo/b'), run('h3', 'Run from before repos')] })
   on('process.run', () => ranIn('/repo/a'))
+  on('session.root', () => ({ value: '/repo/a' }) as never)
   const ui = await $.ui.mount({ plugin: 'agent-tree', surface: 'terminal', ...PANE })
   await ui.key({ in: KEY, key: '2' })
   expect(await ui.find({ in: KEY, text: 'Run in repo A' })).toBeDefined()
@@ -404,6 +406,25 @@ test('History shows this repository first; r shows every repository', async ($, 
   expect(await ui.find({ in: KEY, text: 'Run in repo B' })).toBeDefined()
   expect(await ui.find({ in: KEY, text: 'Run from before repos' })).toBeDefined()
   expect(await ui.find({ in: KEY, text: /all repos/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('runs saved before repos were root folders match by the folder key their transcripts live under', async ($, on) => {
+  mock.clock(on)
+  const at = Date.parse('2026-10-05T10:00:00Z')
+  const run = (id: string, label: string, extra: Record<string, unknown>) => ({ id, kind: 'agent', label, status: 'done', startedAt: at, endedAt: at + 1000, tools: 1, result: 'ok', ...extra })
+  mock.store(on, { history: [
+    run('k1', 'Old run in .claude', { repoKey: '-Users-sean--claude' }),
+    run('k2', 'Old run elsewhere', { repoKey: '-Users-sean-dev-shop' }),
+    run('k3', 'New run in .claude', { repo: '/Users/sean/.claude' }),
+  ] })
+  on('session.root', () => ({ value: '/Users/sean/.claude' }) as never)
+  const ui = await $.ui.mount({ plugin: 'agent-tree', surface: 'terminal', ...PANE })
+  await ui.key({ in: KEY, key: '2' })
+  expect(await ui.find({ in: KEY, text: 'Old run in .claude' })).toBeDefined()
+  expect(await ui.find({ in: KEY, text: 'New run in .claude' })).toBeDefined()
+  expect(await ui.find({ in: KEY, text: 'Old run elsewhere' })).toBeUndefined()
+  expect(folderKey('/Users/sean/.claude')).toBe('-Users-sean--claude')
   await ui.unmount()
 })
 
@@ -422,6 +443,7 @@ async function historyPane($: Engine, on: On, surface: 'terminal' | 'desktop' = 
   mock.clock(on)
   mock.store(on, { history: runs })
   on('process.run', inRepoA)
+  on('session.root', () => ({ value: '/repo/a' }) as never)
   const ui = await $.ui.mount({ plugin: 'agent-tree', surface, ...PANE })
   await ui.key({ in: KEY, key: '2' })
   return ui
@@ -553,6 +575,7 @@ async function cartRun($: Engine, on: On, columns = 110) {
   mock.clock(on)
   mock.store(on, { history: cart })
   on('process.run', inRepoA)
+  on('session.root', () => ({ value: '/repo/a' }) as never)
   const ui = await $.ui.mount({ plugin: 'agent-tree', surface: 'terminal', ...PANE })
   await ui.resize({ in: KEY, columns, rows: 30 })
   await ui.key({ in: KEY, key: '2' })
@@ -562,15 +585,15 @@ async function cartRun($: Engine, on: On, columns = 110) {
 const rowTexts = async (ui: Awaited<ReturnType<typeof cartRun>>) =>
   contentRows(await ui.drawn({ in: KEY })).map(r => leaves(r).map(l => l.text).join(''))
 
-test('a cluster opens as a tree: its row, aspect chips, members on guide lines', { options: { theme: 'kitty' } }, async ($, on) => {
+test('a cluster opens as a tree: its row, then each member once on a guide line', { options: { theme: 'kitty' } }, async ($, on) => {
   const ui = await cartRun($, on)
   const rows = await rowTexts(ui)
   const lead = rows.findIndex(r => r.includes('Fix shopping cart calculation bugs') && r.includes('🐾'))
   expect(lead).toBeGreaterThan(-1)
   expect(rows[lead]).toContain('3/3')
   expect(rows[lead]).toContain('▰▰▰▰▰▰')
-  // the chips line: each member's aspect with its status
-  expect(rows[lead + 1]).toMatch(/😺 Fix cart.*😺 Format prices.*😺 Tighten/)
+  // no chips line repeating the members: they are the rows right below
+  expect(rows[lead + 1] ?? '').not.toMatch(/Fix cart.*Format prices.*Tighten/)
   const members = ['Fix cart total quantities', 'Format prices with two decimals', 'Tighten email validation']
     .map(m => rows.find(r => r.includes(m) && /[├└]─ /.test(r)))
   expect(members.every(Boolean)).toBe(true)
@@ -683,6 +706,7 @@ async function historyAt($: Engine, on: On, history: unknown[], columns = 110) {
   mock.clock(on, { now: NOW })
   mock.store(on, { history })
   on('process.run', inRepoA)
+  on('session.root', () => ({ value: '/repo/a' }) as never)
   const ui = await $.ui.mount({ plugin: 'agent-tree', surface: 'terminal', ...PANE })
   await ui.resize({ in: KEY, columns, rows: 34 })
   await ui.key({ in: KEY, key: '2' })
@@ -761,13 +785,16 @@ test('f cycles History through all, failed and changed files', async ($, on) => 
   await ui.unmount()
 })
 
-test('a History run opens as a replay with a ‹ History crumb', async ($, on) => {
+test('a History run opens as a replay; History is named once and its tab leads back', async ($, on) => {
   const ui = await historyAt($, on, days)
   await ui.key({ in: KEY, key: 'return' })
-  expect(await ui.find({ in: KEY, text: '‹ History' })).toBeDefined()
   expect(await ui.find({ in: KEY, text: /Tree/ })).toBeDefined()
+  expect(await ui.find({ in: KEY, text: /‹ History/ })).toBeUndefined()
+  expect(await ui.find({ in: KEY, text: 'Yesterday' })).toBeUndefined()
+  await ui.key({ in: KEY, key: '2' }) // the History tab, pressed again, goes back
+  expect(await ui.find({ in: KEY, text: 'Yesterday' })).toBeDefined()
+  await ui.key({ in: KEY, key: 'return' })
   await ui.key({ in: KEY, key: 'b' })
-  expect(await ui.find({ in: KEY, text: '‹ History' })).toBeUndefined()
   expect(await ui.find({ in: KEY, text: 'Yesterday' })).toBeDefined()
   await ui.unmount()
 })
@@ -803,6 +830,7 @@ test('the report keeps its order and leaves out empty sections', async ($, on) =
 test('Changed and Totals come from records, whatever the model says', async ($, on) => {
   const prompts: { system?: string; prompt: string }[] = []
   on('process.run', inRepoA)
+  on('session.root', () => ({ value: '/repo/a' }) as never)
   on('tool.call', { tool: 'Edit' }, () => ({ result: { filePath: 'x' } }) as never)
   on('fs.read', (_$, e) => (e.path === '/repo/src/cart.ts' ? { value: 'let total = 0\nconst qty = item.qty ?? 1\n' } : { deny: 'missing' }))
   on('turn.complete', () => ({ text: '' }) as never)
