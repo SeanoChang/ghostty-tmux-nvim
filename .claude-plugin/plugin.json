@@ -1,0 +1,9 @@
+{
+  "name": "brief",
+  "version": "0.2.0",
+  "description": "A pane beside the chat that reads a plan or explanation as a scrollable document: html-plan blocks drawn natively, PNG figures, live questions, decisions and Respond",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Sean"
+  }
+}
