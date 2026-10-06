@@ -212,8 +212,29 @@ export type TraceView = {
   storyBy?: string
 }
 
+/** The desktop view's own state (phase 6): what is open, and how the lists are filtered. */
+export type DeskUi = {
+  tab: 'live' | 'history'
+  /** The run that is open, or null for the run list. */
+  run: string | null
+  /** The item picked inside the open run: a node id, or "phase:<workflow id>:<phase>". */
+  sel: string | null
+  view: 'overview' | 'changes' | 'output'
+  lens: 'tree' | 'board' | 'timeline' | 'trace'
+  onlyRepo: boolean
+  /** The file whose diff the Changes view shows. */
+  file: string | null
+  query: string
+  hfilter: 'all' | 'failed' | 'changed'
+  olderOpen: boolean
+  /** Fold keys toggled away from their default. */
+  flipped: string[]
+  zoom: TraceZoom
+  traceOffset: number
+}
+
 declare module 'claude-code' {
   interface PluginState {
-    'agent-tree': { nodes: AgentNode[]; edits: EditRecord[]; wheel: Wheel; trace: { seq: number }; ai: { seq: number } }
+    'agent-tree': { nodes: AgentNode[]; edits: EditRecord[]; wheel: Wheel; trace: { seq: number }; ai: { seq: number }; desk: DeskUi }
   }
 }

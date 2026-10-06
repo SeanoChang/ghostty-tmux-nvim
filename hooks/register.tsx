@@ -14,6 +14,9 @@ import {
   parseStory, patternsInput, storyInput, type AiMode, type Tier,
 } from './ai'
 import { insights } from './lens'
+// phase 6: the desktop's own native view, drawn from the same data
+import { drawDesktop } from './desktop/pane'
+import { DESK_DEFAULT, deskUi } from './desktop/state'
 
 const PANE = 'agent-tree'
 // Bumped when the view module's props or state change shape: a new key mounts a
@@ -57,6 +60,8 @@ let traceSnap: TraceView | undefined
 let tracer: Timer | undefined
 // A new seq redraws the pane after the trace was read again.
 const traceSeq = atom({ plugin: 'agent-tree', key: 'trace' } as const, { seq: 0 })
+// phase 6: what the desktop view has open (its tab, run, item, view, filters)
+const desk = atom({ plugin: 'agent-tree', key: 'desk' } as const, DESK_DEFAULT)
 // Each transcript's events, kept while its file does not change; a running agent's
 // file is read again at most every few seconds.
 const transcripts = new Map<string, { size: number; mtimeMs: number; checkedAt: number; events: TraceEvent[] }>()
@@ -852,13 +857,29 @@ export const register: Register = (on, options) => {
   // The pane's rows are the view's own, so the engine has nothing to scroll:
   // each wheel tick is handed to the view, which moves its selection or text.
   on('ui.scroll', { requestId: PANE }, async ($, e, next) => {
-    if (e.origin.kind !== 'person') return next(e)
+    // a drawing taller than the pane (the desktop's) scrolls as the engine scrolls it
+    if (e.origin.kind !== 'person' || e.contentRows > e.bodyRows) return next(e)
     await update($, wheel, w => ({ seq: (w?.seq ?? 0) + 1, by: e.by }))
     return {}
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
+    // phase 6: the desktop draws its own native view; presses write the desk state
+    if (e.surface === 'desktop') {
+      const columns = e.props.bodyColumns ?? e.viewport?.columns ?? 120
+      return drawDesktop(els, await viewProps($), deskUi(await read($, desk)), {
+        set: change => void update($, desk, s => ({ ...deskUi(s), ...change })),
+        openDiff: path => {
+          diffPath = path
+          void update($, desk, s => ({ ...deskUi(s) }))
+        },
+        // a trail that could not be read leaves the view as it was
+        askTrace: (run, zoom, offset) => void askTrace($, run ? { run, zoom, offset } : {})
+          .then(() => update($, desk, s => ({ ...deskUi(s) })))
+          .catch(() => undefined),
+      }, columns)
+    }
     // the pane body's own height: the viewport is the whole terminal, frame and all
     const rows = Math.max(8, e.props.scroll?.bodyRows ?? (e.viewport?.rows ?? 24) - 4)
     if (!('Client' in els)) return <els.Text dimColor>The Agents pane needs the terminal or desktop.</els.Text>

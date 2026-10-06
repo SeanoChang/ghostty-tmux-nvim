@@ -148,7 +148,8 @@ async function oneCat($: Engine, on: On) {
 }
 
 describe('subagents', () => {
-  for (const surface of ['terminal', 'desktop'] as const) {
+  // the desktop draws its own native view (tests/desktop.test.ts)
+  for (const surface of ['terminal'] as const) {
     test(`a subagent reads as plain words; Output shows its task (${surface})`, async ($, on) => {
       await oneCat($, on)
       const ui = await $.ui.mount({ plugin: 'agent-tree', surface, ...PANE })
@@ -462,7 +463,8 @@ function contentRows(tree: unknown): unknown[] {
   return ((middle.children?.[1] as Drawn).children ?? []) as unknown[]
 }
 
-for (const surface of ['terminal', 'desktop'] as const) {
+// the desktop draws its own native view (tests/desktop.test.ts)
+for (const surface of ['terminal'] as const) {
   test(`the minimal theme draws plain glyphs (${surface})`, async ($, on) => {
     const ui = await historyPane($, on, surface)
     expect(await ui.find({ in: KEY, text: '✗' })).toBeDefined()
