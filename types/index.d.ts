@@ -54,9 +54,35 @@ export type AgentNode = {
   repo?: string
   /** Set once a missing report was looked for in the transcript, so it is looked for once. */
   reportTried?: boolean
+  /** The finished report, written once by Haiku in plain short sentences. */
+  report?: Report
+  /** A workflow's part reports, one per phase, written as each phase finishes. */
+  partReports?: Record<string, Report>
 }
 
 /** One change one agent made to one file: its text before and after, and where it sits. */
+/**
+ * The short report a person reads when a run, a part of it or an agent finishes.
+ * The model writes these fields; what changed and the totals come from records.
+ */
+export type Report = {
+  /** One or two sentences: what it achieved. */
+  result?: string
+  /** What was done, at most three items (small runs, which have no parts). */
+  done?: string[]
+  /** Design choices the agents made, each with the agent or phase it came from. */
+  decisions?: { text: string; source?: string }[]
+  /** What went wrong or is still open, each with its source. */
+  problems?: { text: string; source?: string }[]
+  /** The next step, one sentence. */
+  next?: string
+  /** Who wrote it and what writing it cost, shown beside it. */
+  model?: string
+  tokens?: number
+  /** A part report: how many agents it covered, so a part that grew is written again. */
+  count?: number
+}
+
 export type EditRecord = {
   id: string
   agentId: string

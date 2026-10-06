@@ -11,6 +11,10 @@ import {
   taskText, topItems, whereLabel, workSummary, type DiffLine, type FileRow, type Filter, type Group, type Item,
 } from './list'
 import { cellWidth, fit, kindGlyph, padEnd, padStart, themeOf, type Theme } from './theme'
+import {
+  HISTORY_FILTERS, HISTORY_FILTER_NAMES, historyItems, historyStats, outcomeOf, runTokens, sparkline, type HistoryFilter,
+} from './history'
+import { kTokens, reportFacts, reportOf, type Facts } from './report'
 
 type Tab = 'live' | 'history'
 type ViewName = 'agents' | 'changes' | 'output'
@@ -45,6 +49,12 @@ type State = {
   wheelSeen: number
   // the insight `i` last jumped to; -1 before the first
   insight: number
+  // History: which runs the page keeps, the search words, whether typing goes to
+  // the search line, and whether runs older than a week show
+  hfilter: HistoryFilter
+  query: string
+  searching: boolean
+  olderOpen: boolean
 }
 
 const TICK_MS = 500
@@ -53,7 +63,7 @@ const CARDS_PER_CELL = 4
 const DEFAULT_STATE: State = {
   tab: 'live', path: null, view: 'agents', lens: 'tree', sel: 0, first: 0, agentSel: 0, focus: null, diffFile: null,
   filter: 'all', group: 'none', flipped: [], showDone: [], tick: 0, atSeen: 0, tickAtSeen: 0, onlyRepo: true, help: false,
-  wheelSeen: -1, insight: -1,
+  wheelSeen: -1, insight: -1, hfilter: 'all', query: '', searching: false, olderOpen: false,
 }
 const FILTERS: Filter[] = ['all', 'running', 'failed']
 const VIEWS: ViewName[] = ['agents', 'changes', 'output']
@@ -97,6 +107,10 @@ export function viewState(raw: unknown): State {
     help: s.help === true,
     wheelSeen: typeof s.wheelSeen === 'number' ? s.wheelSeen : -1,
     insight: typeof s.insight === 'number' ? s.insight : -1,
+    hfilter: HISTORY_FILTERS.includes(s.hfilter) ? s.hfilter : 'all',
+    query: typeof s.query === 'string' ? s.query : '',
+    searching: s.searching === true,
+    olderOpen: s.olderOpen === true,
   }
 }
 
@@ -116,6 +130,8 @@ const offset = (ms: number) => {
 const clock = (t: number) => new Date(t).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
 const clockSec = (t: number) => new Date(t).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit' })
 const baseName = (p: string) => p.split('/').filter(Boolean).pop() ?? p
+// 3,520 rather than 3520: counts read faster with separators
+const num = (n: number) => n.toLocaleString('en-US')
 
 // The status line's bar: ▰ filled, ▱ empty, rounded to the nearest cell.
 export function bar(done: number, total: number, width: number): { filled: string; empty: string; pct: number } {
@@ -266,8 +282,11 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   const lens: Lens = s.lens
 
   // ── the three lenses over the same runs ───────────────────────────────
+  // the History page lists runs by day, filtered and searched; inside a run, its tree
   const listFor = (flipped: readonly string[], showDone: readonly string[], at: AgentNode | undefined): Item[] =>
-    at ? runTree(at, nodes, s.filter, flipped, showDone) : topItems(nodes, s.filter, isHistory, now, s.group, flipped, showDone)
+    at ? runTree(at, nodes, s.filter, flipped, showDone)
+      : isHistory ? historyItems(nodes, now, { filter: s.hfilter, query: s.query, olderOpen: s.olderOpen })
+        : topItems(nodes, s.filter, isHistory, now, s.group, flipped, showDone)
   const agentItems: Item[] = listFor(s.flipped, s.showDone, run)
   // the runs the run list shows, in its order, for the board and the timeline
   const topRuns = topItems(nodes, s.filter, isHistory, now, 'none').flatMap(it => (it.kind === 'node' ? [it.node] : []))
@@ -334,7 +353,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     if (rows.length === 0) return [seg('None', C.muted)]
     const added = rows.reduce((a, r) => a + r.added, 0)
     const removed = rows.reduce((a, r) => a + r.removed, 0)
-    return [seg(`${rows.length} file${rows.length === 1 ? '' : 's'}`, C.accent), seg('   '), seg(`+${added}`, C.add), seg(' '), seg(`−${removed}`, C.del)]
+    return [seg(`${rows.length} file${rows.length === 1 ? '' : 's'}`, C.accent), seg('   '), seg(`+${num(added)}`, C.add), seg(' '), seg(`−${num(removed)}`, C.del)]
   }
   const nowSegs = (n: AgentNode): Seg[] => [seg('› ', C.accent), seg(n.activity ?? 'Thinking', C.ink), seg(`   ${ACT_WORD[n.act ?? 'think']}`, C.faint)]
   const quietFor = (n: AgentNode) => (n.status === 'running' ? now - (n.lastToolAt ?? n.startedAt) : 0)
@@ -363,8 +382,117 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
       ...(more > 0 ? [seg(`   +${more} more file${more === 1 ? '' : 's'}`, C.faint)] : [])]
   }
 
+  // ── the report: Result, Parts or Done, Decisions, Problems, Next, Changed, Totals ──
+  // The words are the model's; Changed and Totals come from the mod's own records.
+  type Section = [string, Seg[][]]
+  const pmSegs = (added: number, removed: number): Seg[] => [seg(`+${num(added)}`, C.add), seg(' '), seg(`−${num(removed)}`, C.del)]
+  const phaseStatus = (p: { running: number; failed: number; stopped: number }) =>
+    p.failed ? T.status.failed : p.running ? T.status.running : p.stopped ? T.status.killed : T.status.done
+  // one line per part: a workflow's phases, or a cluster's members
+  // `all` (the Output view) wraps each part's outcome under itself; the overview cuts it to one line
+  const partRows = (n: AgentNode, w: number, all = false): Seg[][] => {
+    const line = (glyph: { icon: string; color: string }, name: string, nameW: number, count: string, outcome: string, files: FileRow[]): Seg[][] => {
+      const added = files.reduce((a, f) => a + f.added, 0)
+      const removed = files.reduce((a, f) => a + f.removed, 0)
+      const pm = files.length ? pmSegs(added, removed) : []
+      const head: Seg[] = [seg(padEnd(glyph.icon, 2), glyph.color), seg(' '), seg(padEnd(fit(name, nameW), nameW), C.ink, true), ...(count ? [seg(`  ${count}`, C.muted)] : [])]
+      const room = Math.max(8, w - width(head) - 2 - (pm.length ? width(pm) + 2 : 0))
+      const lines = all ? wrap(outcome, room) : [fit(outcome, room)]
+      return lines.map((said, i) => i === 0
+        ? [...head, seg('  '), seg(said, C.soft), seg(' '.repeat(Math.max(0, room - cellWidth(said)))), ...(pm.length ? [seg('  '), ...pm] : [])]
+        : [seg(' '.repeat(width(head) + 2)), seg(said, C.soft)])
+    }
+    if (n.kind === 'workflow') {
+      const ps = pipeline(n, nodes)
+      const nameW = Math.min(14, Math.max(4, ...ps.map(p => cellWidth(p.phase))))
+      return ps.flatMap(p => line(phaseStatus(p), p.phase, nameW, padStart(`${p.total} agent${p.total === 1 ? '' : 's'}`, 9),
+        n.partReports?.[p.phase]?.result ?? phaseWords(p), fileRows(scopeNodes(nodes, { kind: 'phase', wfId: n.id, phase: p.phase }))))
+    }
+    if (n.kind === 'group') {
+      const kids = childrenOf(nodes, n.id).sort((a, b) => a.startedAt - b.startedAt)
+      const nameW = Math.min(30, Math.max(8, ...kids.map(k => cellWidth(k.label))))
+      return kids.flatMap(k => line(T.status[k.status], k.label, nameW, '', outcomeOf(k) || noReportReason(k), fileRows(scopeNodes(nodes, { kind: 'node', id: k.id }))))
+    }
+    return []
+  }
+  const changedRows = (f: Facts, w: number, all: boolean): Seg[][] => {
+    const short = shortPaths(f.files.map(x => x.path))
+    if (all) {
+      const nameW = Math.min(w - 16, Math.max(...f.files.map(x => cellWidth(short.get(x.path) ?? x.path))))
+      return f.files.map(x => [seg(padEnd(fit(short.get(x.path) ?? x.path, nameW), nameW), C.ink), seg('   '), ...pmSegs(x.added, x.removed)])
+    }
+    const out: Seg[] = []
+    let shown = 0
+    for (const x of f.files) {
+      const piece: Seg[] = [...(shown ? [seg('  ·  ', C.faint)] : []), seg(short.get(x.path) ?? x.path, C.ink), seg(' '), ...pmSegs(x.added, x.removed)]
+      const rest = f.files.length - shown - 1
+      if (width(out) + width(piece) + (rest ? 10 : 0) > w && shown) break
+      out.push(...piece)
+      shown++
+    }
+    if (shown < f.files.length) out.push(seg(`  ·  +${f.files.length - shown} more`, C.faint))
+    return [out]
+  }
+  const plural = (k: number, one: string) => `${k} ${one}${k === 1 ? '' : 's'}`
+  const totalsRows = (f: Facts, w: number): Seg[][] => {
+    const parts: Seg[][] = [
+      ...(f.phases ? [[seg(plural(f.phases, 'phase'), C.soft)]] : []),
+      [seg(plural(f.agents, 'agent'), C.soft)],
+      [seg(plural(f.files.length, 'file'), C.soft)],
+      ...(f.files.length ? [pmSegs(f.added, f.removed)] : []),
+      [seg(duration(f.ms), C.soft)],
+      ...(f.tokens ? [[seg(`${kTokens(f.tokens)} tokens`, C.soft)]] : []),
+    ]
+    const lines: Seg[][] = [[]]
+    for (const p of parts) {
+      const cur = lines[lines.length - 1]!
+      const piece = [...(cur.length ? [seg('  ·  ', C.faint)] : []), ...p]
+      if (cur.length && width(cur) + width(piece) > w) lines.push([...p])
+      else cur.push(...piece)
+    }
+    return lines
+  }
+  // `all`: the Output view's full block; otherwise lists and long text are capped for the
+  // overview; `brief` keeps only Result, Problems, Next and Totals, for a pane short of rows
+  const reportSections = (sc: Scope, valueW: number, all: boolean, brief = false): Section[] => {
+    const node = sc.kind === 'node' ? nodes.find(x => x.id === sc.id) : undefined
+    const wf = sc.kind === 'phase' ? nodes.find(x => x.id === sc.wfId) : undefined
+    const r = sc.kind === 'phase' ? wf?.partReports?.[sc.phase] : node ? reportOf(node) : undefined
+    const f = reportFacts(nodes, sc, now)
+    const text = (t: string, c: string): Seg[][] => wrap(t, valueW).slice(0, all ? 99 : brief ? 2 : 3).map(l => [seg(l, c)])
+    const bullets = (items: { text: string; source?: string }[], c: string): Seg[][] => items.slice(0, 3).flatMap(it =>
+      wrap(`${it.text}${it.source ? ` [${it.source}]` : ''}`, valueW - 3).slice(0, all ? 99 : 2).map((l, i) => [seg(i ? '   ' : '•  ', C.faint), seg(l, c)]))
+    const out: Section[] = []
+    const fallback = sc.kind === 'phase' ? 'No part report yet.' : node ? noReportReason(node) : ''
+    out.push(['Result', text(r?.result ?? fallback, C.ink)])
+    if (brief) {
+      if (r?.problems?.length) out.push(['Problems', r.problems.slice(0, 2).map(p => [seg('•  ', C.faint), seg(fit(`${p.text}${p.source ? ` [${p.source}]` : ''}`, valueW - 3), C.warn)])])
+      if (r?.next) out.push(['Next', [[seg(fit(r.next, valueW), C.soft)]]])
+      out.push(['Totals', totalsRows(f, valueW)])
+      return out
+    }
+    const parts = node ? partRows(node, valueW, all) : []
+    if (parts.length) {
+      const cap = all ? parts.length : 6
+      out.push(['Parts', [...parts.slice(0, cap), ...(parts.length > cap ? [[seg(`+${parts.length - cap} more parts`, C.faint)]] : [])]])
+    } else if (r?.done?.length) out.push(['Done', bullets(r.done.map(t => ({ text: t })), C.soft)])
+    if (r?.decisions?.length) out.push(['Decisions', bullets(r.decisions, C.soft)])
+    if (r?.problems?.length) out.push(['Problems', bullets(r.problems, C.warn)])
+    if (r?.next) out.push(['Next', text(r.next, C.soft)])
+    if (f.files.length) out.push(['Changed', changedRows(f, valueW, all)])
+    out.push(['Totals', totalsRows(f, valueW)])
+    return out
+  }
+  const sectionRows = (secs: Section[]): Row[] =>
+    secs.flatMap(([name, lines]) => lines.map((l, i) => ({ segs: [seg(padEnd(i ? '' : name, 11), C.muted), ...l] })))
+  // who wrote a report, beside its heading
+  const writtenBy = (sc: Scope): string => {
+    const r = sc.kind === 'phase' ? nodes.find(x => x.id === sc.wfId)?.partReports?.[sc.phase] : nodes.find(x => x.id === sc.id)?.report
+    return r?.model ? `${r.model}${r.tokens ? ` · ${kTokens(r.tokens)} tokens` : ''}` : 'from what the run kept'
+  }
+
   // ── the overview of the selection, as rows of a given width ───────────
-  const overview = (w: number, dense: 'compact' | 'full'): Row[] => {
+  const overview = (w: number, dense: 'compact' | 'brief' | 'full'): Row[] => {
     if (!scope) return []
     const title = scope.kind === 'phase' ? `${scope.phase} phase` : scopeNode?.label ?? ''
     const when = (n: AgentNode) => (isHistory ? clock(n.startedAt) : undefined)
@@ -411,6 +539,9 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
       ]
       points = n.points ?? []
     }
+    // finished work shows its report: the model's words, then what changed and the totals from records
+    const isFinished = scope.kind === 'phase' ? counts(scopeList).running === 0 && scopeList.length > 0 : !!scopeNode && scopeNode.status !== 'running'
+    const secs = isFinished ? reportSections(scope, w - 11, false, dense === 'brief') : undefined
     const out: Row[] = []
     if (dense === 'compact') {
       const changed = files.length ? changeSegs(files) : []
@@ -419,14 +550,22 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
       out.push({ segs: [seg(shownTitle, C.ink, true), seg(' '.repeat(Math.max(3, w - cellWidth(shownTitle) - width(changed)))), ...changed] })
       const what = scope.kind === 'node' && scopeNode?.kind === 'agent' ? second : rows[0]?.[1] ?? []
       out.push({ segs: [...meta, ...(what.length ? [seg('   ·   ', C.faint), ...what] : [])] })
-      const [name, value] = rows.find(([k]) => k === 'Now' || k === 'Outcome') ?? rows[0] ?? ['', []]
+      const result = secs?.find(([k]) => k === 'Result')?.[1][0]
+      const [name, value] = result ? ['Result', result] : rows.find(([k]) => k === 'Now' || k === 'Outcome') ?? rows[0] ?? ['', []]
       out.push({ segs: [seg(padEnd(name, 10), C.muted), ...value] })
       return out
     }
-    for (const line of wrap(title, w).slice(0, 2)) out.push({ segs: [seg(line, C.ink, true)] })
+    for (const line of wrap(title, w).slice(0, dense === 'brief' ? 1 : 2)) out.push({ segs: [seg(line, C.ink, true)] })
     out.push({ segs: meta })
-    out.push({ segs: second })
-    out.push({ segs: [] })
+    if (dense !== 'brief') { out.push({ segs: second }); out.push({ segs: [] }) }
+    if (secs) {
+      // a parent keeps its one status line ("6 done"); the report follows
+      const status = scope.kind === 'phase' || scopeNode?.kind !== 'agent' ? rows.filter(([k]) => k === 'Agents' || k === 'Phases') : []
+      for (const [name, value] of status) out.push({ segs: [seg(padEnd(name, 11), C.muted), ...value] })
+      out.push(...sectionRows(secs))
+      if (scopeNode?.kind === 'agent') out.push(...rows.filter(([k]) => k === 'Work').map(([name, value]) => ({ segs: [seg(padEnd(name, 11), C.muted), ...value] })))
+      return out
+    }
     for (const [name, value] of rows) {
       const valueW = w - 11
       // a long sentence wraps under its value column
@@ -448,7 +587,14 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     const out: Row[] = []
     const para = (t: string, c?: string, b?: boolean) => wrap(t, w).forEach(text => out.push({ segs: [seg(text, c, b)] }))
     const gap = () => out.push({ segs: [] })
+    // finished work opens with its whole report; the agents' own words follow
+    const reportBlock = (sc: Scope) => {
+      out.push({ segs: [seg('Report', C.accent, true), seg(`   ${writtenBy(sc)}`, C.faint)] })
+      out.push(...sectionRows(reportSections(sc, w - 11, true)))
+      gap()
+    }
     if (scope?.kind === 'phase') {
+      if (scopeList.length && counts(scopeList).running === 0) reportBlock(scope)
       para(`What the ${scope.phase} phase reported`, C.accent, true)
       for (const k of scopeList) {
         gap()
@@ -459,10 +605,13 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     }
     const n = scopeNode
     if (!n) return out
-    if (n.summary) { para('Outcome', C.accent, true); para(n.summary, C.ink) }
-    if (n.points?.length) { gap(); para('Key points', C.accent, true); n.points.forEach(p => para(`•  ${p}`, C.soft)) }
+    const isDone = n.status !== 'running'
+    if (isDone && scope) reportBlock(scope)
+    if (!isDone && n.summary) { para('Outcome', C.accent, true); para(n.summary, C.ink) }
+    if (!isDone && n.points?.length) { gap(); para('Key points', C.accent, true); n.points.forEach(p => para(`•  ${p}`, C.soft)) }
     if (n.kind !== 'agent') {
-      gap(); para(n.kind === 'group' ? 'Members' : 'Agents', C.accent, true)
+      if (!isDone) gap()
+      para(n.kind === 'group' ? 'Members' : 'Agents', C.accent, true)
       for (const k of childrenOf(nodes, n.id)) para(`${k.phase ? `${k.phase}  ·  ` : ''}${k.label} — ${k.summary ?? (firstSentence(k.result, 160) || noReportReason(k))}`, C.soft)
     }
     const report = n.kind === 'workflow' ? readableResult(n.result) : n.result
@@ -470,7 +619,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
       gap(); para(n.kind === 'workflow' ? 'Final result' : 'Full report', C.accent, true)
       for (const line of report.split('\n')) para(plain(line) || ' ', C.muted)
     }
-    if (!report && !n.summary) para(n.status === 'running' ? 'Still working — the report appears here when it finishes.' : noReportReason(n), C.muted)
+    if (!isDone && !report && !n.summary) para('Still working — the report appears here when it finishes.', C.muted)
     const task = taskText(n.prompt)
     if (task) { gap(); para('Task it was given', C.accent, true); para(task, C.muted) }
     return out
@@ -514,13 +663,38 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
 
   // ── fixed blocks: top rows, the body, bottom rows ─────────────────────
   const isReading = mode === 'output' || mode === 'diff' || mode === 'help'
-  const strip = insightRows(IW)
+  // the History page's numbers on top, and the search line while there is one
+  const isHistoryPage = isHistory && !run && lens === 'tree'
+  const matchCount = isHistoryPage ? agentItems.filter(it => it.kind === 'node').length : 0
+  const historyHeader = (): Row[] => {
+    const st = historyStats(nodes, now)
+    const sp = sparkline(st.perDay)
+    const rows: Row[] = [{
+      segs: [seg(`${st.runs}`, C.ink, true), seg(` run${st.runs === 1 ? '' : 's'}`, C.muted), seg('     '),
+        seg(`${st.okPct}%`, C.ink, true), seg(' finished OK', C.muted), seg('     '),
+        seg(kTokens(st.tokens), C.ink, true), seg(' tokens', C.muted), seg('     '),
+        seg(sp.glyphs, C.accent), seg(`  runs per day, last 7 days · 0 to ${sp.max}`, C.faint)],
+    }]
+    if (s.searching || s.query) {
+      rows.push({
+        segs: [seg('/ ', C.accent, true), seg(s.query, C.ink, true), ...(s.searching ? [seg(T.cursor, C.accent)] : []),
+          seg(`   ${matchCount} match${matchCount === 1 ? '' : 'es'}`, C.muted),
+          seg(s.searching ? '   enter keep · esc clear · ⌫ delete' : '   / edit · esc clear', C.faint)],
+      })
+    }
+    return rows
+  }
+  const strip = isHistoryPage && mode !== 'help' ? historyHeader() : insightRows(IW)
   const fullOverview = (() => {
-    if (layout === 'split' || isReading) return []
+    // History's rows carry each run's result; a run's report shows beside them from 140 columns
+    if (layout === 'split' || isReading || isHistoryPage) return []
     if (layout === 'compact') return overview(IW, 'compact')
+    // the whole report when the list keeps 10 rows; else its brief form; else three lines
+    const rowsLeft = (o: Row[]) => CH - 1 - 1 - (strip.length ? strip.length + 1 : 0) - 1 - 2 - (o.length + 1)
     const full = overview(IW, 'full')
-    const left = CH - 1 - 1 - (strip.length ? strip.length + 1 : 0) - 1 - 2 - (full.length + 1)
-    return left >= 10 ? full : overview(IW, 'compact')
+    if (rowsLeft(full) >= 10) return full
+    const brief = overview(IW, 'brief')
+    return rowsLeft(brief) >= 8 ? brief : overview(IW, 'compact')
   })()
   const TOP = 1 + 1 + (strip.length ? strip.length + 1 : 0) + (fullOverview.length ? fullOverview.length + 1 : 0) + 1 // tabs, rule, insights + rule, overview + rule, caption
   const BOTTOM = 2 // rule, keys
@@ -824,6 +998,23 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   }
 
   surface.onKey(({ key }) => {
+    // while the search line takes typing, every printable key goes to it
+    if (s.searching) {
+      if (key === 'return') return set({ searching: false })
+      if (key === 'escape') return set({ searching: false, query: '', sel: 0, first: 0 })
+      if (key === 'backspace' || key === 'delete') return s.query ? set({ query: s.query.slice(0, -1), sel: 0, first: 0 }) : set({ searching: false })
+      if (key === 'down') return move(1)
+      if (key === 'up') return move(-1)
+      const ch = key === 'space' ? ' ' : key
+      if ([...ch].length === 1) return set({ query: s.query + ch, sel: 0, first: 0 })
+      return
+    }
+    if (isHistoryPage && !s.help) {
+      if (key === '/') return set({ searching: true, sel: 0, first: 0 })
+      if (key === 'escape' && s.query) return set({ query: '', sel: 0, first: 0 })
+      if (key === 'f') return set({ hfilter: HISTORY_FILTERS[(HISTORY_FILTERS.indexOf(s.hfilter) + 1) % HISTORY_FILTERS.length]!, sel: 0, first: 0 })
+      if (key === 'o') return set({ olderOpen: !s.olderOpen })
+    }
     if (key === '?') return set({ help: !s.help })
     if (s.help) return set({ help: false })
     if (key === 'j' || key === 'down') move(1)
@@ -931,6 +1122,50 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
       segs: [...head, seg(shown, isLive || on ? C.ink : C.soft, on || n.kind !== 'agent'), seg(' '.repeat(Math.max(0, labelW - cellWidth(shown)))), ...tail],
     }
   }
+  // History's columns: status · kind · name · outcome · ± · duration · tokens. Narrow
+  // panes drop tokens first, then ±; the outcome shrinks, and goes when it gets too small.
+  const historyRuns = isHistoryPage ? agentItems.flatMap(it => (it.kind === 'node' ? [it.node] : [])) : []
+  const historyCols = (w: number) => {
+    const showTok = w >= 100
+    const showPm = w >= 84
+    const avail = Math.max(10, w - 8 - 9 - (showPm ? 13 : 0) - (showTok ? 9 : 0))
+    const longest = Math.min(44, Math.max(10, ...historyRuns.map(n => cellWidth(n.label))))
+    let nameW = Math.min(longest, Math.max(16, avail - 14))
+    let outW = avail - nameW - 2
+    if (outW < 12) { outW = 0; nameW = avail }
+    return { showTok, showPm, nameW, outW }
+  }
+  const historyRow = (it: Item, i: number, w: number): Row => {
+    if (it.kind === 'header') {
+      const folds = it.isOpen !== undefined
+      return {
+        segs: [seg(' '), ...(folds ? [seg(`${it.isOpen ? T.fold.open : T.fold.closed} `, C.muted)] : []), seg(it.text, C.ink, true), seg(`   ${it.note ?? ''}`, C.faint),
+          ...(folds ? [seg(it.isOpen ? '   o hides them' : '   o shows them', C.faint)] : [])],
+        ...(folds ? { hit: [{ x0: 0, x1: w, act: () => set({ olderOpen: !s.olderOpen }) }] } : {}),
+      }
+    }
+    if (it.kind !== 'node') return { segs: [] }
+    const n = it.node
+    const on = i === sel && mode === 'agents'
+    const k = historyCols(w)
+    const said = outcomeOf(n) || noReportReason(n)
+    const rows = fileRows(scopeNodes(nodes, { kind: 'node', id: n.id }))
+    const pm: Seg[] = rows.length ? pmSegs(rows.reduce((a, r) => a + r.added, 0), rows.reduce((a, r) => a + r.removed, 0)) : [seg('—', C.faint)]
+    const tok = runTokens(nodes, n)
+    const name = fit(n.label, k.nameW)
+    const out = k.outW ? fit(said, k.outW) : ''
+    return {
+      bg: on ? C.selBg : undefined,
+      segs: [
+        cursorSeg(on), seg(' '), cell2(statusIcon(n), T.status[n.status].color), seg(' '), cell2(kindGlyph(T, n)), seg(' '),
+        seg(name, on ? C.ink : C.soft, on), seg(' '.repeat(Math.max(0, k.nameW - cellWidth(name)))),
+        ...(k.outW ? [seg('  '), seg(out, C.muted), seg(' '.repeat(Math.max(0, k.outW - cellWidth(out))))] : []),
+        ...(k.showPm ? [seg(' '), seg(' '.repeat(Math.max(0, 12 - width(pm)))), ...pm] : []),
+        seg(' '), seg(padStart(duration(elapsed(n)), 8), C.muted),
+        ...(k.showTok ? [seg(' '), seg(padStart(tok ? kTokens(tok) : '', 8), C.faint)] : []),
+      ],
+    }
+  }
   const nameWidth = Math.min(32, Math.max(8, ...files.map(f => cellWidth(names.get(f.path) ?? ''))))
   const fileRow = (it: FileItem, i: number, w: number): Row => {
     const on = i === sel
@@ -950,7 +1185,9 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     ['space  ← →', 'fold or unfold in the tree; ← goes up to the parent'], ['v', 'view: tree, board, timeline'],
     ['i', 'next thing that needs a look'], ['h l', 'live · history, or the views of a run'], ['1 2', 'live, history'],
     ['a c o', 'agents, changes, output'], ['n p', 'next, previous file in a diff'], ['b  ⌫', 'back'],
-    ['f', 'filter: all, running, failed'], ['s', 'group the run list'], ['r', 'this repo · all repos (history)'],
+    ['f', 'filter: all, running, failed · history: all, failed, changed files'], ['s', 'group the run list'],
+    ['/', 'search history: names and outcomes; enter keeps, esc clears'], ['o', 'show or hide history older than a week'],
+    ['r', 'this repo · all repos (history)'],
     ['wheel', 'move, or scroll'], ['?', 'close this help'],
   ]
   const bodyList: Row[] = (() => {
@@ -958,8 +1195,13 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
       return [{ segs: [] }, ...KEYS_HELP.map(([k, what]) => ({ segs: [seg(padEnd(k, 14), C.ink, true), seg(what, C.muted)] }))]
     }
     if (mode === 'agents') {
+      if (isHistoryPage && matchCount === 0 && (s.query || s.hfilter !== 'all')) {
+        return [{ segs: [] }, { segs: [seg(' '), seg(s.query ? `No runs match "${s.query}".` : `No runs: ${HISTORY_FILTER_NAMES[s.hfilter]}.`, C.muted)] },
+          { segs: [seg(' '), seg(s.query ? '⌫ edits the search; esc clears it.' : 'f shows all runs again.', C.faint)] }]
+      }
       if (agentItems.length === 0) return emptyRows(listW)
-      return agentItems.slice(first, first + bodyRows).map((it, k) => agentRow(it, first + k, listW))
+      const draw = isHistoryPage ? historyRow : agentRow
+      return agentItems.slice(first, first + bodyRows).map((it, k) => draw(it, first + k, listW))
     }
     if (body) return [body.rows[0]!, ...body.rows.slice(1 + first, 1 + first + Math.max(1, bodyRows - 1))]
     if (mode === 'files') {
@@ -990,7 +1232,12 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   }
   const tabsRow: Row = (() => {
     const t = tabRow([[`Live ${running}`, s.tab === 'live', () => switchTab('live')], [`History ${histTops.length}`, s.tab === 'history', () => switchTab('history')]])
-    if (run) t.segs.push(seg('   ›  ', C.faint), seg(run.label, C.soft, true))
+    if (run && isHistory) {
+      // a replay: the crumb leads back to the History page
+      const x = width(t.segs) + 3
+      t.segs.push(seg('   '), seg('‹ History', C.accent), seg('  ›  ', C.faint), seg(run.label, C.soft, true))
+      t.hit.push({ x0: x, x1: x + cellWidth('‹ History'), act: () => back() })
+    } else if (run) t.segs.push(seg('   ›  ', C.faint), seg(run.label, C.soft, true))
     return t
   })()
   // the lens switch, at the right of the caption: all three when there is room, else the current one
@@ -1014,9 +1261,12 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     let left: { segs: Seg[]; hit: Hit[] }
     if (!run) {
       const where = s.onlyRepo && props.repo ? `this repo${noRepoRuns ? ` (${noRepoRuns} older without a repo: r for all)` : ''}` : 'all repos'
-      const what = !isHistory ? (running ? `${running} running` : 'Nothing running') : `${today} finished today   ·   ${where}`
+      const what = !isHistory ? (running ? `${running} running` : 'Nothing running')
+        : `${where}${s.hfilter !== 'all' ? `   ·   ${HISTORY_FILTER_NAMES[s.hfilter]}` : ''}${today ? `   ·   ${today} today` : ''}`
       const header = !isHistory ? T.words.live : T.words.history
-      left = { segs: [seg(header, C.ink, true), seg('   '), seg(`${what}${s.group !== 'none' ? `   ·   ${GROUP_NAMES[s.group]}` : ''}${s.filter !== 'all' ? `   ·   ${s.filter} only` : ''}`, C.muted)], hit: [] }
+      const grouping = !isHistory && s.group !== 'none' ? `   ·   ${GROUP_NAMES[s.group]}` : ''
+      const filtering = !isHistory && s.filter !== 'all' ? `   ·   ${s.filter} only` : ''
+      left = { segs: [seg(header, C.ink, true), seg('   '), seg(`${what}${grouping}${filtering}`, C.muted)], hit: [] }
     } else {
       left = tabRow([['Agents', view === 'agents', () => go('agents')], [`Changes ${files.length}`, view === 'changes', () => go('changes')], ['Output', view === 'output', () => go('output')]])
     }
@@ -1033,8 +1283,12 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   })()
   const nextLens = LENS_NAMES[LENSES[(LENSES.indexOf(lens) + 1) % LENSES.length]!].toLowerCase()
   const insightKey: [string, string][] = shownInsights.length ? [['i', 'insight']] : []
+  const nextFilter = HISTORY_FILTER_NAMES[HISTORY_FILTERS[(HISTORY_FILTERS.indexOf(s.hfilter) + 1) % HISTORY_FILTERS.length]!]
   const keyList: [string, string][] = mode === 'help' ? [['?', 'close']]
-    : !run && mode === 'agents' ? [['j k', 'move'], ['enter', 'open'], ['space', 'fold'], ['v', nextLens], ...insightKey, ['c', 'changes'], ['h l', 'live · history'], ['s', 'group'], ...(isHistory ? [['r', s.onlyRepo ? 'all repos' : 'this repo'] as [string, string]] : []), ['?', 'help']]
+    : s.searching ? [['type', 'search'], ['enter', 'keep'], ['esc', 'clear'], ['⌫', 'delete'], ['↑ ↓', 'move']]
+    : isHistoryPage && mode === 'agents' ? [['j k', 'move'], ['enter', 'open'], ['/', 'search'], ['f', nextFilter], ['o', s.olderOpen ? 'hide older' : 'older'],
+      ['v', nextLens], ['r', s.onlyRepo ? 'all repos' : 'this repo'], ['h l', 'live · history'], ['?', 'help']]
+    : !run && mode === 'agents' ?[['j k', 'move'], ['enter', 'open'], ['space', 'fold'], ['v', nextLens], ...insightKey, ['c', 'changes'], ['h l', 'live · history'], ['s', 'group'], ...(isHistory ? [['r', s.onlyRepo ? 'all repos' : 'this repo'] as [string, string]] : []), ['?', 'help']]
       : mode === 'agents' ? [['j k', 'move'], ['enter', 'open'], ['← →', 'fold'], ['v', nextLens], ...insightKey, ['h l', 'views'], ['b', 'back'], ['?', 'help']]
         : isLens ? [['j k', 'card'], ['enter', 'open'], ['v', nextLens], ...insightKey, ...(run ? [['h l', 'views'], ['b', 'back']] as [string, string][] : [['h l', 'live · history']] as [string, string][]), ['?', 'help']]
           : mode === 'files' ? [['j k', 'move'], ['enter', 'diff'], ['h l', 'views'], ['b', 'back'], ['?', 'help']]

@@ -472,27 +472,25 @@ test('from 140 columns the list and the detail sit side by side', async ($, on) 
   const both = rows.find(r => r.some(l => l.text === 'Build the explainer') && r.some(l => l.text === ' │ '))
   expect(both).toBeDefined()
   const divider = both!.find(l => l.text === ' │ ')!.x
-  expect(rows.some(r => r.some(l => l.text === 'Outcome   ' || l.text.startsWith('Outcome')) && r.some(l => l.text.startsWith('Outcome') && l.x > divider))).toBe(true)
+  // right of the divider, the selected run's report opens with its Result
+  expect(rows.some(r => r.some(l => l.text.startsWith('Result') && l.x > divider))).toBe(true)
   await ui.unmount()
 })
 
-test('the run list keeps start and duration in fixed columns', async ($, on) => {
+test('the History page keeps names and durations in fixed columns', async ($, on) => {
   const ui = await historyPane($, on)
   await ui.resize({ in: KEY, columns: 110, rows: 24 })
   const rows = contentRows(await ui.drawn({ in: KEY })).map(r => leaves(r))
-  const ends = rows.flatMap(r => {
+  const runRows = rows.filter(r => r.some(l => ['Build the explainer', 'Map nark-os agents and memory', 'Review changed files across dimensions'].includes(l.text)))
+  expect(runRows.length).toBe(3)
+  const ends = runRows.flatMap(r => {
     const d = r.find(l => /^ *(\d+m \d\ds|\d+s)$/.test(l.text) && l.text.length === 8)
     return d ? [d.x + cellWidth(d.text)] : []
   })
   expect(ends.length).toBe(3)
   expect(new Set(ends).size).toBe(1)
-  const listRows = rows.filter(r => r.some(l => /^ *(\d+m \d\ds|\d+s)$/.test(l.text) && l.text.length === 8))
-  const starts = listRows.flatMap(r => {
-    const c = r.find(l => /^ *\d{1,2}:\d\d [AP]M$/.test(l.text))
-    return c ? [c.x + cellWidth(c.text)] : []
-  })
-  expect(starts.length).toBe(3)
-  expect(new Set(starts).size).toBe(1)
+  const names = runRows.map(r => r.find(l => ['Build the explainer', 'Map nark-os agents and memory', 'Review changed files across dimensions'].includes(l.text))!.x)
+  expect(new Set(names).size).toBe(1)
   await ui.unmount()
 })
 
@@ -660,4 +658,259 @@ test('insights from data: quiet, overlap, failures, slow phase, tokens', () => {
   const kinds = insights(all, all, now).map(i => i.kind)
   expect(kinds).toEqual(['quiet', 'overlap', 'failed', 'slow', 'tokens'])
   expect(insights(all, all, now).find(i => i.kind === 'slow')!.text).toMatch(/^Verify took \d+% of the time$/)
+})
+
+// ── phase 3: the History page and the finished-run report ─────────────────
+
+import { historyStats, sparkline } from '../hooks/history'
+import { CAP_ALL, CAP_FINAL, CAP_TASK, REPORT_SYSTEM, parseReport } from '../hooks/report'
+
+const NOW = new Date(2026, 9, 5, 15, 0, 0).getTime()
+const HOUR = 3_600_000
+const DAYMS = 86_400_000
+const hrun = (id: string, label: string, ago: number, over: Record<string, unknown> = {}) =>
+  ({ id, kind: 'agent', label, status: 'done', startedAt: NOW - ago, endedAt: NOW - ago + 30_000, tools: 2, repo: '/repo/a', ...over })
+const days = [
+  hrun('d1', 'Fix the login redirect', HOUR, { summary: 'Login now redirects to the saved page.' }),
+  hrun('d2', 'Rerun the flaky suite', 2 * HOUR, { status: 'failed' }),
+  hrun('d3', 'Map the billing module', DAYMS, { summary: 'Billing has three entry points.', tokens: 21_000 }),
+  hrun('d4', 'Port the tree pane', 3 * DAYMS, { summary: 'The pane draws in the new frame.', changes: { '/repo/a/src/view.tsx': { edits: 2, added: 40, removed: 12 } } }),
+  hrun('d5', 'Old cleanup', 10 * DAYMS, { summary: 'Removed dead flags.' }),
+  hrun('d6', 'Older audit', 12 * DAYMS, { summary: 'Found two stale caches.' }),
+]
+
+async function historyAt($: Engine, on: On, history: unknown[], columns = 110) {
+  mock.clock(on, { now: NOW })
+  mock.store(on, { history })
+  on('process.run', inRepoA)
+  const ui = await $.ui.mount({ plugin: 'agent-tree', surface: 'terminal', ...PANE })
+  await ui.resize({ in: KEY, columns, rows: 34 })
+  await ui.key({ in: KEY, key: '2' })
+  return ui
+}
+const textRows = async (ui: { drawn: (s: { in: string }) => Promise<unknown> }) =>
+  contentRows(await ui.drawn({ in: KEY })).map(r => leaves(r).map(l => l.text).join(''))
+
+test('History groups runs by day; Older starts folded and o opens it', async ($, on) => {
+  const ui = await historyAt($, on, days)
+  for (const day of ['Today', 'Yesterday', 'This week', 'Older']) expect(await ui.find({ in: KEY, text: day })).toBeDefined()
+  expect(await ui.find({ in: KEY, text: /2 runs · 1 with failures/ })).toBeDefined()
+  expect(await ui.find({ in: KEY, text: 'Fix the login redirect' })).toBeDefined()
+  expect(await ui.find({ in: KEY, text: 'Old cleanup' })).toBeUndefined()
+  await ui.key({ in: KEY, key: 'o' })
+  expect(await ui.find({ in: KEY, text: 'Old cleanup' })).toBeDefined()
+  expect(await ui.find({ in: KEY, text: 'Older audit' })).toBeDefined()
+  // each row carries its run's result
+  expect(await ui.find({ in: KEY, text: /Login now redirects/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('History header numbers and a sparkline whose domain comes from the data', async ($, on) => {
+  expect(sparkline([0, 1, 2, 4]).glyphs).toBe('▁▂▃▇')
+  expect(sparkline([0, 0, 0]).glyphs).toBe('▁▁▁')
+  expect(sparkline([3, 3]).glyphs).toBe('▇▇')
+  const st = historyStats(days as never, NOW)
+  expect(st.runs).toBe(6)
+  expect(st.okPct).toBe(83) // 5 of 6 finished OK
+  expect(st.tokens).toBe(21_000)
+  expect(st.perDay).toEqual([0, 0, 0, 1, 0, 1, 2]) // 6 days ago … today
+  const ui = await historyAt($, on, days)
+  const rows = await textRows(ui)
+  const head = rows.find(r => r.includes('finished OK'))
+  expect(head).toContain('6 runs')
+  expect(head).toContain('83% finished OK')
+  expect(head).toContain('21.0k tokens')
+  expect(head).toContain(sparkline(st.perDay).glyphs)
+  expect(head).toContain('0 to 2')
+  await ui.unmount()
+})
+
+test('/ searches names and outcomes; esc clears the search', async ($, on) => {
+  const ui = await historyAt($, on, days)
+  await ui.key({ in: KEY, key: '/' })
+  for (const ch of 'billing') await ui.key({ in: KEY, key: ch })
+  expect(await ui.find({ in: KEY, text: 'Map the billing module' })).toBeDefined()
+  expect(await ui.find({ in: KEY, text: 'Fix the login redirect' })).toBeUndefined()
+  expect(await ui.find({ in: KEY, text: /1 match/ })).toBeDefined()
+  // an outcome matches too: "redirects" is only in d1's result
+  await ui.key({ in: KEY, key: 'escape' })
+  await ui.key({ in: KEY, key: '/' })
+  for (const ch of 'redirects') await ui.key({ in: KEY, key: ch })
+  expect(await ui.find({ in: KEY, text: 'Fix the login redirect' })).toBeDefined()
+  expect(await ui.find({ in: KEY, text: 'Map the billing module' })).toBeUndefined()
+  await ui.key({ in: KEY, key: 'return' }) // keeps the search, typing stops
+  await ui.key({ in: KEY, key: 'escape' })
+  expect(await ui.find({ in: KEY, text: 'Map the billing module' })).toBeDefined()
+  expect(await ui.find({ in: KEY, text: /match/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('f cycles History through all, failed and changed files', async ($, on) => {
+  const ui = await historyAt($, on, days)
+  await ui.key({ in: KEY, key: 'f' })
+  expect(await ui.find({ in: KEY, text: 'Rerun the flaky suite' })).toBeDefined()
+  expect(await ui.find({ in: KEY, text: 'Fix the login redirect' })).toBeUndefined()
+  expect(await ui.find({ in: KEY, text: /failed only/ })).toBeDefined()
+  await ui.key({ in: KEY, key: 'f' })
+  expect(await ui.find({ in: KEY, text: 'Port the tree pane' })).toBeDefined()
+  expect(await ui.find({ in: KEY, text: 'Rerun the flaky suite' })).toBeUndefined()
+  await ui.key({ in: KEY, key: 'f' })
+  expect(await ui.find({ in: KEY, text: 'Fix the login redirect' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a History run opens as a replay with a ‹ History crumb', async ($, on) => {
+  const ui = await historyAt($, on, days)
+  await ui.key({ in: KEY, key: 'return' })
+  expect(await ui.find({ in: KEY, text: '‹ History' })).toBeDefined()
+  expect(await ui.find({ in: KEY, text: /Tree/ })).toBeDefined()
+  await ui.key({ in: KEY, key: 'b' })
+  expect(await ui.find({ in: KEY, text: '‹ History' })).toBeUndefined()
+  expect(await ui.find({ in: KEY, text: 'Yesterday' })).toBeDefined()
+  await ui.unmount()
+})
+
+const reported = [
+  { id: 'g9', kind: 'group', label: 'Fix shopping cart calculation bugs', status: 'done', startedAt: NOW - HOUR, endedAt: NOW - HOUR + 9000, tools: 0, repo: '/repo/a',
+    report: { result: 'Cart totals, prices and email checks are fixed.', problems: [{ text: 'cart.ts has two edits; check the merge.', source: 'Fix cart total quantities' }], next: 'Run the cart tests once.', model: 'Haiku', tokens: 640 } },
+  { id: 'm1', kind: 'agent', parentId: 'g9', label: 'Fix cart total quantities', status: 'done', startedAt: NOW - HOUR, endedAt: NOW - HOUR + 8000, tools: 3, tokens: 12_000,
+    summary: 'Quantities now multiply.', changes: { '/repo/a/src/cart.ts': { edits: 1, added: 2, removed: 1 } } },
+  { id: 'm2', kind: 'agent', parentId: 'g9', label: 'Format prices with two decimals', status: 'done', startedAt: NOW - HOUR + 100, endedAt: NOW - HOUR + 9000, tools: 3, tokens: 9000,
+    summary: 'Prices show two decimals.', changes: { '/repo/a/src/cart.ts': { edits: 1, added: 1, removed: 1 }, '/repo/a/src/price.ts': { edits: 1, added: 2, removed: 1 } } },
+]
+
+test('the report keeps its order and leaves out empty sections', async ($, on) => {
+  const ui = await historyAt($, on, reported)
+  await ui.key({ in: KEY, key: 'return' })
+  await ui.key({ in: KEY, key: 'o' })
+  const rows = await textRows(ui)
+  const at = (label: string) => rows.findIndex(r => new RegExp(`^ *${label} {2,}`).test(r.replace(/^[│ ]+/, '')))
+  const order = ['Result', 'Parts', 'Problems', 'Next', 'Changed', 'Totals'].map(at)
+  expect(order.every(i => i >= 0)).toBe(true)
+  expect([...order].sort((a, b) => a - b)).toEqual(order)
+  expect(at('Decisions')).toBe(-1)
+  expect(at('Done')).toBe(-1) // a run with parts shows them, not a Done list
+  expect(rows.some(r => r.includes('Report') && r.includes('Haiku · 640 tokens'))).toBe(true)
+  expect(rows.some(r => r.includes('check the merge. [Fix cart total quantities]'))).toBe(true)
+  // Changed and Totals are the records' own numbers
+  expect(rows.some(r => r.includes('src/cart.ts') && r.includes('+3 −2'))).toBe(true)
+  expect(rows.some(r => r.includes('2 agents') && r.includes('2 files') && r.includes('+5 −3') && r.includes('21.0k tokens'))).toBe(true)
+  await ui.unmount()
+})
+
+test('Changed and Totals come from records, whatever the model says', async ($, on) => {
+  const prompts: { system?: string; prompt: string }[] = []
+  on('process.run', inRepoA)
+  on('tool.call', { tool: 'Edit' }, () => ({ result: { filePath: 'x' } }) as never)
+  on('fs.read', (_$, e) => (e.path === '/repo/src/cart.ts' ? { value: 'let total = 0\nconst qty = item.qty ?? 1\n' } : { deny: 'missing' }))
+  on('turn.complete', () => ({ text: '' }) as never)
+  on('model.complete', (_$, e) => {
+    prompts.push({ system: e.system, prompt: e.prompt })
+    return { value: { isAnswered: true, usage, text: '{"result":"Fixed the cart.","changed":"999 files","totals":"99 agents","done":["Quantities multiply."]}' } } as never
+  })
+  await oneCat($, on)
+  await $.tool.call(edit('cat1', 'cart.ts', 'let total = 0', 'let total = 0\nconst qty = item.qty ?? 1'))
+  await $.turn.complete({ agentId: 'cat1', answer: 'I changed cart.ts so quantities multiply.', durationMs: 1000, isAborted: false, reason: 'answer', usage } as never)
+  const ui = await $.ui.mount({ plugin: 'agent-tree', surface: 'terminal', ...PANE })
+  await ui.key({ in: KEY, key: '2' })
+  await ui.key({ in: KEY, key: 'return' })
+  await ui.key({ in: KEY, key: 'o' })
+  const rows = await textRows(ui)
+  expect(rows.some(r => r.includes('Fixed the cart.'))).toBe(true)
+  expect(rows.some(r => r.includes('Changed') && r.includes('src/cart.ts'))).toBe(true)
+  expect(rows.some(r => r.includes('Totals') && r.includes('1 agent') && r.includes('1 file'))).toBe(true)
+  expect(rows.some(r => /999|99 agents/.test(r))).toBe(false)
+  // the prompt carries the STE rules
+  expect(prompts.some(p => p.system === REPORT_SYSTEM)).toBe(true)
+  await ui.unmount()
+})
+
+test('the report prompt holds the STE writing rules', () => {
+  for (const rule of ['One idea per sentence', 'At most 15 words', 'active voice', 'plain words', 'exactly', 'No hedging, no filler', 'Do not invent', '"unknown"', 'At most 3 items', 'At most 120 words']) {
+    expect(REPORT_SYSTEM).toContain(rule)
+  }
+  expect(parseReport('```json\n{"result":"It **found** 3.","problems":[{"text":"a","source":"b"},"c"],"decisions":[],"next":""}\n```'))
+    .toEqual({ result: 'It found 3.', problems: [{ text: 'a', source: 'b' }, { text: 'c' }] })
+  expect(parseReport('{"outcome":"Old shape.","points":["x"]}')).toEqual({ result: 'Old shape.', done: ['x'] })
+})
+
+test('a workflow reports bottom-up: phases from agents, the run from its phases, every call capped', async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  const prompts: string[] = []
+  on('classic.Stop', () => ({}))
+  on('ui.open', () => ({ value: { isPlaced: true as const } }))
+  on('ui.toast', () => ({ value: undefined }) as never)
+  on('agent.list', () => ({ value: [] }) as never)
+  on('turn.complete', () => ({ text: '' }) as never)
+  on('tool.call', { tool: 'Workflow' }, () => ({ result: { status: 'async_launched', taskId: 'task-ob', workflowName: 'order-book', transcriptDir: '/runs/ob' } }) as never)
+  const journal = [JSON.stringify({ type: 'launched' }), ...['Design', 'Design', 'Core', 'Core'].flatMap((phase, i) => [
+    JSON.stringify({ type: 'started', agentId: `ob${i}`, label: `${phase.toLowerCase()}:${i}`, phase }), JSON.stringify({ type: 'result', agentId: `ob${i}` })])].join('\n')
+  on('fs.read', (_$, e) => {
+    if (e.path.endsWith('journal.jsonl')) return { value: journal }
+    if (e.path.endsWith('.meta.json')) return { value: JSON.stringify({ agentType: 'general-purpose', model: 'haiku' }) }
+    return { deny: 'missing' }
+  })
+  on('model.complete', (_$, e) => {
+    prompts.push(e.prompt)
+    const phase = /Part: the (\w+) phase/.exec(e.prompt)?.[1]
+    const text = phase ? `{"result":"PART-${phase} is complete.","problems":[{"text":"one edge case is open","source":"${phase.toLowerCase()}:1"}]}`
+      : e.prompt.includes('Part reports, one per phase') ? '{"result":"The order book builds.","decisions":[{"text":"Prices are integer ticks.","source":"Design phase"}]}'
+        : e.prompt.includes('Report:') ? '{"result":"AGENT-SUMMARY done."}' : 'A title'
+    return { value: { isAnswered: true, usage, text } } as never
+  })
+  await $.tool.call({ tool: 'Workflow', tool_use_id: 'tu-ob', script: "export const meta = { name: 'order-book', description: 'Build an order book engine' }" } as never)
+  await clock.advance(2100)
+  for (let i = 0; i < 4; i++) {
+    await $.turn.complete({ agentId: `ob${i}`, answer: `RAW-AGENT-TEXT-${i} ${'x'.repeat(10_000)}`, durationMs: 1000, isAborted: false, reason: 'answer', usage } as never)
+  }
+  await $.classic.Stop({ stop_hook_active: false, background_tasks: [] } as never)
+  for (let k = 0; k < 6; k++) await clock.advance(10)
+  const runPrompt = prompts.find(p => p.includes('Part reports, one per phase'))
+  expect(runPrompt).toBeDefined()
+  expect(runPrompt).toContain('PART-Design is complete.')
+  expect(runPrompt).toContain('PART-Core is complete.')
+  expect(runPrompt).not.toContain('RAW-AGENT-TEXT')
+  const partPrompts = prompts.filter(p => p.startsWith('Workflow:'))
+  expect(partPrompts.length).toBe(2)
+  // a phase reads its agents' short reports, not their raw text
+  expect(partPrompts.every(p => p.includes('AGENT-SUMMARY done.') && !p.includes('RAW-AGENT-TEXT'))).toBe(true)
+  expect(prompts.every(p => p.length <= CAP_TASK + CAP_ALL + CAP_FINAL + 400)).toBe(true)
+  // the replay: the run's Parts list each phase's own result, and a phase row opens its part report
+  const ui = await $.ui.mount({ plugin: 'agent-tree', surface: 'terminal', ...PANE })
+  await ui.key({ in: KEY, key: '2' })
+  await ui.key({ in: KEY, key: 'return' })
+  await ui.key({ in: KEY, key: 'o' })
+  const out = await textRows(ui)
+  expect(out.some(r => r.includes('The order book builds.'))).toBe(true)
+  expect(out.some(r => r.includes('Design') && r.includes('PART-Design is complete.'))).toBe(true)
+  expect(out.some(r => r.includes('Prices are integer ticks. [Design phase]'))).toBe(true)
+  await ui.key({ in: KEY, key: 'a' })
+  await ui.key({ in: KEY, key: 'j' }) // the Design phase row
+  await ui.key({ in: KEY, key: 'o' })
+  const part = await textRows(ui)
+  expect(part.some(r => r.includes('PART-Design is complete.'))).toBe(true)
+  expect(part.some(r => r.includes('one edge case is open [design:1]'))).toBe(true)
+  await ui.unmount()
+})
+
+test('an old run shows the report shape from what it kept, with no model call', async ($, on) => {
+  let calls = 0
+  on('model.complete', () => { calls++; return { value: { isAnswered: false, reason: 'empty-reply', usage } } as never })
+  const old = [hrun('o1', 'Summarize agent-tree mod files', HOUR, { summary: 'The mod has three hook files.', points: ['view.tsx draws the pane', 'list.ts builds rows'] })]
+  const ui = await historyAt($, on, old)
+  await ui.key({ in: KEY, key: 'return' })
+  await ui.key({ in: KEY, key: 'o' })
+  const rows = await textRows(ui)
+  expect(rows.some(r => r.includes('Result') && r.includes('The mod has three hook files.'))).toBe(true)
+  expect(rows.some(r => r.includes('Done') && r.includes('view.tsx draws the pane'))).toBe(true)
+  expect(rows.some(r => r.includes('from what the run kept'))).toBe(true)
+  expect(calls).toBe(0)
+  await ui.unmount()
+})
+
+test('the /agent-tree command says how to start', async ($, on) => {
+  on('ui.open', () => ({ value: { isPlaced: true as const } }))
+  const r = await $.command.run({ command: 'agent-tree', args: '' } as never)
+  expect(JSON.stringify(r)).toContain('? shows the keys')
 })

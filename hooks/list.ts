@@ -374,7 +374,8 @@ export type Item =
   | { kind: 'node'; node: AgentNode; species: Species; depth: number; guide?: string; fold?: Fold }
   | { kind: 'phase'; key: string; wfId: string; phase: string; isOpen: boolean; total: number; done: number; failed: number; running: number; stopped: number; guide?: string }
   | { kind: 'more'; key: string; count: number; guide?: string }
-  | { kind: 'header'; text: string; count?: number }
+  // a heading over rows; History's day headings carry a note and Older folds
+  | { kind: 'header'; text: string; count?: number; note?: string; isOpen?: boolean }
   // a line under a cluster's row: its aspects, a file overlap, its combined outcome
   | { kind: 'info'; tone: 'chips' | 'warn' | 'outcome'; nodeId: string; guide: string }
 

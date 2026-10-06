@@ -1,12 +1,13 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine, Register, Timer } from 'claude-code'
 
-import type { AgentNode, EditRecord, NodeStatus, ViewProps } from '../types'
+import type { AgentNode, EditRecord, NodeStatus, Report, ViewProps } from '../types'
 import { themeOf, type ThemeName } from './theme'
 import {
   changesLine, cleanTitle, describeTool, diffCounts, editRecords, editedPath, fileRows, firstPrompt, firstSentence, handbackOf, fitProps,
-  lineDiff, parseDigest, parseJournal, readableResult, scopeNodes, transcriptEdits,
+  lineDiff, parseJournal, pipeline, scopeNodes, transcriptEdits,
 } from './list'
+import { REPORT_SYSTEM, parseReport, partInput, runInput } from './report'
 
 const PANE = 'agent-tree'
 // Bumped when the view module's props or state change shape: a new key mounts a
@@ -251,33 +252,83 @@ async function announce($: Engine, id: string) {
   $.ui.toast(`${head}: ${n.label} · ${changesLine(rows)}`)
 }
 
-// The digest: what a finished agent or workflow found or did, in words a person
-// scans. One Haiku call when it finishes, so the words are there before anyone looks.
-const DIGEST_SYSTEM = 'You digest an AI agent report for a dashboard a person scans. Reply with JSON only: {"outcome": "one plain sentence: what it found or changed", "points": ["up to 3 short key findings, each under 12 words"]}. No markdown.'
+// The report: what finished work achieved, in short plain sentences a person
+// scans. One Haiku call when it finishes, so the words are there before anyone
+// looks. Written bottom-up: an agent from its own report, a workflow phase from
+// its agents' reports, a cluster or a workflow from its part reports.
+type Completion = { isAnswered: boolean; text?: string; usage?: { input_tokens: number; output_tokens: number } }
+// a reply that is not the asked-for JSON still says something: its first sentence is the result
+function reportFrom(r: Completion | undefined): Report | undefined {
+  if (!r?.isAnswered || !r.text) return undefined
+  const fallback = firstSentence(r.text, 300)
+  const parsed = parseReport(r.text) ?? (fallback ? { result: fallback } : undefined)
+  if (!parsed) return undefined
+  const tokens = r.usage ? r.usage.input_tokens + r.usage.output_tokens : 0
+  return { ...parsed, model: 'Haiku', ...(tokens ? { tokens } : {}) }
+}
+
 async function digest($: Engine, id: string) {
   if (digesting.has(id)) return
   const list = await read($, nodes)
   const n = list.find(x => x.id === id)
   if (!n || n.digested || n.status === 'running') return
   const kids = list.filter(k => k.parentId === id)
-  const report = n.kind === 'group'
-    ? kids.map(k => `- ${k.label}: ${k.summary ?? (k.result ?? '').slice(0, 600)}`).join('\n')
-    : n.kind === 'workflow'
-    ? [n.result ? `Final result: ${readableResult(n.result).slice(0, 1500)}` : '', ...kids.map(k => `- ${k.label} (${k.phase ?? ''}): ${k.summary ?? firstSentence(k.result, 200)}`)].join('\n')
-    : n.result ?? ''
-  if (!report.trim()) { await patch($, id, x => ({ ...x, digested: true })); return }
+  // a cluster's report reads its members' reports: wait until each finished member has one;
+  // a workflow waits for the agent reports still being written, then writes what it has
+  if (n.kind === 'group' && kids.some(k => k.status !== 'running' && !k.digested && k.result)) return
+  if (n.kind === 'workflow' && kids.some(k => digesting.has(k.id))) return
   digesting.add(id)
-  const r = await $.model.complete({
-    model: 'haiku',
-    maxTokens: 220,
-    system: DIGEST_SYSTEM,
-    prompt: `Task: ${(n.prompt ?? n.label).slice(0, 500)}\n\nReport:\n${report.slice(0, 4000)}`,
-  }).catch(() => undefined)
+  if (n.kind === 'workflow') await writeParts($, id, true)
+  const now = await read($, nodes)
+  const node = now.find(x => x.id === id) ?? n
+  const hasInput = node.kind === 'agent' ? !!node.result?.trim() : kids.length > 0 || !!node.result?.trim()
+  const r = hasInput
+    ? await $.model.complete({ model: 'haiku', maxTokens: 400, system: REPORT_SYSTEM, prompt: runInput(node, now) }).catch(() => undefined)
+    : undefined
+  const report = reportFrom(r)
+  await patch($, id, x => ({
+    ...x, digested: true,
+    ...(report ? { report, ...(report.result ? { summary: report.result } : {}), ...(report.done ? { points: report.done } : {}) } : {}),
+  }))
+  // released only once the report is stored, so a second trigger cannot write it twice
   digesting.delete(id)
-  // a reply that is not the asked-for JSON still says something: its first line is the outcome
-  const parsed = r?.isAnswered ? parseDigest(r.text) ?? { outcome: firstSentence(r.text, 300) || undefined } : undefined
-  await patch($, id, x => ({ ...x, digested: true, summary: parsed?.outcome ?? x.summary, points: parsed?.points ?? x.points }))
   await archive($)
+  // an agent's report may be what its cluster, its workflow or its phase was waiting for
+  const parent = node.parentId ? (await read($, nodes)).find(x => x.id === node.parentId) : undefined
+  if (!parent || (parent.kind !== 'group' && parent.kind !== 'workflow')) return
+  if (parent.status !== 'running') { if (!parent.digested) void digest($, parent.id) }
+  else if (parent.kind === 'workflow') void writeParts($, parent.id, false)
+}
+
+// A workflow's phases that have finished get a part report each, read from their
+// agents' reports. While the run goes on, a phase waits until each of its agents
+// has its own short report; when the run ends (`force`), it is written
+// from what there is. A phase that gained agents since its report is written again.
+async function writeParts($: Engine, wfId: string, force: boolean) {
+  const list = await read($, nodes)
+  const wf = list.find(n => n.id === wfId)
+  if (!wf) return
+  for (const p of pipeline(wf, list)) {
+    if (p.running > 0 || p.total === 0) continue
+    const agents = list.filter(k => k.parentId === wfId && (k.phase ?? 'Agents') === p.phase)
+    if (!force && agents.some(k => !k.digested)) continue
+    await partDigest($, wfId, p.phase)
+  }
+}
+
+async function partDigest($: Engine, wfId: string, phase: string) {
+  const key = `${wfId}::${phase}`
+  if (digesting.has(key)) return
+  const list = await read($, nodes)
+  const wf = list.find(n => n.id === wfId)
+  const total = list.filter(k => k.parentId === wfId && (k.phase ?? 'Agents') === phase).length
+  // read now, not when the caller looked: another trigger may have written it meanwhile
+  if (!wf || wf.partReports?.[phase]?.count === total) return
+  digesting.add(key)
+  const r = await $.model.complete({ model: 'haiku', maxTokens: 300, system: REPORT_SYSTEM, prompt: partInput(wf, phase, list) }).catch(() => undefined)
+  const report = reportFrom(r)
+  await patch($, wfId, x => ({ ...x, partReports: { ...x.partReports, [phase]: { ...(report ?? {}), count: total } } }))
+  digesting.delete(key)
 }
 
 type Change = NonNullable<AgentNode['changes']>
@@ -336,7 +387,9 @@ async function archive($: Engine) {
   const repo = await sessionRepo($)
   const fresh = done.flat().map(slim).map(n => (repo && !n.repo ? { ...n, repo } : n))
   const freshIds = new Set(fresh.map(n => n.id))
-  if (fresh.every(f => prev.some(p => p.id === f.id && p.status === f.status && p.label === f.label && p.summary === f.summary && p.parentId === f.parentId))) return
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+  if (fresh.every(f => prev.some(p => p.id === f.id && p.status === f.status && p.label === f.label && p.summary === f.summary && p.parentId === f.parentId
+    && same(p.report, f.report) && same(p.partReports, f.partReports)))) return
   const merged = [...prev.filter(p => !freshIds.has(p.id)), ...fresh]
   const runTops = merged.filter(n => !n.parentId || !merged.some(m => m.id === n.parentId))
   const keep = new Set(runTops.slice(-HISTORY_RUNS).map(n => n.id))
@@ -377,7 +430,7 @@ export const register: Register = (on, options) => {
     }
     await $.ui.open({ id: PANE, title: TITLE })
 
-    return { text: 'Agents pane opened. Click it, then j/k, Enter, h, 1/2.' }
+    return { text: 'Agents pane opened. Click it; ? shows the keys.' }
   })
 
   on('tool.call', { tool: 'Agent' }, (_$, e, next) => {
