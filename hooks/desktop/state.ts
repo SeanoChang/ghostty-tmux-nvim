@@ -5,6 +5,7 @@ import type { DeskUi } from '../../types'
 export const DESK_DEFAULT: DeskUi = {
   tab: 'live', run: null, sel: null, view: 'overview', lens: 'tree', onlyRepo: true, file: null,
   query: '', hfilter: 'all', olderOpen: false, flipped: [], zoom: 'story', traceOffset: 0,
+  confirm: '', note: '', patternsOpen: true,
 }
 
 const oneOf = <T extends string>(x: unknown, all: readonly T[], d: T): T => (all.includes(x as T) ? (x as T) : d)
@@ -27,5 +28,8 @@ export function deskUi(raw: unknown): DeskUi {
     flipped: Array.isArray(s.flipped) ? s.flipped.filter((x): x is string => typeof x === 'string') : [],
     zoom: oneOf(s.zoom, ['story', 'steps', 'raw'] as const, 'story'),
     traceOffset: typeof s.traceOffset === 'number' && Number.isFinite(s.traceOffset) ? Math.max(0, Math.floor(s.traceOffset)) : 0,
+    confirm: oneOf(s.confirm, ['', 'explain', 'patterns'] as const, ''),
+    note: typeof s.note === 'string' ? s.note : '',
+    patternsOpen: s.patternsOpen !== false,
   }
 }

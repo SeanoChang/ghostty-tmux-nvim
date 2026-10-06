@@ -878,6 +878,19 @@ export const register: Register = (on, options) => {
         askTrace: (run, zoom, offset) => void askTrace($, run ? { run, zoom, offset } : {})
           .then(() => update($, desk, s => ({ ...deskUi(s) })))
           .catch(() => undefined),
+        // the same Sonnet jobs as the terminal's e and g, on Full only
+        explain: run => {
+          if (!aiAllows(aiMode, 'sonnet') || explaining.has(run)) return
+          explaining.add(run)
+          void update($, desk, s => ({ ...deskUi(s) }))
+          void explainRun($, run).catch(() => undefined)
+        },
+        patterns: () => {
+          if (!aiAllows(aiMode, 'sonnet') || patternsBusy) return
+          patternsBusy = true
+          void update($, desk, s => ({ ...deskUi(s) }))
+          void writePatterns($).catch(() => undefined)
+        },
       }, columns)
     }
     // the pane body's own height: the viewport is the whole terminal, frame and all

@@ -1,4 +1,5 @@
-import type { AgentNode, NodeStatus, Report } from '../../types'
+import type { AgentNode, Brief, NodeStatus, Report } from '../../types'
+import { ago } from '../ai'
 import { firstSentence, noReportReason, prettyModel, shortPaths, taskText, type FileRow } from '../list'
 import { reportFacts, reportOf, kTokens } from '../report'
 import { DESK, SPRITE_FOR, clip, diffBarSvg, iconSvg, spriteSvg, statusColor, type DeskTokens } from './svg'
@@ -11,6 +12,10 @@ export type Els = Record<string, any>
 export const STATUS_WORD: Record<NodeStatus, string> = { running: 'Running', done: 'Done', failed: 'Failed', killed: 'Stopped' }
 
 export const tokensOf = (theme: 'kitty' | 'minimal'): DeskTokens => DESK[theme]
+
+// Who wrote an AI block, what it cost and how old it is: "Haiku · 900 tokens · 2h ago".
+export const aiLabel = (b: { model?: string; tokens?: number; at?: number } | undefined, now: number): string =>
+  !b?.model ? '' : [b.model, ...(b.tokens ? [`${kTokens(b.tokens)} tokens`] : []), ...(b.at ? [ago(Math.max(0, now - b.at))] : [])].join(' · ')
 
 export function duration(ms: number): string {
   const s = Math.max(0, Math.round(ms / 1000))
@@ -73,13 +78,13 @@ export function Empty(els: Els, t: DeskTokens, title: string, hint: string) {
 // A part of a run: a workflow phase or a cluster member, with its own short result.
 export type Part = { id: string; label: string; status: NodeStatus; result: string; meta?: string }
 
-export function ReportBlock(els: Els, t: DeskTokens, n: AgentNode, all: AgentNode[], now: number, parts: Part[], onPart: (id: string) => void) {
+export function ReportBlock(els: Els, t: DeskTokens, n: AgentNode, all: AgentNode[], now: number, parts: Part[], onPart: (id: string) => void, partsBy = '') {
   const { Box, Text, Button, Svg } = els
   const r: Report | undefined = reportOf(n)
   const facts = reportFacts(all, { kind: 'node', id: n.id }, now)
   const names = shortPaths(facts.files.map(f => f.path))
   const max = Math.max(1, ...facts.files.map(f => f.added + f.removed))
-  const label = r?.model ? `${n.report ? 'Report' : 'Report · from what the run kept'} · ${r.model}${r.tokens ? ` · ${kTokens(r.tokens)} tokens` : ''}` : n.report ? 'Report' : 'Report · from what the run kept'
+  const label = r?.model ? `${n.report ? 'Report' : 'Report · from what the run kept'} · ${aiLabel(r, now)}` : n.report ? 'Report' : 'Report · from what the run kept'
   const row = (name: string, body: unknown) => (
     <Box flexDirection="row" gap={2}>
       <Box width={10}><Text color={t.muted} bold>{name}</Text></Box>
@@ -91,7 +96,7 @@ export function ReportBlock(els: Els, t: DeskTokens, n: AgentNode, all: AgentNod
       <Text color={t.muted}>{label}</Text>
       {row('Result', <Text bold>{r?.result ?? (n.status === 'running' ? 'Still working.' : noReportReason(n))}</Text>)}
       {parts.length
-        ? row('Parts', <Box flexDirection="column">{parts.map(p => (
+        ? row('Parts', <Box flexDirection="column">{partsBy ? <Text color={t.muted}>Part reports · {partsBy}</Text> : null}{parts.map(p => (
           <Box key={`part-${p.id}`} flexDirection="row" gap={1}>
             {StatusMark(els, t, p.status)}
             <Button key={`part:${p.id}`} plain label={clip(p.label, 34)} onPress={() => onPart(p.id)} />
@@ -122,6 +127,48 @@ export function ReportBlock(els: Els, t: DeskTokens, n: AgentNode, all: AgentNod
       ].filter(Boolean).join('  ·  ')}</Text>)}
     </Box>
   )
+}
+
+// "Explain this run": Sonnet's brief, with who wrote it, or that it is being written.
+export function BriefBlock(els: Els, t: DeskTokens, b: Brief | undefined, writing: boolean, now: number) {
+  const { Box, Text } = els
+  const row = (name: string, body: unknown) => (
+    <Box flexDirection="row" gap={2}>
+      <Box width={16}><Text color={t.muted} bold>{name}</Text></Box>
+      <Box flexDirection="column" flexGrow={1}>{body}</Box>
+    </Box>
+  )
+  const label = writing ? 'Explain · writing… (Sonnet)' : `Explain · ${aiLabel(b, now)}`
+  return (
+    <Box flexDirection="column" gap={1} borderStyle="round" borderColor={t.accent} paddingX={1}>
+      <Text color={t.accent} bold>{label}</Text>
+      {!b
+        ? <Text color={t.muted}>Sonnet is reading the run's reports, steps and insights.</Text>
+        : (
+          <Box flexDirection="column" gap={1}>
+            {b.goal ? row('Goal', <Text>{b.goal}</Text>) : null}
+            {b.who?.length ? row('Who did what', <Box flexDirection="column">{b.who.map((w, i) => <Text key={`who-${i}`}>• {w}</Text>)}</Box>) : null}
+            {b.connected ? row('How it connected', <Text>{b.connected}</Text>) : null}
+            {b.outcome ? row('Outcome', <Text bold>{b.outcome}</Text>) : null}
+            {b.open?.length ? row('Open issues', <Box flexDirection="column">{b.open.map((o, i) => <Text key={`open-${i}`} color={t.bad}>• <Text>{o}</Text></Text>)}</Box>) : null}
+          </Box>
+        )}
+    </Box>
+  )
+}
+
+// The brief as Markdown, for the Output view.
+export function briefMarkdown(b: Brief | undefined, writing: boolean, now: number): string {
+  const head = `**Explain** · _${writing ? 'writing… (Sonnet)' : aiLabel(b, now)}_`
+  if (!b) return `${head}\n\n_Sonnet is reading the run's reports, steps and insights._`
+  return [
+    head,
+    b.goal ? `**Goal:** ${b.goal}` : '',
+    b.who?.length ? `**Who did what**\n\n${b.who.map(w => `- ${w}`).join('\n')}` : '',
+    b.connected ? `**How it connected:** ${b.connected}` : '',
+    b.outcome ? `**Outcome:** ${b.outcome}` : '',
+    b.open?.length ? `**Open issues**\n\n${b.open.map(o => `- ${o}`).join('\n')}` : '',
+  ].filter(Boolean).join('\n\n')
 }
 
 // The Output view: the full report as Markdown, then the task it was given.

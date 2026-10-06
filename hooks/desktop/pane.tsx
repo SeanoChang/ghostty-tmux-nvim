@@ -1,4 +1,4 @@
-import type { AgentNode, DeskUi, EditRecord, TraceZoom, ViewProps } from '../../types'
+import type { AgentNode, DeskUi, EditRecord, PatternsDoc, TraceZoom, ViewProps } from '../../types'
 import { HISTORY_FILTERS, HISTORY_FILTER_NAMES, historyItems, historyStats, outcomeOf, runTokens } from '../history'
 import { COLUMNS, aspects, boardLanes, insights, rollup, timelineRows, type Lane } from '../lens'
 import {
@@ -9,7 +9,7 @@ import { kTokens, reportOf } from '../report'
 import { ZOOMS, ZOOM_NAMES } from '../trace'
 import { unifiedHunks } from '../view'
 import {
-  Chip, Empty, KindMark, ReportBlock, SectionLabel, StatusMark, STATUS_WORD, changeTotals, clock, duration, metaLine, num,
+  BriefBlock, Chip, Empty, KindMark, ReportBlock, SectionLabel, StatusMark, STATUS_WORD, aiLabel, briefMarkdown, changeTotals, clock, duration, metaLine, num,
   outputMarkdown, tokensOf, type Els, type Part,
 } from './parts'
 import { clip, diffBarSvg, iconSvg, sparkSvg, spriteSvg, statusBarSvg, statusColor, timelineSvg, traceSvg, walkSvg, type DeskTokens, type TimeBar } from './svg'
@@ -23,6 +23,9 @@ export type DeskActs = {
   set: (patch: Partial<DeskUi>) => void
   openDiff: (path: string | null) => void
   askTrace: (run: string | null, zoom: TraceZoom, offset: number) => void
+  /** Ask Sonnet for a run's brief, or for patterns across runs (the hooks check ai: full again). */
+  explain: (run: string) => void
+  patterns: () => void
 }
 
 // Below this many columns nothing fits well, so the pane says so. The desktop
@@ -71,7 +74,7 @@ type Ctx = {
 }
 
 const openRun = (c: Ctx, id: string | null) => {
-  c.acts.set({ run: id, sel: null, view: 'overview', file: null, traceOffset: 0, ...(id === null && c.ui.lens === 'trace' ? { lens: 'tree' as const } : {}) })
+  c.acts.set({ run: id, sel: null, view: 'overview', file: null, traceOffset: 0, confirm: '', note: '', ...(id === null && c.ui.lens === 'trace' ? { lens: 'tree' as const } : {}) })
   if (c.ui.file) c.acts.openDiff(null)
   if (c.ui.lens === 'trace') c.acts.askTrace(id, c.ui.zoom, 0)
 }
@@ -124,21 +127,58 @@ function Header(c: Ctx, history: AgentNode[], run: AgentNode | undefined) {
         <Text color={t.ok}>✓ {cnt.done} done</Text>
         <Text color={cnt.failed + cnt.stopped ? t.bad : t.muted}>✕ {cnt.failed + cnt.stopped} failed or stopped</Text>
         <Text color={t.muted}>{ui.onlyRepo && c.data.repo ? shortHome(c.data.repo) : 'all repos'}</Text>
+        <Box flexDirection="row" gap={1} alignItems="center">
+          {Chip(c.els, t, `AI · ${c.data.ai ?? 'cheap'}`, c.data.ai === 'off' ? t.muted : t.accent)}
+          <Text color={t.muted}>change in /config</Text>
+        </Box>
       </Box>
+      {ui.note ? <Text color={t.warn}>{ui.note}</Text> : null}
       {run
         ? (
           <Box flexDirection="row" gap={1} alignItems="center">
             <Button key="back" plain label={`‹ ${ui.tab === 'live' ? 'Live' : 'History'}`} onPress={() => openRun(c, null)} />
             <Text color={t.muted}>›</Text>
             <Text bold>{clip(run.label, 80)}</Text>
+            {ExplainButton(c, run)}
           </Box>
         )
         : null}
+      {run && ui.confirm === 'explain' ? ConfirmRow(c, 'explain', 'Write a new brief? It asks Sonnet again.', () => c.acts.explain(run.id)) : null}
     </Box>
   )
 }
 
 const shortHome = (p: string) => p.replace(/^\/Users\/[^/]+/, '~')
+
+const isFull = (c: Ctx) => c.data.ai === 'full'
+
+// Explain this run: Sonnet, on Full only; with a brief there it asks first.
+function ExplainButton(c: Ctx, run: AgentNode) {
+  const { Button } = c.els
+  const writing = !!c.data.explaining?.includes(run.id)
+  const label = writing ? 'Writing the brief…' : run.explain ? 'Regenerate brief' : 'Explain this run'
+  return (
+    <Button key="explain" label={label} hotkey="e" {...(isFull(c) ? {} : { dimColor: true })} onPress={() => {
+      if (!isFull(c)) return c.acts.set({ note: 'Explain needs ai: full in /config. It asks Sonnet, on demand.' })
+      if (writing) return
+      if (run.explain) return c.acts.set({ confirm: 'explain', note: '', view: 'overview' })
+      c.acts.set({ confirm: '', note: '', view: 'overview' })
+      c.acts.explain(run.id)
+    }} />
+  )
+}
+
+// A small confirm row for a Sonnet job that would write over what is there.
+function ConfirmRow(c: Ctx, what: 'explain' | 'patterns', question: string, go: () => void) {
+  const { Box, Text, Button } = c.els
+  return (
+    <Box flexDirection="row" gap={2} alignItems="center">
+      <Text color={c.t.warn}>{question}</Text>
+      <Button key={`${what}:yes`} label="Yes, ask Sonnet" variant="primary" onPress={() => { c.acts.set({ confirm: '' }); go() }} />
+      <Button key={`${what}:no`} plain label="Cancel" onPress={() => c.acts.set({ confirm: '' })} />
+    </Box>
+  )
+}
 
 // ── the insights strip: what needs a look, each naming the item it is about ──
 function Insights(c: Ctx, run: AgentNode | undefined) {
@@ -246,11 +286,13 @@ function HistoryPage(c: Ctx, history: AgentNode[]) {
         {stat(`${stats.okPct}%`, 'finished OK')}
         {stat(kTokens(stats.tokens), 'tokens')}
         <Svg source={sparkSvg(t, stats.perDay)} alt={`Runs per day for 7 days: ${stats.perDay.join(', ')}`} width={140} height={34} />
+        {c.data.ai !== 'off' || c.data.aiWeek ? stat(kTokens(c.data.aiWeek ?? 0), 'AI tokens this week') : null}
       </Box>
       <Box flexDirection="row" gap={2} alignItems="center" flexWrap="wrap">
         {Segmented(c, 'hfilter', HISTORY_FILTERS.map(f => [f, HISTORY_FILTER_NAMES[f].replace(/^./, ch => ch.toUpperCase())] as [typeof f, string]), ui.hfilter, v => c.acts.set({ hfilter: v }))}
         {ui.query ? <Button key="clear-search" plain label={`Clear “${clip(ui.query, 20)}”`} onPress={() => c.acts.set({ query: '' })} /> : null}
       </Box>
+      {!ui.query && ui.hfilter === 'all' ? Patterns(c, c.data.patterns) : null}
       {items.length === 0
         ? Empty(c.els, t, t.name === 'kitty' ? 'No cats have come home yet.' : 'No finished runs yet.', ui.query || ui.hfilter !== 'all' ? 'Nothing matches the search or filter.' : 'Finished runs land here.')
         : (
@@ -272,6 +314,52 @@ function HistoryPage(c: Ctx, history: AgentNode[]) {
             })}
           </Box>
         )}
+    </Box>
+  )
+}
+
+// Patterns across runs: Sonnet's cards, each with its evidence, one thing to try, and its runs.
+function Patterns(c: Ctx, doc: PatternsDoc | undefined) {
+  const { Box, Text, Button, Svg } = c.els
+  const { t, ui } = c
+  if (!isFull(c) && !doc) return null
+  const busy = !!c.data.patternsBusy
+  const label = busy ? 'writing… (Sonnet)' : doc ? aiLabel(doc, c.now) : 'Sonnet looks for what repeats across your runs.'
+  const press = () => {
+    if (!isFull(c)) return c.acts.set({ note: 'Patterns need ai: full in /config. They ask Sonnet, on demand.' })
+    if (busy) return
+    if (doc) return c.acts.set({ confirm: 'patterns', note: '', patternsOpen: true })
+    c.acts.set({ confirm: '', note: '', patternsOpen: true })
+    c.acts.patterns()
+  }
+  return (
+    <Box flexDirection="column" gap={1} borderStyle="round" borderColor={t.rule} paddingX={1}>
+      <Box flexDirection="row" gap={1} alignItems="center" flexWrap="wrap">
+        {doc ? <Button key="patterns:fold" plain label={ui.patternsOpen ? '▾' : '▸'} onPress={() => c.acts.set({ patternsOpen: !ui.patternsOpen })} /> : null}
+        <Text bold>Patterns across runs</Text>
+        <Box flexGrow={1}><Text color={t.muted}>{label}</Text></Box>
+        <Button key="patterns:go" label={busy ? 'Looking…' : doc ? 'Regenerate' : 'Find patterns'} hotkey="g" {...(isFull(c) ? {} : { dimColor: true })} onPress={press} />
+      </Box>
+      {ui.confirm === 'patterns' ? ConfirmRow(c, 'patterns', 'Look for patterns again? It asks Sonnet again.', () => c.acts.patterns()) : null}
+      {doc && ui.patternsOpen
+        ? doc.cards.map((card, i) => (
+          <Box key={`pat-${i}`} flexDirection="column" paddingLeft={1}>
+            <Box flexDirection="row" gap={1} alignItems="center">
+              <Svg source={iconSvg('warn', t.warn, 14)} alt="Pattern" width={14} height={14} />
+              <Text bold>{card.title}</Text>
+            </Box>
+            {card.evidence ? <Text color={t.muted}>{card.evidence}</Text> : null}
+            {card.try ? <Text><Text color={t.accent} bold>Try: </Text>{card.try}</Text> : null}
+            {card.runs.length
+              ? (
+                <Box flexDirection="row" gap={1} flexWrap="wrap">
+                  {card.runs.map(r => <Button key={`prun:${i}:${r.id}`} plain label={`↳ ${clip(r.label, 40)}`} onPress={() => openRun(c, r.id)} />)}
+                </Box>
+              )
+              : null}
+          </Box>
+        ))
+        : null}
     </Box>
   )
 }
@@ -497,6 +585,7 @@ function Trace(c: Ctx, run: AgentNode, cols: number) {
       <Box flexDirection="row" gap={2} alignItems="center">
         {zoomBar}
         <Text color={t.muted}>{tr.lanes.length} lanes · {tr.total} events{tr.missing ? ` · ${tr.missing} transcript${tr.missing === 1 ? '' : 's'} no longer on disk` : ''}{tr.loading ? ' · reading…' : ''}</Text>
+        {ui.zoom === 'story' && tr.storyBy ? <Text color={t.accent}>Story · {tr.storyBy}</Text> : null}
       </Box>
       <Svg source={traceSvg(t, lanes, marks, from, to, w)} alt={`Trace of ${tr.lanes.length} agents`} width={w} height={svgH} />
       <Box flexDirection="column">
@@ -569,13 +658,26 @@ function Detail(c: Ctx, run: AgentNode, target: Target) {
     const md = target.kind === 'node'
       ? outputMarkdown(target.node, childrenOf(c.all, target.node.id))
       : [`### ${target.phase} phase`, target.wf.partReports?.[target.phase]?.result ?? '', ...scope.map(k => `- **${k.label}** — ${reportOf(k)?.result ?? noReportReason(k)}`)].filter(Boolean).join('\n\n')
-    body = <Markdown key="output" text={md} />
+    const brief = target.kind === 'node' && target.node.id === run.id && (run.explain || c.data.explaining?.includes(run.id))
+      ? `${briefMarkdown(run.explain, !!c.data.explaining?.includes(run.id), c.now)}\n\n---\n\n`
+      : ''
+    body = <Markdown key="output" text={brief + md} />
   } else if (head) {
-    body = ReportBlock(c.els, t, head, c.all, c.now, parts, id => c.acts.set({ sel: id, file: null }))
+    const prs = Object.values(head.partReports ?? {}).filter(p => p.model)
+    const partsBy = prs.length ? aiLabel({ model: prs[0]!.model, tokens: prs.reduce((a, p) => a + (p.tokens ?? 0), 0), at: Math.max(...prs.map(p => p.at ?? 0)) || undefined }, c.now) : ''
+    const writing = !!c.data.explaining?.includes(head.id)
+    const showBrief = head.id === run.id && (head.explain || writing)
+    body = (
+      <Box flexDirection="column" gap={1}>
+        {showBrief ? BriefBlock(c.els, t, head.explain, writing, c.now) : null}
+        {ReportBlock(c.els, t, head, c.all, c.now, parts, id => c.acts.set({ sel: id, file: null }), partsBy)}
+      </Box>
+    )
   } else {
     const pr = target.kind === 'phase' ? target.wf.partReports?.[target.phase] : undefined
     body = (
       <Box flexDirection="column" gap={1}>
+        {pr?.model ? <Text color={t.muted}>Part report · {aiLabel(pr, c.now)}</Text> : null}
         <Text bold>{pr?.result ?? `${counts(scope).done} of ${scope.length} agents done.`}</Text>
         {pr?.problems?.map((p, i) => <Text key={`pp-${i}`} color={t.bad}>• <Text>{p.text}</Text></Text>)}
         {SectionLabel(c.els, t, 'Agents')}

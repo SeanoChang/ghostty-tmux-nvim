@@ -231,6 +231,12 @@ export type DeskUi = {
   flipped: string[]
   zoom: TraceZoom
   traceOffset: number
+  /** A Sonnet job that asks first because it would write over what is there. */
+  confirm: '' | 'explain' | 'patterns'
+  /** One line the view says after a press (how to turn the AI on, and the like). */
+  note: string
+  /** Whether History shows the patterns across runs. */
+  patternsOpen: boolean
 }
 
 declare module 'claude-code' {
