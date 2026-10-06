@@ -13,6 +13,17 @@
         "minimal",
         "kitty"
       ]
+    },
+    "ai": {
+      "type": "string",
+      "title": "AI help",
+      "description": "What the Agents pane may ask a model to write: off (no model calls), cheap (Haiku writes reports, titles and story steps) or full (also Sonnet on demand: e explains a run, g finds patterns in History)",
+      "default": "cheap",
+      "options": [
+        "off",
+        "cheap",
+        "full"
+      ]
     }
   }
 }

@@ -4,7 +4,7 @@ import { describeTool, editedPath } from './list'
 // The trail behind a run: what each agent did, in order, and how the agents
 // handed work to each other. Read from transcripts when a trace opens; pure here.
 
-export type TraceKind = 'spawn' | 'tool' | 'edit' | 'message' | 'handback' | 'report' | 'fail' | 'quiet' | 'note'
+export type TraceKind = 'spawn' | 'tool' | 'edit' | 'message' | 'handback' | 'report' | 'fail' | 'quiet' | 'note' | 'step'
 
 export type TraceEvent = {
   agentId: string
@@ -272,7 +272,9 @@ export const MAIN = 'main'
 // Builds a run's trace: its lanes, and its rows at a zoom.
 // `events` holds what each agent's transcript gave; an agent missing from it has no
 // transcript on disk, and its lane is built from what its node holds.
-export function buildTrace(run: AgentNode, scope: AgentNode[], events: Map<string, TraceEvent[]>, now: number, zoom: TraceZoom): { lanes: TraceLane[]; rows: TraceRow[]; missing: number } {
+// `stories`: agents whose steps a model wrote; at the story zoom those steps stand in for
+// their tool calls, spread over the time the agent ran, between its real edits and hand-backs.
+export function buildTrace(run: AgentNode, scope: AgentNode[], events: Map<string, TraceEvent[]>, now: number, zoom: TraceZoom, stories?: Map<string, string[]>): { lanes: TraceLane[]; rows: TraceRow[]; missing: number } {
   const agents = scope.filter(n => n.kind === 'agent').sort((a, b) => a.startedAt - b.startedAt)
   const isAgent = new Set(agents.map(a => a.id))
   const parentLane = (n: AgentNode) => (n.parentId && isAgent.has(n.parentId) ? n.parentId : MAIN)
@@ -294,7 +296,16 @@ export function buildTrace(run: AgentNode, scope: AgentNode[], events: Map<strin
     const spawn = parentEvents?.find(e => e.kind === 'spawn' && !linked.has(e) && (e.to === a.id || e.to === a.label))
     if (spawn) { linked.add(spawn); spawn.to = a.id }
     else all.push({ agentId: parent, at: a.startedAt, kind: 'spawn', name: 'spawn', summary: `started ${a.label}`, to: a.id, ...(excerpt(a.prompt) ? { input: excerpt(a.prompt) } : {}) })
-    if (own) {
+    // a story outlives its transcript: its steps show even when the file is gone
+    const story = zoom === 'story' ? stories?.get(a.id) : undefined
+    if (story?.length) {
+      const t0 = a.startedAt
+      const t1 = Math.max(t0 + story.length, a.endedAt ?? now)
+      story.forEach((text, i) => all.push({ agentId: a.id, at: Math.round(t0 + ((t1 - t0) * (i + 0.5)) / story.length), kind: 'step', name: 'step', summary: text }))
+    }
+    if (own && story?.length) {
+      all.push(...own.filter(e => e.kind !== 'tool'))
+    } else if (own) {
       all.push(...own)
     } else {
       missing++

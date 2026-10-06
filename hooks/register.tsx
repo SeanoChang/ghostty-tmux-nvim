@@ -1,14 +1,19 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine, Register, Timer } from 'claude-code'
 
-import type { AgentNode, EditRecord, NodeStatus, Report, TraceRow, TraceView, TraceZoom, ViewProps } from '../types'
+import type { AgentNode, EditRecord, NodeStatus, PatternsDoc, Report, TraceRow, TraceView, TraceZoom, ViewProps } from '../types'
 import { themeOf, type ThemeName } from './theme'
 import {
   changesLine, cleanTitle, describeTool, diffCounts, editRecords, editedPath, fileRows, firstPrompt, firstSentence, handbackOf, fitProps,
-  lineDiff, parseJournal, pipeline, scopeNodes, transcriptEdits,
+  lineDiff, parseJournal, pipeline, scopeNodes, transcriptEdits, folderKey, runKey,
 } from './list'
-import { REPORT_SYSTEM, parseReport, partInput, runInput } from './report'
+import { REPORT_SYSTEM, kTokens, parseReport, partInput, runInput } from './report'
 import { ZOOMS, buildTrace, finishParse, newParse, parseLines, traceWindow, type TraceEvent } from './trace'
+import {
+  AI_MODES, EXPLAIN_SYSTEM, PATTERNS_SYSTEM, STORY_SYSTEM, TIER_NAME, aiAllows, explainInput, parseBrief, parsePatterns,
+  parseStory, patternsInput, storyInput, type AiMode, type Tier,
+} from './ai'
+import { insights } from './lens'
 
 const PANE = 'agent-tree'
 // Bumped when the view module's props or state change shape: a new key mounts a
@@ -23,6 +28,17 @@ const edits = atom({ plugin: 'agent-tree', key: 'edits' } as const, [])
 const wheel = atom({ plugin: 'agent-tree', key: 'wheel' } as const, { seq: 0, by: 0 })
 // The look chosen in /config, read from the options at each load.
 let themeName: ThemeName = 'minimal'
+// What the AI layer may do, from /config: off, cheap (Haiku) or full (Haiku, and Sonnet on demand).
+let aiMode: AiMode = 'cheap'
+// A new seq redraws the pane after an AI block was written where the view does not subscribe (the store).
+const aiSeq = atom({ plugin: 'agent-tree', key: 'ai' } as const, { seq: 0 })
+// Runs whose brief Sonnet is writing, whether patterns are being written, agents whose story is.
+const explaining = new Set<string>()
+let patternsBusy = false
+const storying = new Set<string>()
+const AI_SPEND = 'aiSpend'
+const PATTERNS = 'patterns'
+const WEEK = 7 * 86_400_000
 const EDITS = 'edits'
 const EDITS_KEPT = 400
 const EDIT_TEXT = 6000
@@ -36,7 +52,7 @@ const backfilled = new Set<string>()
 // What the view asked for: which run, how close, and where it reads.
 let traceReq: { run: string; zoom: TraceZoom; offset: number } | null = null
 // The run's trace as last built (all its rows), and the window the view gets.
-let traceBuilt: { key: string; at: number; lanes: TraceView['lanes']; rows: TraceRow[]; missing: number } | undefined
+let traceBuilt: { key: string; at: number; lanes: TraceView['lanes']; rows: TraceRow[]; missing: number; storyBy?: string } | undefined
 let traceSnap: TraceView | undefined
 let tracer: Timer | undefined
 // A new seq redraws the pane after the trace was read again.
@@ -213,14 +229,13 @@ async function titleGroup($: Engine, id: string) {
   const kids = list.filter(k => k.parentId === id)
   if (!g || kids.length === 0 || g.titledFor === kids.length) return
   titling.add(id)
-  const r = await $.model.complete({
-    model: 'haiku',
+  const r = await ask($, 'haiku', {
     maxTokens: 30,
     system: 'You name a batch of AI agents that work toward one goal, so a person can scan a list of runs. Reply with the title only: 3 to 7 words, starting with a verb, naming the shared goal, no quotes, no final period.',
     prompt: `Agents and their tasks:\n${kids.map(k => `- ${k.label}: ${(k.prompt ?? '').slice(0, 300)}`).join('\n')}`,
-  }).catch(() => undefined)
+  })
   titling.delete(id)
-  const title = r?.isAnswered ? cleanTitle(r.text) : undefined
+  const title = r?.isAnswered && r.text ? cleanTitle(r.text) : undefined
   await patch($, id, x => ({ ...x, label: title ?? x.label, titledFor: kids.length, prompt: kids.map(k => k.label).join('; ') }))
   void titleGroup($, id)
 }
@@ -232,13 +247,12 @@ async function titleAgents($: Engine) {
   const todo = list.filter(n => n.kind === 'agent' && n.parentId && wfIds.has(n.parentId) && !n.titled && n.prompt && !titling.has(n.id))
   for (const n of todo.slice(0, Math.max(0, TITLE_CONCURRENCY - titling.size))) {
     titling.add(n.id)
-    void $.model.complete({
-      model: 'haiku',
+    void ask($, 'haiku', {
       maxTokens: 30,
       system: 'You name tasks given to AI agents so a person can scan a list of them. Reply with the title only: 3 to 7 words, starting with a verb, no quotes, no final period.',
       prompt: `Task:\n${(n.prompt ?? '').slice(0, 800)}`,
     }).then(async r => {
-      const title = r.isAnswered ? cleanTitle(r.text) : undefined
+      const title = r?.isAnswered && r.text ? cleanTitle(r.text) : undefined
       await patch($, n.id, x => ({ ...x, titled: true, label: title ?? x.label }))
     }).catch(() => patch($, n.id, x => ({ ...x, titled: true }))).finally(() => {
       titling.delete(n.id)
@@ -272,19 +286,146 @@ async function announce($: Engine, id: string) {
   $.ui.toast(`${head}: ${n.label} · ${changesLine(rows)}`)
 }
 
+// Every model call goes through here: the /config setting decides who may write,
+// and what each call spent is kept for the History header.
+type Completion = { isAnswered: boolean; text?: string; usage?: { input_tokens: number; output_tokens: number } }
+async function ask($: Engine, tier: Tier, req: { system: string; prompt: string; maxTokens: number }): Promise<Completion | undefined> {
+  if (!aiAllows(aiMode, tier)) return undefined
+  const r = (await $.model.complete({ model: tier, ...req }).catch(() => undefined)) as Completion | undefined
+  const used = tokensOf(r)
+  // kept off the caller's path, one write at a time, so two calls never lose each other's spend
+  if (used) spendChain = spendChain.then(() => noteSpend($, used)).catch(() => undefined)
+  return r
+}
+let spendChain: Promise<void> = Promise.resolve()
+const tokensOf = (r: Completion | undefined) => (r?.usage ? r.usage.input_tokens + r.usage.output_tokens : 0)
+
+async function noteSpend($: Engine, tokens: number) {
+  const at = await $.clock.now()
+  const prev = ((await $.store.get(AI_SPEND)) as { at: number; tokens: number }[] | undefined) ?? []
+  await $.store.set(AI_SPEND, [...prev.filter(x => at - x.at < WEEK), { at, tokens }].slice(-2000))
+}
+
+async function aiWeek($: Engine): Promise<number> {
+  const at = await $.clock.now()
+  const list = ((await $.store.get(AI_SPEND)) as { at: number; tokens: number }[] | undefined) ?? []
+  return list.filter(x => at - x.at < WEEK).reduce((a, x) => a + x.tokens, 0)
+}
+
+const bumpAi = ($: Engine) => update($, aiSeq, s => ({ seq: (s?.seq ?? 0) + 1 }))
+
+// A node's change lands where the node is: the live list, History, or both.
+async function patchAnywhere($: Engine, id: string, fn: (n: AgentNode) => AgentNode) {
+  if ((await read($, nodes)).some(n => n.id === id)) await patch($, id, fn)
+  const history = ((await $.store.get(HISTORY)) as AgentNode[] | undefined) ?? []
+  if (history.some(n => n.id === id)) await $.store.set(HISTORY, history.map(n => (n.id === id ? fn(n) : n)))
+  await bumpAi($)
+}
+
+// Live nodes over History: a finished run can sit in both for a moment, and the live copy wins.
+async function allNodes($: Engine): Promise<AgentNode[]> {
+  const byId = new Map<string, AgentNode>()
+  for (const n of [...(((await $.store.get(HISTORY)) as AgentNode[] | undefined) ?? []), ...(await read($, nodes))]) byId.set(n.id, n)
+  return [...byId.values()]
+}
+
+// ── story steps: Haiku turns an agent's tool log into a few steps when it ends ──
+async function writeStory($: Engine, id: string) {
+  if (!aiAllows(aiMode, 'haiku') || storying.has(id)) return
+  const all = await read($, nodes)
+  const n = all.find(x => x.id === id)
+  if (!n || n.kind !== 'agent' || n.status === 'running' || n.story || n.storyTried) return
+  storying.add(id)
+  try {
+    await writeStoryOf($, n, all)
+  } catch {
+    // no transcript to read, or the read failed: the story is not asked again
+    await patch($, id, x => ({ ...x, storyTried: true })).catch(() => undefined)
+  } finally {
+    storying.delete(id)
+  }
+}
+
+async function writeStoryOf($: Engine, n: AgentNode, all: AgentNode[]) {
+  const id = n.id
+  await locateTranscripts($, [n], all)
+  const path = transcriptAt.get(id)
+  const at = await $.clock.now()
+  const events = path ? await transcriptEvents($, id, path, false, at) : undefined
+  if (!events?.length) { await patch($, id, x => ({ ...x, storyTried: true })); return }
+  const r = await ask($, 'haiku', { maxTokens: 400, system: STORY_SYSTEM, prompt: storyInput(n, events) })
+  const lines = r?.isAnswered && r.text ? parseStory(r.text) : undefined
+  const tokens = tokensOf(r)
+  await patch($, id, x => ({ ...x, storyTried: true, ...(lines ? { story: { steps: lines, model: TIER_NAME.haiku, ...(tokens ? { tokens } : {}), at } } : {}) }))
+  // an open trace reads the new steps at its next build
+  traceBuilt = undefined
+  await archive($)
+}
+
+// ── Explain this run: Sonnet, on demand, cached on the run ──────────────────
+// The caller has put the run in `explaining`; it leaves when the brief is stored.
+async function explainRun($: Engine, runId: string) {
+  try {
+    const all = await allNodes($)
+    const run = all.find(n => n.id === runId)
+    if (!run) return
+    const now = await $.clock.now()
+    const seen = insights(scopeNodes(all, { kind: 'node', id: run.id }), all, now).map(i => i.text)
+    const r = await ask($, 'sonnet', { maxTokens: 900, system: EXPLAIN_SYSTEM, prompt: explainInput(run, all, seen) })
+    const brief = r?.isAnswered && r.text ? parseBrief(r.text) : undefined
+    const tokens = tokensOf(r)
+    if (brief) await patchAnywhere($, runId, x => ({ ...x, explain: { ...brief, model: TIER_NAME.sonnet, ...(tokens ? { tokens } : {}), at: now } }))
+  } finally {
+    explaining.delete(runId)
+    await bumpAi($).catch(() => undefined)
+  }
+}
+
+// ── patterns across runs: Sonnet, on demand or weekly, one set per repository ──
+async function patternsKey($: Engine): Promise<string> {
+  const repo = await sessionRepo($)
+  return repo ? folderKey(repo) : 'all'
+}
+
+async function patternsDoc($: Engine): Promise<PatternsDoc | undefined> {
+  const docs = ((await $.store.get(PATTERNS)) as Record<string, PatternsDoc> | undefined) ?? {}
+  return docs[await patternsKey($)]
+}
+
+// The caller has set `patternsBusy`; it is cleared when the cards are stored.
+async function writePatterns($: Engine) {
+  try {
+    const key = await patternsKey($)
+    const history = ((await $.store.get(HISTORY)) as AgentNode[] | undefined) ?? []
+    const ids = new Set(history.map(n => n.id))
+    const runs = history.filter(n => (!n.parentId || !ids.has(n.parentId)) && (key === 'all' || runKey(n) === key))
+      .sort((a, b) => b.startedAt - a.startedAt)
+    if (runs.length < 2) return
+    const r = await ask($, 'sonnet', { maxTokens: 1200, system: PATTERNS_SYSTEM, prompt: patternsInput(runs, history) })
+    const cards = r?.isAnswered && r.text ? parsePatterns(r.text, runs) : undefined
+    const tokens = tokensOf(r)
+    if (cards) {
+      const docs = ((await $.store.get(PATTERNS)) as Record<string, PatternsDoc> | undefined) ?? {}
+      await $.store.set(PATTERNS, { ...docs, [key]: { cards, model: TIER_NAME.sonnet, ...(tokens ? { tokens } : {}), at: await $.clock.now() } })
+    }
+  } finally {
+    patternsBusy = false
+    await bumpAi($).catch(() => undefined)
+  }
+}
+
 // The report: what finished work achieved, in short plain sentences a person
 // scans. One Haiku call when it finishes, so the words are there before anyone
 // looks. Written bottom-up: an agent from its own report, a workflow phase from
 // its agents' reports, a cluster or a workflow from its part reports.
-type Completion = { isAnswered: boolean; text?: string; usage?: { input_tokens: number; output_tokens: number } }
 // a reply that is not the asked-for JSON still says something: its first sentence is the result
-function reportFrom(r: Completion | undefined): Report | undefined {
+function reportFrom(r: Completion | undefined, at: number): Report | undefined {
   if (!r?.isAnswered || !r.text) return undefined
   const fallback = firstSentence(r.text, 300)
   const parsed = parseReport(r.text) ?? (fallback ? { result: fallback } : undefined)
   if (!parsed) return undefined
   const tokens = r.usage ? r.usage.input_tokens + r.usage.output_tokens : 0
-  return { ...parsed, model: 'Haiku', ...(tokens ? { tokens } : {}) }
+  return { ...parsed, model: TIER_NAME.haiku, ...(tokens ? { tokens } : {}), at }
 }
 
 async function digest($: Engine, id: string) {
@@ -302,10 +443,8 @@ async function digest($: Engine, id: string) {
   const now = await read($, nodes)
   const node = now.find(x => x.id === id) ?? n
   const hasInput = node.kind === 'agent' ? !!node.result?.trim() : kids.length > 0 || !!node.result?.trim()
-  const r = hasInput
-    ? await $.model.complete({ model: 'haiku', maxTokens: 400, system: REPORT_SYSTEM, prompt: runInput(node, now) }).catch(() => undefined)
-    : undefined
-  const report = reportFrom(r)
+  const r = hasInput ? await ask($, 'haiku', { maxTokens: 400, system: REPORT_SYSTEM, prompt: runInput(node, now) }) : undefined
+  const report = reportFrom(r, await $.clock.now())
   await patch($, id, x => ({
     ...x, digested: true,
     ...(report ? { report, ...(report.result ? { summary: report.result } : {}), ...(report.done ? { points: report.done } : {}) } : {}),
@@ -339,16 +478,21 @@ async function writeParts($: Engine, wfId: string, force: boolean) {
 async function partDigest($: Engine, wfId: string, phase: string) {
   const key = `${wfId}::${phase}`
   if (digesting.has(key)) return
-  const list = await read($, nodes)
-  const wf = list.find(n => n.id === wfId)
-  const total = list.filter(k => k.parentId === wfId && (k.phase ?? 'Agents') === phase).length
-  // read now, not when the caller looked: another trigger may have written it meanwhile
-  if (!wf || wf.partReports?.[phase]?.count === total) return
+  // taken before the first await, so a second trigger cannot slip in while this one reads
   digesting.add(key)
-  const r = await $.model.complete({ model: 'haiku', maxTokens: 300, system: REPORT_SYSTEM, prompt: partInput(wf, phase, list) }).catch(() => undefined)
-  const report = reportFrom(r)
-  await patch($, wfId, x => ({ ...x, partReports: { ...x.partReports, [phase]: { ...(report ?? {}), count: total } } }))
-  digesting.delete(key)
+  try {
+    const list = await read($, nodes)
+    const wf = list.find(n => n.id === wfId)
+    const total = list.filter(k => k.parentId === wfId && (k.phase ?? 'Agents') === phase).length
+    // read now, not when the caller looked: another trigger may have written it meanwhile
+    if (!wf || wf.partReports?.[phase]?.count === total) return
+    const r = await ask($, 'haiku', { maxTokens: 300, system: REPORT_SYSTEM, prompt: partInput(wf, phase, list) })
+    const report = reportFrom(r, await $.clock.now())
+    await patch($, wfId, x => ({ ...x, partReports: { ...x.partReports, [phase]: { ...(report ?? {}), count: total } } }))
+  } finally {
+    // released only once the report is stored
+    digesting.delete(key)
+  }
 }
 
 type Change = NonNullable<AgentNode['changes']>
@@ -431,7 +575,7 @@ async function archive($: Engine) {
   const freshIds = new Set(fresh.map(n => n.id))
   const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
   if (fresh.every(f => prev.some(p => p.id === f.id && p.status === f.status && p.label === f.label && p.summary === f.summary && p.parentId === f.parentId
-    && same(p.report, f.report) && same(p.partReports, f.partReports)))) return
+    && same(p.report, f.report) && same(p.partReports, f.partReports) && same(p.story, f.story) && same(p.explain, f.explain)))) return
   const merged = [...prev.filter(p => !freshIds.has(p.id)), ...fresh]
   const runTops = merged.filter(n => !n.parentId || !merged.some(m => m.id === n.parentId))
   const keep = new Set(runTops.slice(-HISTORY_RUNS).map(n => n.id))
@@ -450,6 +594,7 @@ async function archive($: Engine) {
 
 export const register: Register = (on, options) => {
   themeName = options?.theme === 'kitty' ? 'kitty' : 'minimal'
+  aiMode = AI_MODES.includes(options?.ai as AiMode) ? (options!.ai as AiMode) : 'cheap'
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'agent-tree',
@@ -459,6 +604,12 @@ export const register: Register = (on, options) => {
     await backfillReports($)
     await backfillRepos($)
     if ((await read($, nodes)).some(n => n.status === 'running')) ensureTimers($)
+    // patterns written more than a week ago are written again, in the background, on Full only
+    const doc = aiAllows(aiMode, 'sonnet') ? await patternsDoc($) : undefined
+    if (doc && (await $.clock.now()) - doc.at > WEEK && !patternsBusy) {
+      patternsBusy = true
+      void writePatterns($).catch(() => undefined)
+    }
 
     return next(e)
   })
@@ -612,6 +763,7 @@ export const register: Register = (on, options) => {
         })
       }
       void digest($, agentId)
+      void writeStory($, agentId).catch(() => undefined)
       await announce($, agentId)
       await settleGroups($)
       await archive($)
@@ -673,7 +825,7 @@ export const register: Register = (on, options) => {
   // The view asks for a file's diff when it opens one, and lets it go when it closes it.
   // It asks for a run's trace the same way: which run, how close, where it reads.
   on('ui.message', async ($, e, next) => {
-    const data = e.data as { type?: unknown; path?: unknown; run?: unknown; zoom?: unknown; offset?: unknown } | null
+    const data = e.data as { type?: unknown; path?: unknown; run?: unknown; zoom?: unknown; offset?: unknown; regenerate?: unknown } | null
     if (e.requestId !== PANE) return next(e)
     if (data?.type === 'diff') {
       diffPath = typeof data.path === 'string' ? data.path : null
@@ -681,6 +833,17 @@ export const register: Register = (on, options) => {
     }
     if (data?.type === 'trace') {
       await askTrace($, data)
+      return { props: await viewProps($) }
+    }
+    // Explain this run and patterns are Sonnet's, on Full only: the view says how to turn them on
+    if (data?.type === 'explain' && typeof data.run === 'string' && aiAllows(aiMode, 'sonnet') && !explaining.has(data.run)) {
+      explaining.add(data.run)
+      void explainRun($, data.run).catch(() => undefined)
+      return { props: await viewProps($) }
+    }
+    if (data?.type === 'patterns' && aiAllows(aiMode, 'sonnet') && !patternsBusy) {
+      patternsBusy = true
+      void writePatterns($).catch(() => undefined)
       return { props: await viewProps($) }
     }
     return next(e)
@@ -707,12 +870,15 @@ export const register: Register = (on, options) => {
 
 async function viewProps($: Engine): Promise<ViewProps> {
   const history = ((await $.store.get(HISTORY)) as AgentNode[] | undefined) ?? []
-  // read so a trace read again redraws the pane
+  // read so a trace read again, or an AI block written to the store, redraws the pane
   await read($, traceSeq)
+  await read($, aiSeq)
+  const patterns = await patternsDoc($)
+  const ai = { ai: aiMode, aiWeek: await aiWeek($), explaining: [...explaining], patternsBusy, ...(patterns ? { patterns } : {}) }
   const trace = traceReq && traceSnap ? { trace: traceSnap } : {}
   // the trace's window takes its share of the props bound first; runs fill the rest
   const room = 90_000 - (trace.trace ? JSON.stringify(trace.trace).length : 0)
-  const base = { ...fitProps({ nodes: await read($, nodes), history, at: await $.clock.now() }, room), ...await repoProp($), theme: themeName, wheel: await read($, wheel), ...trace }
+  const base = { ...fitProps({ nodes: await read($, nodes), history, at: await $.clock.now() }, room - (patterns ? JSON.stringify(patterns).length : 0)), ...await repoProp($), theme: themeName, wheel: await read($, wheel), ...trace, ...ai }
   if (!diffPath) return base
   await backfill($, diffPath, [...history, ...base.nodes])
   const pastEdits = ((await $.store.get(EDITS)) as EditRecord[] | undefined) ?? []
@@ -805,10 +971,13 @@ async function buildRunTrace($: Engine, force: boolean): Promise<boolean> {
       const got = path ? await transcriptEvents($, a.id, path, a.status === 'running', now) : undefined
       if (got) events.set(a.id, got)
     }
-    traceBuilt = { key, at: now, ...buildTrace(run, scope, events, now, req.zoom) }
+    const stories = new Map(agents.flatMap(a => (a.story?.steps.length ? [[a.id, a.story.steps] as [string, string[]]] : [])))
+    const storyTokens = agents.reduce((sum, a) => sum + (a.story?.tokens ?? 0), 0)
+    const storyBy = req.zoom === 'story' && stories.size ? `${TIER_NAME.haiku}${storyTokens ? ` · ${kTokens(storyTokens)} tokens` : ''}` : undefined
+    traceBuilt = { key, at: now, ...buildTrace(run, scope, events, now, req.zoom, stories), ...(storyBy ? { storyBy } : {}) }
   }
   const win = traceWindow(traceBuilt.rows, req.offset, TRACE_WINDOW)
-  traceSnap = { run: run.id, zoom: req.zoom, lanes: traceBuilt.lanes, total: traceBuilt.rows.length, offset: win.offset, rows: win.rows.map(trimRow), missing: traceBuilt.missing }
+  traceSnap = { run: run.id, zoom: req.zoom, lanes: traceBuilt.lanes, total: traceBuilt.rows.length, offset: win.offset, rows: win.rows.map(trimRow), missing: traceBuilt.missing, ...(traceBuilt.storyBy ? { storyBy: traceBuilt.storyBy } : {}) }
   return isLive
 }
 

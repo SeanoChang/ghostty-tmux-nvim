@@ -1,6 +1,6 @@
 import type { ClientModule, ClientSurface, JsonValue } from 'claude-code'
 
-import type { Act, AgentNode, EditRecord, TraceRow, TraceView, TraceZoom, ViewProps, Wheel } from '../types'
+import type { Act, AgentNode, Brief, EditRecord, PatternsDoc, TraceRow, TraceView, TraceZoom, ViewProps, Wheel } from '../types'
 import {
   COLUMNS, LENSES, LENS_NAMES, aspects, boardLanes, columnOf, insights, lensesFor, timelineRows,
   type Column, type Insight, type Lane, type Lens, type TimeRow,
@@ -17,6 +17,7 @@ import {
 } from './history'
 import { kTokens, reportFacts, reportOf, type Facts } from './report'
 import { ZOOMS, ZOOM_NAMES } from './trace'
+import { ago } from './ai'
 
 type Tab = 'live' | 'history'
 type ViewName = 'agents' | 'changes' | 'output'
@@ -63,6 +64,14 @@ type State = {
   traceAsk: string
   traceAskTick: number
   traceAt: number
+  // a short line in the footer (how to turn AI on, "press e again"), and the tick it was set
+  note: string
+  noteTick: number
+  // a second press within a few ticks writes the brief or the patterns again
+  confirm: '' | 'explain' | 'patterns'
+  confirmTick: number
+  // History: whether the patterns across runs show
+  patternsOpen: boolean
 }
 
 const TICK_MS = 500
@@ -73,8 +82,13 @@ const DEFAULT_STATE: State = {
   filter: 'all', group: 'none', flipped: [], showDone: [], tick: 0, atSeen: 0, tickAtSeen: 0, onlyRepo: true, help: false,
   wheelSeen: -1, insight: -1, hfilter: 'all', query: '', searching: false, olderOpen: false,
   zoom: 'story', traceAsk: '', traceAskTick: -100, traceAt: 0,
+  note: '', noteTick: -100, confirm: '', confirmTick: -100, patternsOpen: true,
 }
 const FILTERS: Filter[] = ['all', 'running', 'failed']
+// a note shows for 8 ticks (4 s); a confirm waits 6 ticks (3 s) for the second press
+const NOTE_TICKS = 8
+const CONFIRM_TICKS = 6
+const PATTERNS_TITLE = 'Patterns across runs'
 const VIEWS: ViewName[] = ['agents', 'changes', 'output']
 
 const arrayOf = <T,>(x: unknown): T[] => (Array.isArray(x) ? (x as T[]) : [])
@@ -91,7 +105,20 @@ export function viewProps(raw: unknown): ViewProps {
     theme: p.theme === 'kitty' ? 'kitty' : 'minimal',
     wheel: { seq: typeof w?.seq === 'number' ? w.seq : 0, by: typeof w?.by === 'number' ? w.by : 0 },
     ...(traceOf(p.trace) ? { trace: traceOf(p.trace) } : {}),
+    ai: p.ai === 'off' || p.ai === 'full' ? p.ai : 'cheap',
+    aiWeek: typeof p.aiWeek === 'number' ? p.aiWeek : 0,
+    explaining: arrayOf<string>(p.explaining).filter(x => typeof x === 'string'),
+    patternsBusy: p.patternsBusy === true,
+    ...(patternsOf(p.patterns) ? { patterns: patternsOf(p.patterns) } : {}),
   }
+}
+
+// Patterns from the hooks, when they have the shape the view draws.
+const patternsOf = (d: unknown): PatternsDoc | undefined => {
+  const x = d as Partial<PatternsDoc> | undefined
+  if (!x || !Array.isArray(x.cards) || typeof x.at !== 'number') return undefined
+  const cards = x.cards.filter(c => c && typeof c.title === 'string').map(c => ({ ...c, runs: arrayOf<{ id: string; label: string }>(c.runs) }))
+  return { cards, model: typeof x.model === 'string' ? x.model : 'Sonnet', at: x.at, ...(typeof x.tokens === 'number' ? { tokens: x.tokens } : {}) }
 }
 
 // A trace from the hooks, when it has the shape the view draws.
@@ -99,7 +126,8 @@ const traceOf = (t: unknown): TraceView | undefined => {
   const x = t as Partial<TraceView> | undefined
   if (!x || typeof x.run !== 'string' || !Array.isArray(x.rows) || !Array.isArray(x.lanes)) return undefined
   return { run: x.run, zoom: ZOOMS.includes(x.zoom as TraceZoom) ? (x.zoom as TraceZoom) : 'story', lanes: x.lanes, rows: x.rows as TraceRow[],
-    total: typeof x.total === 'number' ? x.total : x.rows.length, offset: typeof x.offset === 'number' ? x.offset : 0, missing: typeof x.missing === 'number' ? x.missing : 0 }
+    total: typeof x.total === 'number' ? x.total : x.rows.length, offset: typeof x.offset === 'number' ? x.offset : 0, missing: typeof x.missing === 'number' ? x.missing : 0,
+    ...(typeof x.storyBy === 'string' ? { storyBy: x.storyBy } : {}) }
 }
 
 export function viewState(raw: unknown): State {
@@ -133,6 +161,11 @@ export function viewState(raw: unknown): State {
     traceAsk: typeof s.traceAsk === 'string' ? s.traceAsk : '',
     traceAskTick: typeof s.traceAskTick === 'number' ? s.traceAskTick : -100,
     traceAt: num(s.traceAt),
+    note: typeof s.note === 'string' ? s.note : '',
+    noteTick: typeof s.noteTick === 'number' ? s.noteTick : -100,
+    confirm: s.confirm === 'explain' || s.confirm === 'patterns' ? s.confirm : '',
+    confirmTick: typeof s.confirmTick === 'number' ? s.confirmTick : -100,
+    patternsOpen: s.patternsOpen !== false,
   }
 }
 
@@ -307,11 +340,40 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   const offered = lensesFor(!!run)
   const nextLensOf = (l: Lens) => offered[(offered.indexOf(l) + 1) % offered.length] ?? 'tree'
 
+  // ── AI-written blocks: who wrote them, what it cost, how old they are ───────
+  const aiLabel = (b: { model?: string; tokens?: number; at?: number } | undefined): string =>
+    !b?.model ? '' : [b.model, ...(b.tokens ? [`${kTokens(b.tokens)} tokens`] : []), ...(b.at ? [ago(now - b.at)] : [])].join(' · ')
+  const isFull = props.ai === 'full'
+  // Patterns across runs, above the day groups: a heading, then per card its title, evidence,
+  // what to try and the runs it rests on (those rows open the run). Width: the list's.
+  const historyRunCount = props.history.filter(n => !n.parentId).length
+  const patternItems = (): Item[] => {
+    if (s.query || s.hfilter !== 'all') return []
+    const doc = props.patterns
+    const busy = !!props.patternsBusy
+    if (!doc && !busy && (!isFull || historyRunCount < 2)) return []
+    const note = busy ? `writing… (Sonnet)` : doc ? `${aiLabel(doc)}${isFull ? '   ·   g g writes them again' : ''}` : 'g asks Sonnet to look for patterns'
+    const head: Item = { kind: 'header', text: PATTERNS_TITLE, note, ...(doc ? { isOpen: s.patternsOpen } : {}) }
+    if (!doc || !s.patternsOpen) return [head]
+    const w = Math.max(20, (layout === 'split' ? LW : IW) - 6)
+    const out: Item[] = [head]
+    for (const c of doc.cards) {
+      out.push({ kind: 'pattern', tone: 'title', text: c.title })
+      if (c.evidence) for (const t of wrap(c.evidence, w)) out.push({ kind: 'pattern', tone: 'evidence', text: t })
+      if (c.try) wrap(`Try: ${c.try}`, w).forEach(t => out.push({ kind: 'pattern', tone: 'try', text: t }))
+      for (const r of c.runs) {
+        const node = props.history.find(n => n.id === r.id)
+        if (node) out.push({ kind: 'node', node, species: 'cat', depth: 1, guide: 'pattern' })
+      }
+    }
+    return out
+  }
+
   // ── the three lenses over the same runs ───────────────────────────────
   // the History page lists runs by day, filtered and searched; inside a run, its tree
   const listFor = (flipped: readonly string[], showDone: readonly string[], at: AgentNode | undefined): Item[] =>
     at ? runTree(at, nodes, s.filter, flipped, showDone)
-      : isHistory ? historyItems(nodes, now, { filter: s.hfilter, query: s.query, olderOpen: s.olderOpen })
+      : isHistory ? [...patternItems(), ...historyItems(nodes, now, { filter: s.hfilter, query: s.query, olderOpen: s.olderOpen })]
         : topItems(nodes, s.filter, isHistory, now, s.group, flipped, showDone)
   const agentItems: Item[] = listFor(s.flipped, s.showDone, run)
   // the runs the run list shows, in its order, for the board and the timeline
@@ -489,8 +551,13 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     const bullets = (items: { text: string; source?: string }[], c: string): Seg[][] => items.slice(0, 3).flatMap(it =>
       wrap(`${it.text}${it.source ? ` [${it.source}]` : ''}`, valueW - 3).slice(0, all ? 99 : 2).map((l, i) => [seg(i ? '   ' : '•  ', C.faint), seg(l, c)]))
     const out: Section[] = []
-    const fallback = sc.kind === 'phase' ? 'No part report yet.' : node ? noReportReason(node) : ''
-    out.push(['Result', text(r?.result ?? fallback, C.ink)])
+    const aiOff = props.ai === 'off' && !r?.result
+    const fallback = aiOff ? 'AI is off: no written report. Set ai to cheap or full in /config.'
+      : sc.kind === 'phase' ? 'No part report yet.' : node ? noReportReason(node) : ''
+    out.push(['Result', text(r?.result ?? fallback, aiOff ? C.muted : C.ink)])
+    // with AI off the failures still show, from the records
+    const recordProblems = aiOff ? scopeNodes(nodes, sc).filter(n => n.kind === 'agent' && (n.status === 'failed' || n.status === 'killed'))
+      .map(n => ({ text: `${n.label} ${n.status === 'failed' ? 'failed' : 'was stopped'}.` })) : []
     if (brief) {
       if (r?.problems?.length) out.push(['Problems', r.problems.slice(0, 2).map(p => [seg('•  ', C.faint), seg(fit(`${p.text}${p.source ? ` [${p.source}]` : ''}`, valueW - 3), C.warn)])])
       if (r?.next) out.push(['Next', [[seg(fit(r.next, valueW), C.soft)]]])
@@ -504,6 +571,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     } else if (r?.done?.length) out.push(['Done', bullets(r.done.map(t => ({ text: t })), C.soft)])
     if (r?.decisions?.length) out.push(['Decisions', bullets(r.decisions, C.soft)])
     if (r?.problems?.length) out.push(['Problems', bullets(r.problems, C.warn)])
+    else if (recordProblems.length) out.push(['Problems', bullets(recordProblems, C.warn)])
     if (r?.next) out.push(['Next', text(r.next, C.soft)])
     if (f.files.length) out.push(['Changed', changedRows(f, valueW, all)])
     out.push(['Totals', totalsRows(f, valueW)])
@@ -514,7 +582,8 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   // who wrote a report, beside its heading
   const writtenBy = (sc: Scope): string => {
     const r = sc.kind === 'phase' ? nodes.find(x => x.id === sc.wfId)?.partReports?.[sc.phase] : nodes.find(x => x.id === sc.id)?.report
-    return r?.model ? `${r.model}${r.tokens ? ` · ${kTokens(r.tokens)} tokens` : ''}` : 'from what the run kept'
+    if (r?.model) return aiLabel(r)
+    return props.ai === 'off' ? 'AI is off · from records' : 'from what the run kept'
   }
 
   // ── the overview of the selection, as rows of a given width ───────────
@@ -631,6 +700,30 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     }
     const n = scopeNode
     if (!n) return out
+    // the run's brief, when it has one or one is being written; else how to get one
+    if (run && n.id === run.id) {
+      const writing = props.explaining?.includes(run.id)
+      const b: Brief | undefined = run.explain
+      if (b || writing) {
+        out.push({ segs: [seg('Explain', C.accent, true), seg(`   ${writing ? 'writing… (Sonnet)' : aiLabel(b)}`, C.faint)] })
+        if (b) {
+          const LBL = 18
+          const vw = Math.max(10, w - LBL)
+          const line = (name: string, t: string, c: string) => wrap(t, vw).forEach((x, i) => out.push({ segs: [seg(padEnd(i ? '' : name, LBL), C.muted), seg(x, c)] }))
+          const list = (name: string, items: string[], c: string) => items.forEach((t, k) => wrap(t, vw - 3).forEach((x, i) =>
+            out.push({ segs: [seg(padEnd(k === 0 && i === 0 ? name : '', LBL), C.muted), seg(i ? '   ' : '•  ', C.faint), seg(x, c)] })))
+          if (b.goal) line('Goal', b.goal, C.ink)
+          if (b.who?.length) list('Who did what', b.who, C.soft)
+          if (b.connected) line('How it connected', b.connected, C.soft)
+          if (b.outcome) line('Outcome', b.outcome, C.ink)
+          if (b.open?.length) list('Open issues', b.open, C.warn)
+        }
+        gap()
+      } else if (isFull) {
+        out.push({ segs: [seg('e', C.soft, true), seg(' asks Sonnet to explain how this run hung together.', C.faint)] })
+        gap()
+      }
+    }
     const isDone = n.status !== 'running'
     if (isDone && scope) reportBlock(scope)
     if (!isDone && n.summary) { para('Outcome', C.accent, true); para(n.summary, C.ink) }
@@ -691,16 +784,24 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   const isReading = mode === 'output' || mode === 'diff' || mode === 'help' || mode === 'trace'
   // the History page's numbers on top, and the search line while there is one
   const isHistoryPage = isHistory && !run && lens === 'tree'
-  const matchCount = isHistoryPage ? agentItems.filter(it => it.kind === 'node').length : 0
+  // runs that match, not the runs a pattern card points at
+  const matchCount = isHistoryPage ? agentItems.filter(it => it.kind === 'node' && it.guide !== 'pattern').length : 0
   const historyHeader = (): Row[] => {
     const st = historyStats(nodes, now)
     const sp = sparkline(st.perDay)
-    const rows: Row[] = [{
-      segs: [seg(`${st.runs}`, C.ink, true), seg(` run${st.runs === 1 ? '' : 's'}`, C.muted), seg('     '),
-        seg(`${st.okPct}%`, C.ink, true), seg(' finished OK', C.muted), seg('     '),
-        seg(kTokens(st.tokens), C.ink, true), seg(' tokens', C.muted), seg('     '),
-        seg(sp.glyphs, C.accent), seg(`  runs per day, last 7 days · 0 to ${sp.max}`, C.faint)],
-    }]
+    // the numbers first; then what the AI layer spent; the sparkline's caption only where it fits
+    const base: Seg[] = [seg(`${st.runs}`, C.ink, true), seg(` run${st.runs === 1 ? '' : 's'}`, C.muted), seg('     '),
+      seg(`${st.okPct}%`, C.ink, true), seg(' finished OK', C.muted), seg('     '),
+      seg(kTokens(st.tokens), C.ink, true), seg(' tokens', C.muted), seg('     '), seg(sp.glyphs, C.accent)]
+    // the sparkline's scale keeps its place (a chart needs its extremes); AI spend fits around it
+    const spent = props.aiWeek ?? 0
+    const longCap = `  runs per day, last 7 days · 0 to ${sp.max}`
+    const shortCap = `  per day, 7 days · 0 to ${sp.max}`
+    const longAi = spent ? `     AI: ${kTokens(spent)} tokens this week` : ''
+    const shortAi = spent ? `   AI ${kTokens(spent)} this week` : ''
+    const [cap, ai] = ([[longCap, longAi], [shortCap, longAi], [shortCap, shortAi], [shortCap, ''], ['', '']] as [string, string][])
+      .find(([c, a]) => width(base) + cellWidth(c) + cellWidth(a) <= IW) ?? ['', '']
+    const rows: Row[] = [{ segs: [...base, ...(cap ? [seg(cap, C.faint)] : []), ...(ai ? [seg(ai, C.faint)] : [])] }]
     if (s.searching || s.query) {
       rows.push({
         segs: [seg('/ ', C.accent, true), seg(s.query, C.ink, true), ...(s.searching ? [seg(T.cursor, C.accent)] : []),
@@ -1006,6 +1107,27 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     const key = inAgents ? focusKey : s.focus
     set({ ...leaving, lens: l, view: 'agents', sel: Math.max(0, indexIn(key, run, l)), first: 0 })
   }
+  const confirming = (what: 'explain' | 'patterns') => s.confirm === what && s.tick - s.confirmTick <= CONFIRM_TICKS
+  const say = (note: string, extra: Partial<State> = {}) => set({ ...extra, note, noteTick: s.tick })
+  // e: a run's brief from Sonnet. With one there, a second press within 3 s writes it again.
+  const explainKey = () => {
+    if (!run) return
+    const leaving = diffOpen ? closeDiff() : {}
+    const toOutput: Partial<State> = { ...leaving, view: 'output', focus: run.id, agentSel: 0, sel: 0, first: 0 }
+    if (!isFull) return say('Explain needs ai: full in /config. It asks Sonnet, on demand.')
+    if (props.explaining?.includes(run.id)) return say('Sonnet is writing the brief.', toOutput)
+    if (run.explain && !confirming('explain')) return say('Press e again to write a new brief (Sonnet).', { ...toOutput, confirm: 'explain', confirmTick: s.tick })
+    surface.post({ type: 'explain', run: run.id, regenerate: !!run.explain })
+    say(run.explain ? 'Writing a new brief… (Sonnet)' : 'Writing the brief… (Sonnet)', { ...toOutput, confirm: '' })
+  }
+  // g on the History page: patterns across runs from Sonnet; twice within 3 s to write them again.
+  const patternsKey = () => {
+    if (!isFull) return say('Patterns need ai: full in /config. They ask Sonnet, on demand.')
+    if (props.patternsBusy) return say('Sonnet is looking for patterns.')
+    if (props.patterns && !confirming('patterns')) return say('Press g again to look for patterns again (Sonnet).', { confirm: 'patterns', confirmTick: s.tick, patternsOpen: true })
+    surface.post({ type: 'patterns', regenerate: !!props.patterns })
+    say('Looking for patterns… (Sonnet)', { confirm: '', patternsOpen: true, sel: 0, first: 0 })
+  }
   const nextFile = (dir: 1 | -1) => {
     const f = fileItems[fileItems.findIndex(x => x.row.path === s.diffFile) + dir]
     if (f) openDiff(f.row.path)
@@ -1086,6 +1208,8 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
       return
     }
     if (isHistoryPage && !s.help) {
+      if (key === 'g') return patternsKey()
+      if (key === 'p' && props.patterns) return set({ patternsOpen: !s.patternsOpen, sel: 0, first: 0 })
       if (key === '/') return set({ searching: true, sel: 0, first: 0 })
       if ((key === 'escape' || clearsSearch) && s.query) return set({ query: '', sel: 0, first: 0 })
       if (key === 'f') return set({ hfilter: HISTORY_FILTERS[(HISTORY_FILTERS.indexOf(s.hfilter) + 1) % HISTORY_FILTERS.length]!, sel: 0, first: 0 })
@@ -1115,6 +1239,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     else if (key === 'o') (run ? go('output') : (focusItem?.kind === 'node' || focusCard) && openRun(topOf(focusCard ?? (focusItem as { node: AgentNode }).node), 'output', focusKey))
     else if (key === 'tab') (run ? go(VIEWS[(VIEWS.indexOf(view) + 1) % VIEWS.length]!) : switchTab(s.tab === 'live' ? 'history' : 'live'))
     else if (key === 'v') switchLens(nextLensOf(lens))
+    else if (key === 'e' && run) explainKey()
     else if (key === 'z' && mode === 'trace') set({ zoom: ZOOMS[(ZOOMS.indexOf(s.zoom) + 1) % ZOOMS.length]!, sel: 0, first: 0, traceAt: 0 })
     else if (key === 'i' && shownInsights.length) { const next = (s.insight + 1) % shownInsights.length; jumpTo(shownInsights[next]!.target, next) }
     else if (key === 'f') set({ filter: FILTERS[(FILTERS.indexOf(s.filter) + 1) % FILTERS.length], sel: 0, first: 0 })
@@ -1179,6 +1304,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
       const mid = fit(`   ${words}`, Math.max(0, room))
       return { bg, segs: [...head, seg(mid, C.muted), seg(' '.repeat(Math.max(0, room - cellWidth(mid)))), ...tail] }
     }
+    if (it.kind !== 'node') return { segs: [] }
     const n = it.node
     const st = T.status[n.status]
     const isTop = !it.guide
@@ -1215,13 +1341,28 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   const historyRow = (it: Item, i: number, w: number): Row => {
     if (it.kind === 'header') {
       const folds = it.isOpen !== undefined
+      const isPatterns = it.text === PATTERNS_TITLE
+      const k = isPatterns ? 'p' : 'o'
       return {
-        segs: [seg(' '), ...(folds ? [seg(`${it.isOpen ? T.fold.open : T.fold.closed} `, C.muted)] : []), seg(it.text, C.ink, true), seg(`   ${it.note ?? ''}`, C.faint),
-          ...(folds ? [seg(it.isOpen ? '   o hides them' : '   o shows them', C.faint)] : [])],
-        ...(folds ? { hit: [{ x0: 0, x1: w, act: () => set({ olderOpen: !s.olderOpen }) }] } : {}),
+        segs: [seg(' '), ...(folds ? [seg(`${it.isOpen ? T.fold.open : T.fold.closed} `, C.muted)] : []), seg(it.text, isPatterns ? C.accent : C.ink, true), seg(`   ${it.note ?? ''}`, C.faint),
+          ...(folds ? [seg(it.isOpen ? `   ${k} hides them` : `   ${k} shows them`, C.faint)] : [])],
+        ...(folds ? { hit: [{ x0: 0, x1: w, act: () => set(isPatterns ? { patternsOpen: !s.patternsOpen } : { olderOpen: !s.olderOpen }) }] } : {}),
       }
     }
+    if (it.kind === 'pattern') {
+      if (it.tone === 'title') return { segs: [seg('   '), seg(`${T.warn} `, C.warn), seg(it.text, C.ink, true)] }
+      return { segs: [seg('     '), seg(it.text, it.tone === 'try' ? C.accent : C.soft)] }
+    }
     if (it.kind !== 'node') return { segs: [] }
+    if (it.guide === 'pattern') {
+      // a run a pattern rests on: enter opens it
+      const n = it.node
+      const on = i === sel && mode === 'agents'
+      return {
+        bg: on ? C.selBg : undefined,
+        segs: [cursorSeg(on), seg('     ↳ '), cell2(statusIcon(n), T.status[n.status].color), seg(' '), seg(n.label, on ? C.ink : C.soft, on), seg(`   ${dayLabel(n.startedAt, now)}`, C.faint)],
+      }
+    }
     const n = it.node
     const on = i === sel && mode === 'agents'
     const k = historyCols(w)
@@ -1266,12 +1407,15 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     ['f', 'filter: all, running, failed · history: all, failed, changed files'], ['s', 'group the run list'],
     ['/', 'search history: names and outcomes; enter keeps, ctrl+u clears'], ['o', 'show or hide history older than a week'],
     ['r', 'this repo · all repos (history)'],
+    ['e', 'explain this run: a brief from Sonnet (ai: full); twice to write it again'],
+    ['g', 'history: patterns across runs from Sonnet (ai: full); twice to look again'],
+    ['p', 'history: show or hide the patterns'],
     ['wheel', 'move, or scroll'], ['?', 'close this help'],
   ]
   // ── the trace: a vertical log with a lane gutter, git log --graph style ─────
   const KIND_WORD: Record<TraceRow['kind'], string> = {
     spawn: 'started an agent', tool: 'tool call', edit: 'edit', message: 'message', handback: 'handed back',
-    report: 'reported', fail: 'ended', quiet: 'quiet gap', note: 'note',
+    report: 'reported', fail: 'ended', quiet: 'quiet gap', note: 'note', step: 'story step',
   }
   const laneColor = (k: number) => T.lanes[k % T.lanes.length]!
   const isArrow = (r: TraceRow) => r.to !== undefined && r.to !== r.lane && (r.kind === 'spawn' || r.kind === 'handback' || r.kind === 'report' || r.kind === 'message')
@@ -1284,6 +1428,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     if (r.kind === 'handback') return '◀'
     if (r.kind === 'report') return '○'
     if (r.kind === 'quiet') return '┆'
+    if (r.kind === 'step') return '◇'
     return '·'
   }
   const traceRows = (w: number): Row[] => {
@@ -1294,6 +1439,8 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     const zoomSegs: Seg[] = [...ZOOMS.flatMap((z, k) => [...(k ? [seg(' · ', C.faint)] : []), seg(ZOOM_NAMES[z], z === s.zoom ? C.accent : C.muted, z === s.zoom)]), seg('   z', C.soft, true), seg(' zoom', C.muted)]
     const legendParts: Seg[][] = [[seg('●', C.soft), seg(' call', C.faint)], [seg('◆', C.soft), seg(' edit', C.faint)], [seg('├─▶', C.soft), seg(' start', C.faint)],
       [seg('◀─┤', C.soft), seg(' back', C.faint)], [seg('┄▶', C.soft), seg(' message', C.faint)], [seg(T.traceFail, C.bad), seg(' ended', C.faint)], [seg('┆', C.faint), seg(' quiet', C.faint)]]
+    // the story's steps are Haiku's when it wrote them: say so, with what they cost
+    if (s.zoom === 'story' && tv?.storyBy) zoomSegs.push(seg(`   Story · ${tv.storyBy}`, C.faint))
     const legend: Seg[] = [...zoomSegs]
     for (const part of legendParts) if (width(legend) + 3 + width(part) <= w - 1) legend.push(seg('   '), ...part)
     const laneSegs: Seg[] = lanes.flatMap((L, k) => [...(k ? [seg('   ')] : []), seg(L.chip, laneColor(k), true), seg(` ${L.label}`, C.muted)])
@@ -1334,6 +1481,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
       if (r.kind === 'message') return r.from ? [seg(`from ${r.from}: `, C.muted), seg(r.text, C.soft)] : [seg(`to ${target ?? 'another session'}: `, C.muted), seg(r.text, C.soft)]
       if (r.kind === 'quiet') return [seg(`··· ${T.quiet} ${r.text.replace(/^quiet /, '')} ···`, C.faint)]
       if (r.kind === 'note') return [seg(r.text, C.faint)]
+      if (r.kind === 'step') return [seg(r.text, C.ink)]
       if (r.kind === 'fail') return [seg(r.text, C.bad, true)]
       if (r.kind === 'edit') return [seg(r.text, C.ink), seg('   '), seg(`+${r.added ?? 0}`, C.add), seg(' '), seg(`−${r.removed ?? 0}`, C.del)]
       return [seg(r.text, r.error ? C.bad : C.soft)]
@@ -1467,9 +1615,16 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
           : mode === 'files' ? [['j k', 'move'], ['enter', 'diff'], ['h l', 'views'], ['b', 'back'], ['?', 'help']]
             : mode === 'diff' ? [['j k', 'edit'], ['enter', 'go to agent'], ['n p', 'files'], ['b', 'back'], ['?', 'help']]
               : [['j k', 'scroll'], ['h l', 'views'], ['b', 'back'], ['?', 'help']]
+  // e and g where they work, before ? help
+  const aiKeys: [string, string][] = !isFull || s.searching || mode === 'help' ? []
+    : isHistoryPage ? [['g', props.patterns ? 'patterns again' : 'patterns'], ...(props.patterns ? [['p', s.patternsOpen ? 'hide patterns' : 'patterns'] as [string, string]] : [])]
+      : run ? [['e', run.explain ? 'explain again' : 'explain']] : []
+  // right after move and open: the footer drops keys from its right end first, so these stay
+  if (aiKeys.length && keyList.length > 2 && keyList[keyList.length - 1]![0] === '?') keyList.splice(2, 0, ...aiKeys)
   const hiddenBelow = mode === 'diff' ? 0 : body ? body.rows.length - 1 - first - Math.max(1, bodyRows - 1) : count - first - (mode === 'trace' ? traceWin : bodyRows)
   const footer: Row = (() => {
-    const right: Seg[] = hiddenBelow > 0 ? [seg(`${hiddenBelow} more below`, C.faint)] : []
+    const noteOn = !!s.note && s.tick - s.noteTick <= NOTE_TICKS
+    const right: Seg[] = noteOn ? [seg(s.note, C.accent)] : hiddenBelow > 0 ? [seg(`${hiddenBelow} more below`, C.faint)] : []
     const room = IW - width(right) - 2
     // keys drop from the right until they fit, but ? help stays
     const keys = [...keyList]

@@ -62,6 +62,12 @@ export type AgentNode = {
   report?: Report
   /** A workflow's part reports, one per phase, written as each phase finishes. */
   partReports?: Record<string, Report>
+  /** An agent's story: the few steps Haiku wrote from its tool log when it ended. */
+  story?: Story
+  /** Set once the story was tried, so it is asked once. */
+  storyTried?: boolean
+  /** A run's brief from "Explain this run" (Sonnet, on demand). */
+  explain?: Brief
 }
 
 /** One change one agent made to one file: its text before and after, and where it sits. */
@@ -85,7 +91,31 @@ export type Report = {
   tokens?: number
   /** A part report: how many agents it covered, so a part that grew is written again. */
   count?: number
+  /** When it was written. */
+  at?: number
 }
+
+/** An agent's steps as a model wrote them from its tool log. */
+export type Story = { steps: string[]; model: string; tokens?: number; at: number }
+
+/** "Explain this run": how the work hung together, in short plain sentences. */
+export type Brief = {
+  goal?: string
+  /** "agent: what it did", one line each. */
+  who?: string[]
+  connected?: string
+  outcome?: string
+  open?: string[]
+  model: string
+  tokens?: number
+  at: number
+}
+
+/** One pattern across runs: what repeats, the evidence, one thing to try, and the runs it rests on. */
+export type PatternCard = { title: string; evidence?: string; try?: string; runs: { id: string; label: string }[] }
+
+/** The patterns written for one repository, and who wrote them when. */
+export type PatternsDoc = { cards: PatternCard[]; model: string; tokens?: number; at: number }
 
 export type EditRecord = {
   id: string
@@ -113,6 +143,15 @@ export type ViewProps = {
   wheel?: Wheel
   /** The trace the view asked for: a window of its rows, read from transcripts by the hooks. */
   trace?: TraceView
+  /** What /config allows the AI layer: off, cheap (Haiku) or full (Haiku, and Sonnet on demand). */
+  ai?: 'off' | 'cheap' | 'full'
+  /** Tokens the AI layer spent in the last 7 days. */
+  aiWeek?: number
+  /** Runs whose brief Sonnet is writing now. */
+  explaining?: string[]
+  /** This repository's patterns across runs, and whether Sonnet is writing them now. */
+  patterns?: PatternsDoc
+  patternsBusy?: boolean
 }
 
 /** A wheel move over the pane, forwarded from ui.scroll: rows asked for, signed. */
@@ -135,7 +174,7 @@ export type TraceLane = {
 
 /** One row of a trace, as the view draws it. Short, and never holding undefined. */
 export type TraceRow = {
-  kind: 'spawn' | 'tool' | 'edit' | 'message' | 'handback' | 'report' | 'fail' | 'quiet' | 'note'
+  kind: 'spawn' | 'tool' | 'edit' | 'message' | 'handback' | 'report' | 'fail' | 'quiet' | 'note' | 'step'
   /** The lane it happens in, and the lane an arrow goes to (a spawn's child, a hand-back's parent). */
   lane: number
   to?: number
@@ -169,10 +208,12 @@ export type TraceView = {
   missing: number
   /** True while the transcripts are still being read. */
   loading?: boolean
+  /** Who wrote the story steps shown, and what they cost: "Haiku · 3.1k tokens". */
+  storyBy?: string
 }
 
 declare module 'claude-code' {
   interface PluginState {
-    'agent-tree': { nodes: AgentNode[]; edits: EditRecord[]; wheel: Wheel; trace: { seq: number } }
+    'agent-tree': { nodes: AgentNode[]; edits: EditRecord[]; wheel: Wheel; trace: { seq: number }; ai: { seq: number } }
   }
 }

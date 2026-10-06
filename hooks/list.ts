@@ -384,8 +384,10 @@ export type Item =
   | { kind: 'header'; text: string; count?: number; note?: string; isOpen?: boolean }
   // a line under a cluster's row: its aspects, a file overlap, its combined outcome
   | { kind: 'info'; tone: 'chips' | 'warn' | 'outcome'; nodeId: string; guide: string }
+  // a line of a pattern card on the History page: its title, evidence or what to try
+  | { kind: 'pattern'; tone: 'title' | 'evidence' | 'try'; text: string }
 
-export const isSelectable = (it: Item | undefined) => it !== undefined && it.kind !== 'header' && it.kind !== 'info'
+export const isSelectable = (it: Item | undefined) => it !== undefined && it.kind !== 'header' && it.kind !== 'info' && it.kind !== 'pattern'
 
 export function childrenOf(nodes: AgentNode[], id: string) {
   return nodes.filter(n => n.parentId === id)
