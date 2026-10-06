@@ -25,6 +25,12 @@ export type Theme = {
   fold: { open: string; closed: string }
   cursor: string
   words: { live: string; history: string; emptyLive: string; emptyHistory: string; emptyHint: string }
+  // A trace's lanes: one hue per agent, kept apart from the status colours, which mean state.
+  lanes: string[]
+  // the mark a failed agent leaves in its trace lane (kitty's takes two cells)
+  traceFail: string
+  // the words a quiet gap reads in a trace
+  quiet: string
 }
 
 const MINIMAL: Theme = {
@@ -50,6 +56,9 @@ const MINIMAL: Theme = {
     emptyLive: 'Nothing is running right now.', emptyHistory: 'No finished runs yet.',
     emptyHint: 'Subagents and workflows appear here while they run, then move to History.',
   },
+  lanes: ['#7aa2f7', '#bb9af7', '#7dcfff', '#73daca', '#ff9e64', '#c0caf5'],
+  traceFail: '✗',
+  quiet: 'quiet',
 }
 
 const KITTY: Theme = {
@@ -75,6 +84,9 @@ const KITTY: Theme = {
     emptyLive: 'ᓚᘏᗢ zzz · No cats out.', emptyHistory: 'No cats have come home yet.',
     emptyHint: 'Subagents and workflows (🧶) appear here while they run, then move to History.',
   },
+  lanes: ['#ff8f70', '#c9a0dc', '#89dceb', '#94e2d5', '#fab387', '#f5e0dc'],
+  traceFail: '😿',
+  quiet: 'ᓚᘏᗢ zzz',
 }
 
 export const THEMES: Record<ThemeName, Theme> = { minimal: MINIMAL, kitty: KITTY }

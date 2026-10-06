@@ -111,13 +111,68 @@ export type ViewProps = {
   theme?: 'kitty' | 'minimal'
   /** The last wheel move over the pane: a new seq means a move the view has not applied yet. */
   wheel?: Wheel
+  /** The trace the view asked for: a window of its rows, read from transcripts by the hooks. */
+  trace?: TraceView
 }
 
 /** A wheel move over the pane, forwarded from ui.scroll: rows asked for, signed. */
 export type Wheel = { seq: number; by: number }
 
+/** How close a trace reads: a few beats per agent, grouped tool calls, or every call. */
+export type TraceZoom = 'story' | 'steps' | 'raw'
+
+/** One lane of a trace: an agent, or the main session that started the run. */
+export type TraceLane = {
+  id: string
+  label: string
+  /** Two letters the lane is known by in rows. */
+  chip: string
+  status: NodeStatus
+  /** The first and last rows (absolute) that touch this lane, so the gutter draws it between them. */
+  from: number
+  to: number
+}
+
+/** One row of a trace, as the view draws it. Short, and never holding undefined. */
+export type TraceRow = {
+  kind: 'spawn' | 'tool' | 'edit' | 'message' | 'handback' | 'report' | 'fail' | 'quiet' | 'note'
+  /** The lane it happens in, and the lane an arrow goes to (a spawn's child, a hand-back's parent). */
+  lane: number
+  to?: number
+  /** Where an arrow goes when that is no lane here: another session, an agent outside the run. */
+  target?: string
+  /** Who sent a message that arrived. */
+  from?: string
+  at: number
+  end?: number
+  text: string
+  count?: number
+  name?: string
+  input?: string
+  output?: string
+  tokens?: number
+  path?: string
+  added?: number
+  removed?: number
+  error?: boolean
+}
+
+/** The trace the view shows: which run, how close, and a window of its rows. */
+export type TraceView = {
+  run: string
+  zoom: TraceZoom
+  lanes: TraceLane[]
+  total: number
+  offset: number
+  rows: TraceRow[]
+  /** Agents whose transcript is no longer on disk. */
+  missing: number
+  /** True while the transcripts are still being read. */
+  loading?: boolean
+}
+
 declare module 'claude-code' {
   interface PluginState {
-    'agent-tree': { nodes: AgentNode[]; edits: EditRecord[]; wheel: Wheel }
+    'agent-tree': { nodes: AgentNode[]; edits: EditRecord[]; wheel: Wheel; trace: { seq: number } }
   }
 }

@@ -1,13 +1,14 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine, Register, Timer } from 'claude-code'
 
-import type { AgentNode, EditRecord, NodeStatus, Report, ViewProps } from '../types'
+import type { AgentNode, EditRecord, NodeStatus, Report, TraceRow, TraceView, TraceZoom, ViewProps } from '../types'
 import { themeOf, type ThemeName } from './theme'
 import {
   changesLine, cleanTitle, describeTool, diffCounts, editRecords, editedPath, fileRows, firstPrompt, firstSentence, handbackOf, fitProps,
   lineDiff, parseJournal, pipeline, scopeNodes, transcriptEdits,
 } from './list'
 import { REPORT_SYSTEM, parseReport, partInput, runInput } from './report'
+import { ZOOMS, buildTrace, finishParse, newParse, parseLines, traceWindow, type TraceEvent } from './trace'
 
 const PANE = 'agent-tree'
 // Bumped when the view module's props or state change shape: a new key mounts a
@@ -30,6 +31,27 @@ let diffPath: string | null = null
 // where this session keeps subagent transcripts, learned from a Stop event or a workflow's folder
 let subagentsDir: string | undefined
 const backfilled = new Set<string>()
+
+// ── the trace the view has open ─────────────────────────────────────────────
+// What the view asked for: which run, how close, and where it reads.
+let traceReq: { run: string; zoom: TraceZoom; offset: number } | null = null
+// The run's trace as last built (all its rows), and the window the view gets.
+let traceBuilt: { key: string; at: number; lanes: TraceView['lanes']; rows: TraceRow[]; missing: number } | undefined
+let traceSnap: TraceView | undefined
+let tracer: Timer | undefined
+// A new seq redraws the pane after the trace was read again.
+const traceSeq = atom({ plugin: 'agent-tree', key: 'trace' } as const, { seq: 0 })
+// Each transcript's events, kept while its file does not change; a running agent's
+// file is read again at most every few seconds.
+const transcripts = new Map<string, { size: number; mtimeMs: number; checkedAt: number; events: TraceEvent[] }>()
+// Where each agent's transcript is: a path, or null once looked for and not found.
+const transcriptAt = new Map<string, string | null>()
+// $.fs.read takes files up to 4 MiB; bigger ones are read in 3 MiB pieces with dd.
+const READ_CAP = 3 * 1024 * 1024
+const DD_BLOCK = 65_536
+const DD_BLOCKS = READ_CAP / DD_BLOCK
+const TRACE_WINDOW = 60
+const TRACE_TEXT = 120
 
 // Agent tool calls seen in any loop. A spawn whose tool_use_id is not here
 // came from somewhere else (a workflow run), so it is filed under that run.
@@ -649,11 +671,19 @@ export const register: Register = (on, options) => {
   })
 
   // The view asks for a file's diff when it opens one, and lets it go when it closes it.
+  // It asks for a run's trace the same way: which run, how close, where it reads.
   on('ui.message', async ($, e, next) => {
-    const data = e.data as { type?: unknown; path?: unknown } | null
-    if (e.requestId !== PANE || data?.type !== 'diff') return next(e)
-    diffPath = typeof data.path === 'string' ? data.path : null
-    return { props: await viewProps($) }
+    const data = e.data as { type?: unknown; path?: unknown; run?: unknown; zoom?: unknown; offset?: unknown } | null
+    if (e.requestId !== PANE) return next(e)
+    if (data?.type === 'diff') {
+      diffPath = typeof data.path === 'string' ? data.path : null
+      return { props: await viewProps($) }
+    }
+    if (data?.type === 'trace') {
+      await askTrace($, data)
+      return { props: await viewProps($) }
+    }
+    return next(e)
   })
 
   // The pane's rows are the view's own, so the engine has nothing to scroll:
@@ -677,7 +707,12 @@ export const register: Register = (on, options) => {
 
 async function viewProps($: Engine): Promise<ViewProps> {
   const history = ((await $.store.get(HISTORY)) as AgentNode[] | undefined) ?? []
-  const base = { ...fitProps({ nodes: await read($, nodes), history, at: await $.clock.now() }), ...await repoProp($), theme: themeName, wheel: await read($, wheel) }
+  // read so a trace read again redraws the pane
+  await read($, traceSeq)
+  const trace = traceReq && traceSnap ? { trace: traceSnap } : {}
+  // the trace's window takes its share of the props bound first; runs fill the rest
+  const room = 90_000 - (trace.trace ? JSON.stringify(trace.trace).length : 0)
+  const base = { ...fitProps({ nodes: await read($, nodes), history, at: await $.clock.now() }, room), ...await repoProp($), theme: themeName, wheel: await read($, wheel), ...trace }
   if (!diffPath) return base
   await backfill($, diffPath, [...history, ...base.nodes])
   const pastEdits = ((await $.store.get(EDITS)) as EditRecord[] | undefined) ?? []
@@ -703,7 +738,8 @@ async function backfill($: Engine, path: string, all: AgentNode[]) {
     backfilled.add(n.id)
     const dir = n.parentId ? byId.get(n.parentId)?.transcriptDir : undefined
     const sessionAgents = subagentsDir ?? dir?.replace(/\/workflows\/[^/]+$/, '')
-    const file = dir ? `${dir}/agent-${n.id}.jsonl` : sessionAgents ? `${sessionAgents}/agent-${n.id}.jsonl` : undefined
+    // a trace may already have found it, in this session's folder or another's
+    const file = transcriptAt.get(n.id) ?? (dir ? `${dir}/agent-${n.id}.jsonl` : sessionAgents ? `${sessionAgents}/agent-${n.id}.jsonl` : undefined)
     if (!file) continue
     const text = await $.fs.read(file).catch(() => '')
     found.push(...transcriptEdits(text, n.id, now).filter(r => r.path === path)
@@ -712,4 +748,138 @@ async function backfill($: Engine, path: string, all: AgentNode[]) {
   if (found.length === 0) return
   const known = new Set(stored.map(r => r.id))
   await $.store.set(EDITS, [...stored, ...found.filter(r => !known.has(r.id))].slice(-EDITS_KEPT))
+}
+
+// ── the trace: read from transcripts when the view asks, never on a redraw ────
+
+// The view asks for a run's trace (or lets it go). A new run or zoom is read now;
+// a new place to read only moves the window. A live run is read again every 2 s.
+async function askTrace($: Engine, data: { run?: unknown; zoom?: unknown; offset?: unknown }) {
+  const run = typeof data.run === 'string' ? data.run : null
+  if (!run) {
+    traceReq = null
+    traceSnap = undefined
+    traceBuilt = undefined
+    tracer?.cancel()
+    tracer = undefined
+    return
+  }
+  const zoom: TraceZoom = ZOOMS.includes(data.zoom as TraceZoom) ? (data.zoom as TraceZoom) : 'story'
+  const offset = typeof data.offset === 'number' && Number.isFinite(data.offset) ? Math.max(0, Math.floor(data.offset)) : 0
+  const isNew = !traceReq || traceReq.run !== run || traceReq.zoom !== zoom
+  traceReq = { run, zoom, offset }
+  const isLive = await buildRunTrace($, isNew)
+  if (isLive) tracer ??= $.clock.every(2000, () => void refreshTrace($))
+}
+
+async function refreshTrace($: Engine) {
+  if (!traceReq) { tracer?.cancel(); tracer = undefined; return }
+  const isLive = await buildRunTrace($, true)
+  await update($, traceSeq, s => ({ seq: (s?.seq ?? 0) + 1 }))
+  // a run that has ended is read once more, then left alone
+  if (!isLive) { tracer?.cancel(); tracer = undefined }
+}
+
+// Builds the asked run's trace (all rows when `force` or new), then its window.
+// Resolves whether the run is still going.
+async function buildRunTrace($: Engine, force: boolean): Promise<boolean> {
+  const req = traceReq
+  if (!req) return false
+  const now = await $.clock.now()
+  const history = ((await $.store.get(HISTORY)) as AgentNode[] | undefined) ?? []
+  // a finished run can sit in both lists for a moment: the live copy wins
+  const byId = new Map<string, AgentNode>()
+  for (const n of [...history, ...(await read($, nodes))]) byId.set(n.id, n)
+  const all = [...byId.values()]
+  const run = byId.get(req.run)
+  if (!run) { traceSnap = undefined; return false }
+  const scope = scopeNodes(all, { kind: 'node', id: run.id })
+  const isLive = scope.some(n => n.status === 'running')
+  const key = `${req.run}|${req.zoom}`
+  if (force || !traceBuilt || traceBuilt.key !== key) {
+    const agents = scope.filter(n => n.kind === 'agent')
+    await locateTranscripts($, agents, all)
+    const events = new Map<string, TraceEvent[]>()
+    for (const a of agents) {
+      const path = transcriptAt.get(a.id)
+      const got = path ? await transcriptEvents($, a.id, path, a.status === 'running', now) : undefined
+      if (got) events.set(a.id, got)
+    }
+    traceBuilt = { key, at: now, ...buildTrace(run, scope, events, now, req.zoom) }
+  }
+  const win = traceWindow(traceBuilt.rows, req.offset, TRACE_WINDOW)
+  traceSnap = { run: run.id, zoom: req.zoom, lanes: traceBuilt.lanes, total: traceBuilt.rows.length, offset: win.offset, rows: win.rows.map(trimRow), missing: traceBuilt.missing }
+  return isLive
+}
+
+const trimRow = (r: TraceRow): TraceRow => ({
+  ...r,
+  text: r.text.slice(0, TRACE_TEXT),
+  ...(r.input ? { input: r.input.slice(0, TRACE_TEXT) } : {}),
+  ...(r.output ? { output: r.output.slice(0, TRACE_TEXT) } : {}),
+})
+
+// Where each agent's transcript is: its workflow's folder or this session's
+// subagents folder, else (a run from another session) where find turns it up,
+// all missing ones in one find. A finished agent with none is not looked for again.
+async function locateTranscripts($: Engine, list: AgentNode[], all: AgentNode[]) {
+  const todo: AgentNode[] = []
+  for (const n of list) {
+    if (transcriptAt.get(n.id)) continue
+    if (transcriptAt.get(n.id) === null && n.status !== 'running') continue
+    const parent = n.parentId ? all.find(p => p.id === n.parentId) : undefined
+    const dirs = [parent?.transcriptDir, subagentsDir].filter((d): d is string => !!d)
+    let hit: string | undefined
+    for (const dir of dirs) {
+      const path = `${dir}/agent-${n.id}.jsonl`
+      if (await $.fs.exists(path).catch(() => false)) { hit = path; break }
+    }
+    if (hit) transcriptAt.set(n.id, hit)
+    else todo.push(n)
+  }
+  if (todo.length === 0) return
+  const home = await $.env.get('HOME')
+  const names = todo.flatMap((n, i) => [...(i ? ['-o'] : []), '-name', `agent-${n.id}.jsonl`])
+  const found = await $.process.run(['find', `${home}/.claude/projects`, '-maxdepth', '6', '(', ...names, ')'], { timeoutMs: 20000 }).catch(() => undefined)
+  const pathOf = new Map((found?.stdout ?? '').split('\n').filter(Boolean).map(p => [p.replace(/^.*agent-|\.jsonl$/g, ''), p]))
+  for (const n of todo) {
+    const path = pathOf.get(n.id)
+    // a running agent's file may not exist yet: it is looked for again
+    if (path) transcriptAt.set(n.id, path)
+    else if (n.status !== 'running') transcriptAt.set(n.id, null)
+  }
+}
+
+// An agent's events from its transcript: read whole when small, and in 3 MiB
+// pieces with dd when not, so no single read passes $.fs.read's 4 MiB limit.
+// Kept while the file is unchanged; a live file is looked at every 2 s (10 s when big).
+async function transcriptEvents($: Engine, id: string, path: string, isLive: boolean, now: number): Promise<TraceEvent[] | undefined> {
+  const kept = transcripts.get(path)
+  if (kept && now - kept.checkedAt < (isLive ? 2000 : 60_000)) return kept.events
+  const st = await $.fs.stat(path).catch(() => undefined)
+  if (!st || st.kind !== 'file') { transcripts.delete(path); return undefined }
+  if (kept && kept.size === st.size && kept.mtimeMs === st.mtimeMs) { kept.checkedAt = now; return kept.events }
+  if (kept && st.size > READ_CAP && now - kept.checkedAt < 10_000) return kept.events
+  const p = newParse(id)
+  if (st.size <= READ_CAP) {
+    const text = await $.fs.read(path).catch(() => undefined)
+    if (text === undefined) return kept?.events
+    parseLines(p, text)
+  } else {
+    let carry = ''
+    for (let block = 0; block * DD_BLOCK < st.size; block += DD_BLOCKS) {
+      const piece = await $.process.run(['dd', `if=${path}`, `bs=${DD_BLOCK}`, `skip=${block}`, `count=${DD_BLOCKS}`, 'status=none'], { timeoutMs: 20000 }).catch(() => undefined)
+      if (!piece || piece.exitCode !== 0) break
+      const text = carry + piece.stdout
+      const cut = text.lastIndexOf('\n')
+      parseLines(p, cut >= 0 ? text.slice(0, cut) : '')
+      carry = cut >= 0 ? text.slice(cut + 1) : text
+      // one line longer than a piece is a huge tool output: it is skipped
+      if (carry.length > READ_CAP) carry = ''
+    }
+    parseLines(p, carry)
+  }
+  const events = finishParse(p)
+  transcripts.set(path, { size: st.size, mtimeMs: st.mtimeMs, checkedAt: now, events })
+  return events
 }

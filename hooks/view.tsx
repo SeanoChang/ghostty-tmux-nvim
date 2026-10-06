@@ -1,8 +1,8 @@
 import type { ClientModule, ClientSurface, JsonValue } from 'claude-code'
 
-import type { Act, AgentNode, EditRecord, ViewProps, Wheel } from '../types'
+import type { Act, AgentNode, EditRecord, TraceRow, TraceView, TraceZoom, ViewProps, Wheel } from '../types'
 import {
-  COLUMNS, LENSES, LENS_NAMES, aspects, boardLanes, columnOf, insights, timelineRows,
+  COLUMNS, LENSES, LENS_NAMES, aspects, boardLanes, columnOf, insights, lensesFor, timelineRows,
   type Column, type Insight, type Lane, type Lens, type TimeRow,
 } from './lens'
 import {
@@ -16,6 +16,7 @@ import {
   HISTORY_FILTERS, HISTORY_FILTER_NAMES, historyItems, historyStats, outcomeOf, runTokens, sparkline, type HistoryFilter,
 } from './history'
 import { kTokens, reportFacts, reportOf, type Facts } from './report'
+import { ZOOMS, ZOOM_NAMES } from './trace'
 
 type Tab = 'live' | 'history'
 type ViewName = 'agents' | 'changes' | 'output'
@@ -56,6 +57,12 @@ type State = {
   query: string
   searching: boolean
   olderOpen: boolean
+  // the trace: how close it reads, what was last asked of the hooks and when,
+  // and the row to come back to after a diff
+  zoom: TraceZoom
+  traceAsk: string
+  traceAskTick: number
+  traceAt: number
 }
 
 const TICK_MS = 500
@@ -65,6 +72,7 @@ const DEFAULT_STATE: State = {
   tab: 'live', path: null, view: 'agents', lens: 'tree', sel: 0, first: 0, agentSel: 0, focus: null, diffFile: null,
   filter: 'all', group: 'none', flipped: [], showDone: [], tick: 0, atSeen: 0, tickAtSeen: 0, onlyRepo: true, help: false,
   wheelSeen: -1, insight: -1, hfilter: 'all', query: '', searching: false, olderOpen: false,
+  zoom: 'story', traceAsk: '', traceAskTick: -100, traceAt: 0,
 }
 const FILTERS: Filter[] = ['all', 'running', 'failed']
 const VIEWS: ViewName[] = ['agents', 'changes', 'output']
@@ -82,7 +90,16 @@ export function viewProps(raw: unknown): ViewProps {
     ...(typeof p.repo === 'string' ? { repo: p.repo } : {}),
     theme: p.theme === 'kitty' ? 'kitty' : 'minimal',
     wheel: { seq: typeof w?.seq === 'number' ? w.seq : 0, by: typeof w?.by === 'number' ? w.by : 0 },
+    ...(traceOf(p.trace) ? { trace: traceOf(p.trace) } : {}),
   }
+}
+
+// A trace from the hooks, when it has the shape the view draws.
+const traceOf = (t: unknown): TraceView | undefined => {
+  const x = t as Partial<TraceView> | undefined
+  if (!x || typeof x.run !== 'string' || !Array.isArray(x.rows) || !Array.isArray(x.lanes)) return undefined
+  return { run: x.run, zoom: ZOOMS.includes(x.zoom as TraceZoom) ? (x.zoom as TraceZoom) : 'story', lanes: x.lanes, rows: x.rows as TraceRow[],
+    total: typeof x.total === 'number' ? x.total : x.rows.length, offset: typeof x.offset === 'number' ? x.offset : 0, missing: typeof x.missing === 'number' ? x.missing : 0 }
 }
 
 export function viewState(raw: unknown): State {
@@ -112,6 +129,10 @@ export function viewState(raw: unknown): State {
     query: typeof s.query === 'string' ? s.query : '',
     searching: s.searching === true,
     olderOpen: s.olderOpen === true,
+    zoom: ZOOMS.includes(s.zoom) ? s.zoom : 'story',
+    traceAsk: typeof s.traceAsk === 'string' ? s.traceAsk : '',
+    traceAskTick: typeof s.traceAskTick === 'number' ? s.traceAskTick : -100,
+    traceAt: num(s.traceAt),
   }
 }
 
@@ -281,7 +302,10 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   const allNodes = [...props.nodes, ...props.history]
   const run = s.path ? nodes.find(n => n.id === s.path) : undefined
   const isInWorkflow = (n: AgentNode) => !!n.parentId && nodes.some(p => p.id === n.parentId && p.kind === 'workflow')
-  const lens: Lens = s.lens
+  // a trace needs a run open; on the run list the lens falls back to the tree
+  const lens: Lens = s.lens === 'trace' && !run ? 'tree' : s.lens
+  const offered = lensesFor(!!run)
+  const nextLensOf = (l: Lens) => offered[(offered.indexOf(l) + 1) % offered.length] ?? 'tree'
 
   // ── the three lenses over the same runs ───────────────────────────────
   // the History page lists runs by day, filtered and searched; inside a run, its tree
@@ -303,7 +327,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   // ── what the screen is about ─────────────────────────────────────────
   const view: ViewName = run ? s.view : 'agents'
   const inAgents = view === 'agents'
-  const mode: 'help' | 'agents' | 'board' | 'timeline' | 'files' | 'diff' | 'output' = s.help ? 'help'
+  const mode: 'help' | 'agents' | 'board' | 'timeline' | 'trace' | 'files' | 'diff' | 'output' = s.help ? 'help'
     : inAgents ? (lens === 'tree' ? 'agents' : lens)
       : view === 'output' ? 'output' : s.diffFile !== null ? 'diff' : 'files'
   const asked = Math.min(Math.max(0, inAgents ? s.sel : s.agentSel), Math.max(0, agentItems.length - 1))
@@ -664,7 +688,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   }
 
   // ── fixed blocks: top rows, the body, bottom rows ─────────────────────
-  const isReading = mode === 'output' || mode === 'diff' || mode === 'help'
+  const isReading = mode === 'output' || mode === 'diff' || mode === 'help' || mode === 'trace'
   // the History page's numbers on top, and the search line while there is one
   const isHistoryPage = isHistory && !run && lens === 'tree'
   const matchCount = isHistoryPage ? agentItems.filter(it => it.kind === 'node').length : 0
@@ -824,8 +848,12 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
 
   // ── selection, scrolling ─────────────────────────────────────────────
   const isLens = mode === 'board' || mode === 'timeline'
+  // the trace the hooks sent for this run at this zoom; its rows are a window of all of them
+  const tv: TraceView | undefined = mode === 'trace' && run && props.trace?.run === run.id && props.trace.zoom === s.zoom ? props.trace : undefined
+  // under the trace: two pinned rows above (legend, lanes), a rule and two detail rows below
+  const traceWin = mode === 'trace' ? Math.max(1, bodyRows - 5) : 0
   const count = mode === 'agents' ? agentItems.length : mode === 'files' ? fileItems.length : mode === 'diff' ? blocks.length
-    : mode === 'output' ? output.length : isLens ? cards.length : 0
+    : mode === 'output' ? output.length : isLens ? cards.length : mode === 'trace' ? tv?.total ?? 0 : 0
   const okRow = (i: number) => (mode === 'agents' ? isSelectable(agentItems[i]) : true)
   const rawSel = mode === 'agents' ? agentSel : isLens ? cardSel : s.sel
   const sel = mode === 'output' || mode === 'help' ? 0 : Math.min(Math.max(0, rawSel), Math.max(0, count - 1))
@@ -843,8 +871,9 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     if (top + tall > first + win) first = top + tall - win
     first = Math.max(0, Math.min(first, Math.max(0, total - win)))
   } else {
-    if (mode !== 'output' && mode !== 'diff' && sel >= first + bodyRows) first = sel - bodyRows + 1
-    if (mode !== 'diff') first = Math.max(0, Math.min(first, Math.max(0, count - bodyRows)))
+    const win = mode === 'trace' ? traceWin : bodyRows
+    if (mode !== 'output' && mode !== 'diff' && sel >= first + win) first = sel - win + 1
+    if (mode !== 'diff') first = Math.max(0, Math.min(first, Math.max(0, count - win)))
   }
 
   // ── actions ──────────────────────────────────────────────────────────
@@ -858,6 +887,8 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   }
   // where a key sits in a lens's list, so a selection survives a change of view
   const indexIn = (key: string | null, at: AgentNode | undefined, l: Lens, flipped = s.flipped, showDone = s.showDone): number => {
+    // a trace comes back to the row it was left on
+    if (l === 'trace') return s.traceAt
     if (!key) return -1
     if (l === 'tree') return listFor(flipped, showDone, at).findIndex(it => keyOf(it) === key)
     return cardsFor(at, l).findIndex(n => n.id === key)
@@ -926,6 +957,21 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     set({ agentSel: i, focus: n.id, view: 'output', sel: 0, first: 0 })
   }
   const pickCard = (i: number) => (i === sel ? activateCard(i) : set({ sel: i }))
+  // a trace row, when the window the hooks sent holds it
+  const traceRow = (i: number): TraceRow | undefined => (tv && i >= tv.offset && i < tv.offset + tv.rows.length ? tv.rows[i - tv.offset] : undefined)
+  const laneId = (r: TraceRow | undefined) => (r && tv ? tv.lanes[r.lane]?.id : undefined)
+  // Enter on a trace row: an edit opens its diff; any other row shows its agent in the tree
+  const activateTrace = (i: number) => {
+    const r = traceRow(i)
+    const id = laneId(r)
+    if (!r || !run) return
+    if (r.kind === 'edit' && r.path) {
+      const focus = id && id !== 'main' ? id : run.id
+      surface.post({ type: 'diff', path: r.path })
+      return set({ view: 'changes', diffFile: r.path, focus, agentSel: 0, traceAt: i, sel: 0, first: 0 })
+    }
+    if (id && id !== 'main') showInTree(id, { traceAt: i })
+  }
   const activate = (i = sel) => {
     if (mode === 'agents') {
       const it = agentItems[i]
@@ -935,6 +981,8 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
       if (it.kind === 'node') return go('output')
     } else if (isLens) {
       activateCard(i)
+    } else if (mode === 'trace') {
+      activateTrace(i)
     } else if (mode === 'files') {
       const it = fileItems[i]
       if (it) openDiff(it.row.path)
@@ -996,8 +1044,29 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
 
   // A wheel move the hooks forwarded: applied once, as j/k would be.
   const wheel = props.wheel ?? { seq: 0, by: 0 }
-  if (surface.state !== undefined && s.wheelSeen !== wheel.seq) {
+  const wheelPending = surface.state !== undefined && s.wheelSeen !== wheel.seq
+  if (wheelPending) {
     surface.setState({ ...s, sel, first, wheelSeen: wheel.seq, ...(s.wheelSeen >= 0 && wheel.by ? moveBy(Math.sign(wheel.by) * Math.min(3, Math.abs(wheel.by))) : {}) })
+  }
+
+  // The trace's rows come from the hooks: ask for the run and zoom, and for a new
+  // window when reading moves past the one held; ask again after 2 s if nothing came
+  // (a reload drops what the hooks held). Leaving the trace lets it go.
+  if (surface.state !== undefined && !wheelPending) {
+    if (mode === 'trace' && run) {
+      const holds = !!tv && first >= tv.offset && (first + traceWin <= tv.offset + tv.rows.length || tv.offset + tv.rows.length >= tv.total)
+      if (!holds) {
+        const offset = Math.max(0, first - 20)
+        const ask = `${run.id}|${s.zoom}|${offset}`
+        if (ask !== s.traceAsk || s.tick - s.traceAskTick >= 4) {
+          surface.post({ type: 'trace', run: run.id, zoom: s.zoom, offset })
+          surface.setState({ ...s, sel, first, traceAsk: ask, traceAskTick: s.tick })
+        }
+      }
+    } else if (s.traceAsk) {
+      surface.post({ type: 'trace', run: null })
+      surface.setState({ ...s, sel, first, traceAsk: '' })
+    }
   }
 
   surface.onKey(({ key, ctrl, meta }) => {
@@ -1045,7 +1114,8 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     else if (key === 'c') (run ? go('changes') : (focusItem?.kind === 'node' || focusCard) && openRun(topOf(focusCard ?? (focusItem as { node: AgentNode }).node), 'changes', focusKey))
     else if (key === 'o') (run ? go('output') : (focusItem?.kind === 'node' || focusCard) && openRun(topOf(focusCard ?? (focusItem as { node: AgentNode }).node), 'output', focusKey))
     else if (key === 'tab') (run ? go(VIEWS[(VIEWS.indexOf(view) + 1) % VIEWS.length]!) : switchTab(s.tab === 'live' ? 'history' : 'live'))
-    else if (key === 'v') switchLens(LENSES[(LENSES.indexOf(lens) + 1) % LENSES.length]!)
+    else if (key === 'v') switchLens(nextLensOf(lens))
+    else if (key === 'z' && mode === 'trace') set({ zoom: ZOOMS[(ZOOMS.indexOf(s.zoom) + 1) % ZOOMS.length]!, sel: 0, first: 0, traceAt: 0 })
     else if (key === 'i' && shownInsights.length) { const next = (s.insight + 1) % shownInsights.length; jumpTo(shownInsights[next]!.target, next) }
     else if (key === 'f') set({ filter: FILTERS[(FILTERS.indexOf(s.filter) + 1) % FILTERS.length], sel: 0, first: 0 })
     else if (key === 'r' && !run) set({ onlyRepo: !s.onlyRepo, sel: 0, first: 0 })
@@ -1189,7 +1259,8 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
 
   const KEYS_HELP: [string, string][] = [
     ['j k  ↑ ↓', 'move, or scroll the text'], ['PgUp PgDn', 'a page at a time'], ['g G', 'first, last'], ['enter', 'open'],
-    ['space  ← →', 'fold or unfold in the tree; ← goes up to the parent'], ['v', 'view: tree, board, timeline'],
+    ['space  ← →', 'fold or unfold in the tree; ← goes up to the parent'], ['v', 'view: tree, board, timeline; in a run, trace'],
+    ['z', 'trace: story, steps, raw'],
     ['i', 'next thing that needs a look'], ['h l', 'live · history, or the views of a run'], ['1 2', 'live, history'],
     ['a c o', 'agents, changes, output'], ['n p', 'next, previous file in a diff'], ['b  ⌫', 'back'],
     ['f', 'filter: all, running, failed · history: all, failed, changed files'], ['s', 'group the run list'],
@@ -1197,7 +1268,103 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     ['r', 'this repo · all repos (history)'],
     ['wheel', 'move, or scroll'], ['?', 'close this help'],
   ]
+  // ── the trace: a vertical log with a lane gutter, git log --graph style ─────
+  const KIND_WORD: Record<TraceRow['kind'], string> = {
+    spawn: 'started an agent', tool: 'tool call', edit: 'edit', message: 'message', handback: 'handed back',
+    report: 'reported', fail: 'ended', quiet: 'quiet gap', note: 'note',
+  }
+  const laneColor = (k: number) => T.lanes[k % T.lanes.length]!
+  const isArrow = (r: TraceRow) => r.to !== undefined && r.to !== r.lane && (r.kind === 'spawn' || r.kind === 'handback' || r.kind === 'report' || r.kind === 'message')
+  const glyphOf = (r: TraceRow): string => {
+    if (r.kind === 'fail') return T.traceFail
+    if (r.kind === 'tool') return r.error ? '✗' : '●'
+    if (r.kind === 'edit') return '◆'
+    if (r.kind === 'spawn') return '▷'
+    if (r.kind === 'message') return r.from ? '◁' : '▷'
+    if (r.kind === 'handback') return '◀'
+    if (r.kind === 'report') return '○'
+    if (r.kind === 'quiet') return '┆'
+    return '·'
+  }
+  const traceRows = (w: number): Row[] => {
+    const lanes = tv?.lanes ?? []
+    // the lanes draw as columns while they fit in two fifths of the width; else one column and chips
+    const graph = w >= 80 && lanes.length > 0 && lanes.length * 2 <= Math.floor(w * 0.4)
+    const t0 = run?.startedAt ?? 0
+    const zoomSegs: Seg[] = [...ZOOMS.flatMap((z, k) => [...(k ? [seg(' · ', C.faint)] : []), seg(ZOOM_NAMES[z], z === s.zoom ? C.accent : C.muted, z === s.zoom)]), seg('   z', C.soft, true), seg(' zoom', C.muted)]
+    const legendParts: Seg[][] = [[seg('●', C.soft), seg(' call', C.faint)], [seg('◆', C.soft), seg(' edit', C.faint)], [seg('├─▶', C.soft), seg(' start', C.faint)],
+      [seg('◀─┤', C.soft), seg(' back', C.faint)], [seg('┄▶', C.soft), seg(' message', C.faint)], [seg(T.traceFail, C.bad), seg(' ended', C.faint)], [seg('┆', C.faint), seg(' quiet', C.faint)]]
+    const legend: Seg[] = [...zoomSegs]
+    for (const part of legendParts) if (width(legend) + 3 + width(part) <= w - 1) legend.push(seg('   '), ...part)
+    const laneSegs: Seg[] = lanes.flatMap((L, k) => [...(k ? [seg('   ')] : []), seg(L.chip, laneColor(k), true), seg(` ${L.label}`, C.muted)])
+    const missing = tv?.missing ? [seg('   '), seg(`${T.warn} ${tv.missing} transcript${tv.missing === 1 ? '' : 's'} no longer on disk`, C.warn)] : []
+    // the warning first, so a long list of lanes never cuts it off
+    const head: Row[] = [{ segs: legend }, { segs: lay([...missing.slice(1), ...(missing.length ? [seg('   ')] : []), ...laneSegs], w) }]
+    const pad = (rows: Row[]) => [...rows, ...Array.from({ length: Math.max(0, traceWin + 5 - rows.length) }, () => ({ segs: [] as Seg[] }))].slice(0, traceWin + 5)
+    if (!tv) return pad([{ segs: legend }, { segs: [] }, { segs: [seg(' '), seg('Reading the transcripts…', C.muted)] }])
+    if (tv.total === 0) return pad([...head, { segs: [] }, { segs: [seg(' '), seg('No steps were recorded for this run.', C.muted)] }])
+    const gutter = (r: TraceRow, i: number): Seg[] => {
+      if (!graph) {
+        const g = glyphOf(r)
+        return [seg(g, r.kind === 'fail' || r.error ? C.bad : laneColor(r.lane)), seg(cellWidth(g) >= 2 ? '' : ' ')]
+      }
+      const cells = lanes.map((L, k) => ({ ch: L.from <= i && i <= L.to ? '│' : ' ', fill: ' ', c: C.rule }))
+      if (isArrow(r)) {
+        const lo = Math.min(r.lane, r.to!)
+        const hi = Math.max(r.lane, r.to!)
+        const line = r.kind === 'message' ? '┄' : '─'
+        const fromLeft = r.lane < r.to!
+        const c = r.kind === 'message' ? C.muted : laneColor(fromLeft ? r.lane : r.to!)
+        for (let k = lo + 1; k < hi; k++) cells[k] = { ch: line, fill: line, c }
+        cells[lo] = { ch: fromLeft ? '├' : '◀', fill: line, c: laneColor(lo) }
+        cells[hi] = { ch: fromLeft ? '▶' : '┤', fill: ' ', c: laneColor(hi) }
+      } else {
+        const g = glyphOf(r)
+        const c = r.kind === 'fail' || r.error ? C.bad : r.kind === 'quiet' || r.kind === 'note' ? C.faint : laneColor(r.lane)
+        cells[r.lane] = { ch: g, fill: cellWidth(g) >= 2 ? '' : ' ', c }
+      }
+      return cells.flatMap(x => [seg(x.ch, x.c), ...(x.fill ? [seg(x.fill, x.c)] : [])])
+    }
+    const nameOf = (k: number | undefined) => (k === undefined ? undefined : lanes[k]?.label)
+    const textSegs = (r: TraceRow): Seg[] => {
+      const target = nameOf(r.to) ?? r.target
+      if (r.kind === 'spawn') return [seg('started ', C.muted), seg(target ?? r.text.replace(/^started /, ''), C.ink)]
+      if (r.kind === 'handback') return [seg(`handed back${target ? ` to ${target}` : ''}: `, C.muted), seg(r.text, C.soft)]
+      if (r.kind === 'report') return [seg(`reported${target ? ` to ${target}` : ''}: `, C.muted), seg(r.text, C.soft)]
+      if (r.kind === 'message') return r.from ? [seg(`from ${r.from}: `, C.muted), seg(r.text, C.soft)] : [seg(`to ${target ?? 'another session'}: `, C.muted), seg(r.text, C.soft)]
+      if (r.kind === 'quiet') return [seg(`··· ${T.quiet} ${r.text.replace(/^quiet /, '')} ···`, C.faint)]
+      if (r.kind === 'note') return [seg(r.text, C.faint)]
+      if (r.kind === 'fail') return [seg(r.text, C.bad, true)]
+      if (r.kind === 'edit') return [seg(r.text, C.ink), seg('   '), seg(`+${r.added ?? 0}`, C.add), seg(' '), seg(`−${r.removed ?? 0}`, C.del)]
+      return [seg(r.text, r.error ? C.bad : C.soft)]
+    }
+    const rows: Row[] = [...head]
+    for (let y = 0; y < traceWin; y++) {
+      const i = first + y
+      const r = traceRow(i)
+      if (!r) { rows.push({ segs: i < tv.total ? [seg(' '), seg('…', C.faint)] : [] }); continue }
+      const on = i === sel
+      const L = lanes[r.lane]
+      const segs: Seg[] = [cursorSeg(on), ...gutter(r, i), seg(' '), seg(padStart(`+${offset(r.at - t0)}`, 8), C.faint), seg('  '),
+        seg(L?.chip ?? '··', laneColor(r.lane), true), seg(' '), ...textSegs(r)]
+      rows.push({ segs: lay(segs, w), bg: on ? C.selBg : undefined, hit: [{ x0: 0, x1: w, act: () => (i === sel ? activateTrace(i) : set({ sel: i })) }] })
+    }
+    // the detail strip: when, which lane, what it cost; then what went in and came out
+    const r = traceRow(sel)
+    const L = r ? lanes[r.lane] : undefined
+    const d1: Seg[] = r && L ? [seg(clockSec(r.at), C.muted), seg('   '), seg(L.chip, laneColor(r.lane), true), seg(` ${L.label}`, C.ink, true),
+      seg(`   ·   ${KIND_WORD[r.kind]}${r.name ? ` · ${r.name}` : ''}${r.count ? ` · ${r.count} calls` : ''}${r.tokens ? ` · ${kTokens(r.tokens)} tokens` : ''}`, C.muted),
+      ...(r.error ? [seg('   ·   error', C.bad)] : [])] : []
+    const d2: Seg[] = !r ? [] : r.kind === 'edit' && r.path
+      ? [seg(r.path, C.soft), seg('   '), seg(`+${r.added ?? 0}`, C.add), seg(' '), seg(`−${r.removed ?? 0}`, C.del), seg('   enter opens the diff', C.faint)]
+      : !r.input && !r.output ? [seg('Nothing more was recorded for this step.', C.faint)]
+        : [...(r.input ? [seg('in ', C.faint), seg(r.input, C.soft)] : []), ...(r.output ? [seg(r.input ? '   out ' : 'out ', C.faint), seg(r.output, C.soft)] : [])]
+    rows.push({ segs: [seg('─'.repeat(w), C.rule)] }, { segs: lay(d1, w) }, { segs: lay(d2, w) })
+    return pad(rows)
+  }
+
   const bodyList: Row[] = (() => {
+    if (mode === 'trace') return traceRows(listW)
     if (mode === 'help') {
       return [{ segs: [] }, ...KEYS_HELP.map(([k, what]) => ({ segs: [seg(padEnd(k, 14), C.ink, true), seg(what, C.muted)] }))]
     }
@@ -1245,10 +1412,10 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
   })()
   // the lens switch, at the right of the caption: all three when there is room, else the current one
   const lensSegs = (room: number, x: number): { segs: Seg[]; hit: Hit[] } => {
-    const full = tabRow(LENSES.map(l => [LENS_NAMES[l], inAgents && lens === l, () => switchLens(l)] as [string, boolean, () => void]), x)
+    const full = tabRow(offered.map(l => [LENS_NAMES[l], inAgents && lens === l, () => switchLens(l)] as [string, boolean, () => void]), x)
     if (width(full.segs) <= room) return full
     const short = [seg('v ', C.soft, true), seg(LENS_NAMES[lens], C.accent, true)]
-    return { segs: short, hit: [{ x0: x, x1: x + width(short), act: () => switchLens(LENSES[(LENSES.indexOf(lens) + 1) % LENSES.length]!) }] }
+    return { segs: short, hit: [{ x0: x, x1: x + width(short), act: () => switchLens(nextLensOf(lens)) }] }
   }
   const caption: Row = (() => {
     if (mode === 'help') return { segs: [seg('Keys', C.accent, true), seg('   every key the pane takes', C.muted)] }
@@ -1284,11 +1451,14 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     const right = lensSegs(lensW, x)
     return { segs: [...leftLaid, seg(' '.repeat(Math.max(2, x - width(leftLaid)))), ...right.segs], hit: [...left.hit.filter(h => h.x1 <= width(leftLaid)), ...right.hit] }
   })()
-  const nextLens = LENS_NAMES[LENSES[(LENSES.indexOf(lens) + 1) % LENSES.length]!].toLowerCase()
+  const nextLens = LENS_NAMES[nextLensOf(lens)].toLowerCase()
   const insightKey: [string, string][] = shownInsights.length ? [['i', 'insight']] : []
   const nextFilter = HISTORY_FILTER_NAMES[HISTORY_FILTERS[(HISTORY_FILTERS.indexOf(s.hfilter) + 1) % HISTORY_FILTERS.length]!]
   const keyList: [string, string][] = mode === 'help' ? [['?', 'close']]
-    : s.searching ? [['type', 'search'], ['enter', 'keep'], ['esc', 'clear'], ['⌫', 'delete'], ['↑ ↓', 'move']]
+    : s.searching ? [['type', 'search'], ['enter', 'keep'], ['ctrl+u', 'clear'], ['⌫', 'delete'], ['↑ ↓', 'move']]
+    : mode === 'trace' ? [['j k', 'move'], ['z', ZOOM_NAMES[ZOOMS[(ZOOMS.indexOf(s.zoom) + 1) % ZOOMS.length]!].toLowerCase()],
+      ...(traceRow(sel)?.kind === 'edit' ? [['enter', 'diff']] as [string, string][] : laneId(traceRow(sel)) && laneId(traceRow(sel)) !== 'main' ? [['enter', 'agent']] as [string, string][] : []),
+      ['v', nextLens], ['h l', 'views'], ['b', 'back'], ['?', 'help']]
     : isHistoryPage && mode === 'agents' ? [['j k', 'move'], ['enter', 'open'], ['/', 'search'], ['f', nextFilter], ['o', s.olderOpen ? 'hide older' : 'older'],
       ['v', nextLens], ['r', s.onlyRepo ? 'all repos' : 'this repo'], ['h l', 'live · history'], ['?', 'help']]
     : !run && mode === 'agents' ?[['j k', 'move'], ['enter', 'open'], ['space', 'fold'], ['v', nextLens], ...insightKey, ['c', 'changes'], ['h l', 'live · history'], ['s', 'group'], ...(isHistory ? [['r', s.onlyRepo ? 'all repos' : 'this repo'] as [string, string]] : []), ['?', 'help']]
@@ -1297,7 +1467,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
           : mode === 'files' ? [['j k', 'move'], ['enter', 'diff'], ['h l', 'views'], ['b', 'back'], ['?', 'help']]
             : mode === 'diff' ? [['j k', 'edit'], ['enter', 'go to agent'], ['n p', 'files'], ['b', 'back'], ['?', 'help']]
               : [['j k', 'scroll'], ['h l', 'views'], ['b', 'back'], ['?', 'help']]
-  const hiddenBelow = mode === 'diff' ? 0 : body ? body.rows.length - 1 - first - Math.max(1, bodyRows - 1) : count - first - bodyRows
+  const hiddenBelow = mode === 'diff' ? 0 : body ? body.rows.length - 1 - first - Math.max(1, bodyRows - 1) : count - first - (mode === 'trace' ? traceWin : bodyRows)
   const footer: Row = (() => {
     const right: Seg[] = hiddenBelow > 0 ? [seg(`${hiddenBelow} more below`, C.faint)] : []
     const room = IW - width(right) - 2
@@ -1368,7 +1538,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     const row = pointerRows[y]
     const hit = row?.hit?.find(h => x >= h.x0 && x < h.x1)
     if (hit) return hit.act()
-    if (mode === 'help' || mode === 'output' || isLens) return
+    if (mode === 'help' || mode === 'output' || isLens || mode === 'trace') return
     const at = y - bodyTop
     if (at < 0 || at >= bodyRows) return
     if (mode === 'diff') return

@@ -1,11 +1,14 @@
 import type { AgentNode } from '../types'
 import { childrenOf, counts, firstSentence, overlaps, passes, pipeline, scopeNodes, type Filter } from './list'
 
-// Three ways to look at the same runs: their shape (tree), where they stand
-// (board), and where the time went (timeline). Pure: the view draws what these return.
-export type Lens = 'tree' | 'board' | 'timeline'
-export const LENSES: Lens[] = ['tree', 'board', 'timeline']
-export const LENS_NAMES: Record<Lens, string> = { tree: 'Tree', board: 'Board', timeline: 'Timeline' }
+// Four ways to look at the same runs: their shape (tree), where they stand
+// (board), where the time went (timeline), and, inside a run, the trail of what
+// each agent did and handed to the others (trace). Pure: the view draws what these return.
+export type Lens = 'tree' | 'board' | 'timeline' | 'trace'
+export const LENSES: Lens[] = ['tree', 'board', 'timeline', 'trace']
+export const LENS_NAMES: Record<Lens, string> = { tree: 'Tree', board: 'Board', timeline: 'Timeline', trace: 'Trace' }
+// The lenses a place offers: a trace needs a run open.
+export const lensesFor = (hasRun: boolean): Lens[] => (hasRun ? LENSES : LENSES.filter(l => l !== 'trace'))
 
 export type Column = 'running' | 'done' | 'failed'
 export const COLUMNS: Column[] = ['running', 'done', 'failed']
