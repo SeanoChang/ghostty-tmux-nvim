@@ -25,7 +25,8 @@ export function describeTool(tool: string, input: Record<string, unknown>): { ac
     case 'MultiEdit': return { act: 'write', activity: `Editing ${baseName(s('file_path'))}` }
     case 'Write': return { act: 'write', activity: `Writing ${baseName(s('file_path'))}` }
     case 'NotebookEdit': return { act: 'write', activity: `Editing ${baseName(s('notebook_path'))}` }
-    case 'Bash': return { act: 'run', activity: `Running ${clip(firstLine(s('command')), 40)}` }
+    // a Bash call's own description says what it does in words; the command is the fallback
+    case 'Bash': return { act: 'run', activity: s('description') ? clip(s('description'), 60) : `Running ${clip(firstLine(s('command')), 40)}` }
     case 'Monitor': return { act: 'run', activity: 'Watching a process' }
     case 'Agent':
     case 'Task': return { act: 'run', activity: `Handing off: ${clip(s('description'), 36)}` }
