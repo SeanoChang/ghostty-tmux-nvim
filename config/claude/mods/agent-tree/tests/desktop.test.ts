@@ -3,7 +3,7 @@ import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 
 import { ART, SLOTS } from '../hooks/desktop/sprites'
-import { spriteSvg, walkSvg } from '../hooks/desktop/svg'
+import { spriteSvg, walkSlot } from '../hooks/desktop/svg'
 
 // Phase 6: the desktop surface draws its own native view (Svg, Buttons, Code,
 // Markdown) instead of the terminal grid. These tests drive it by pressing.
@@ -216,13 +216,12 @@ test('desktop: a run\'s timeline names its critical path and saves a picture', a
   await ui.press({ key: 'tab:history' })
   await ui.press({ key: 'run:w1' })
   await ui.press({ key: 'lens:timeline' })
-  // the timeline opens on its own card: a headline and time tiles
-  expect(await ui.find({ text: /^TIMELINE · Review changed files across dimensions$/ })).toBeDefined()
-  expect(await ui.find({ text: 'critical path · 2 agents' })).toBeDefined()
-  for (const label of ['total time', 'idle', 'agents']) expect(await ui.find({ text: label })).toBeDefined()
+  // the timeline opens on one line of facts, not a card: time, critical path, agents
+  expect(await ui.find({ text: /^TIMELINE/ })).toBeUndefined()
+  expect(await ui.find({ key: 'facts-timeline' })).toBeDefined()
+  expect(await ui.find({ text: /^took / })).toBeDefined()
+  expect(await ui.find({ text: /critical path .* · 2 agents/ })).toBeDefined()
   const md = ((await ui.findAll({ type: 'Markdown' })) as unknown as Found[]).map(m => String(m.props?.text ?? ''))
-  // the time is the large headline; the critical path follows as body text
-  expect(md.some(m => /^## It took [^.]+\.\n\n2 agents on the critical path set the end time\.$/.test(m))).toBe(true)
   // its phases are section headings, as in the report
   expect(md).toContain('### Review')
   // each bar's label is a native button that picks the agent
@@ -245,15 +244,18 @@ test('sprites: each art set fills every slot; grids are rectangular, every pixel
       expect(svg).toContain('crispEdges')
       expect(svg.length).toBeLessThan(131_072)
     }
-    expect((walkSvg(set, 48).match(/<animate /g) ?? []).length).toBe(4)
+    // the walk is four plain frames, stepped by the redraw tick: no SMIL, so no sandboxed frame
+    const walk = [0, 1000, 2000, 3000].map(ms => spriteSvg(set, walkSlot(ms), 48))
+    expect(walk.some(svg => svg.includes('<animate'))).toBe(false)
+    expect(new Set(walk).size).toBeGreaterThan(1)
   }
   // kitty's failed cat lies down: its top five rows are clear, unlike done, which sits up
   expect(ART.kitty.pix.failed.slice(0, 5).every(r => /^\.+$/.test(r))).toBe(true)
   expect(ART.kitty.pix.done.slice(0, 5).some(r => /[^.]/.test(r))).toBe(true)
 })
 
-// The run view, direction C: a summary card first, one row of controls, no outlines.
-test('desktop: a run opens on a tinted summary card with tiles, under one row of controls, with no outlines', async ($, on) => {
+// The run view (live views review, 2026-10-07): a plain header, one row of controls, no outlines.
+test('desktop: a run opens on a plain header with one fact line, under one row of controls, with no outlines', async ($, on) => {
   const ui = await desk($, on)
   await ui.press({ key: 'tab:history' })
   await ui.press({ key: 'run:w1' })
@@ -262,26 +264,28 @@ test('desktop: a run opens on a tinted summary card with tiles, under one row of
   expect(await ui.find({ key: 'lens:timeline' })).toBeDefined()
   expect(await ui.find({ key: 'tab:live' })).toBeUndefined()
   expect(await ui.find({ key: 'scope:all' })).toBeUndefined()
-  // the card: status and name, then tiles for time, tokens, problems and files
-  expect(await ui.find({ text: /^DONE · Review changed files across dimensions$/ })).toBeDefined()
-  for (const label of ['time', 'tokens', 'problem', '1 file changed', 'agents · 2 phases']) expect(await ui.find({ text: label })).toBeDefined()
-  // nothing in the pane draws an outline
+  // the header: a status line with its glyph, the name, then one line of facts; no tiles
+  expect(await ui.find({ text: /✓ DONE/ })).toBeDefined()
+  expect(await ui.find({ key: 'title-detail' })).toBeDefined()
+  for (const fact of [/1 problem/, /1 file \+3 −1/, /2 agents · 2 phases/]) expect(await ui.find({ text: fact })).toBeDefined()
+  expect(await ui.find({ key: 'tile-detail-time' })).toBeUndefined()
+  // nothing in the pane draws an outline, and the header has no tinted box
   const boxes = (await ui.findAll({ type: 'Box' })) as unknown as Found[]
   expect(boxes.some(b => b.props?.borderStyle)).toBe(false)
-  expect(boxes.some(b => String(b.props?.backgroundColor ?? '').length === 9)).toBe(true)
+  const card = (await ui.find({ key: 'card-detail' })) as Found | undefined
+  expect(card?.props?.backgroundColor).toBeUndefined()
   await ui.unmount()
 })
 
-test('desktop: the board opens on its card; lanes are headed sections of status-tinted agent tiles', async ($, on) => {
+test('desktop: the board has no summary card; lanes are headed sections of status-tinted agent tiles', async ($, on) => {
   const ui = await desk($, on)
   await ui.press({ key: 'tab:history' })
   await ui.press({ key: 'lens:board' })
-  expect(await ui.find({ text: /^BOARD · History runs$/ })).toBeDefined()
+  // the header's status line already holds the counts, so no card repeats them
+  expect(await ui.find({ text: /^BOARD/ })).toBeUndefined()
   const md = ((await ui.findAll({ type: 'Markdown' })) as unknown as Found[]).map(m => String(m.props?.text ?? ''))
-  // w1b failed and h2 failed: 2 of 4 agents
-  expect(md).toContain('## 2 of 4 agents failed or stopped.')
-  for (const label of ['running', 'failed or stopped', 'done', 'runs']) expect(await ui.find({ text: label })).toBeDefined()
   expect(md).toContain('### Review changed files across dimensions')
+  expect(await ui.find({ key: 'bsel:w1b' })).toBeDefined()
   const boxes = (await ui.findAll({ type: 'Box' })) as unknown as Found[]
   expect(boxes.some(b => b.props?.borderStyle)).toBe(false)
   await ui.unmount()
@@ -292,6 +296,7 @@ test('desktop: a run that is one agent shows its card, not a one-row tree', asyn
   await ui.press({ key: 'tab:history' })
   await ui.press({ key: 'run:h1' })
   expect(await ui.find({ key: 'sel:h1' })).toBeUndefined()
-  expect(await ui.find({ text: /^DONE · Map nark-os agents and memory$/ })).toBeDefined()
+  expect(await ui.find({ text: /✓ DONE/ })).toBeDefined()
+  expect(await ui.find({ text: 'Map nark-os agents and memory' })).toBeDefined()
   await ui.unmount()
 })

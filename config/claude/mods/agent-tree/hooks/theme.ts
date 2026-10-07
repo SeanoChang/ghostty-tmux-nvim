@@ -3,7 +3,8 @@ import type { AgentNode, NodeStatus } from '../types'
 // Four looks, chosen in /config: minimal works on every terminal (plain Unicode,
 // one accent); kitty, fish and dog are playful (emoji, which take two cells), each
 // telling one small story: cats out exploring, lines cast for a catch, dogs on walks.
-// Colour carries state before it decorates: ok, warn and bad mean status only.
+// Running wears the theme's accent and done is calm, so a live run looks like its theme;
+// warn means "needs a look". Every status has its own icon, so none rests on red vs green.
 export type ThemeName = 'kitty' | 'fish' | 'dog' | 'minimal'
 export const THEME_NAMES: readonly ThemeName[] = ['minimal', 'kitty', 'fish', 'dog']
 
@@ -42,8 +43,8 @@ const MINIMAL: Theme = {
     accent: '#7aa2f7', selBg: '#2a2f38', ok: '#9ece6a', warn: '#e0af68', bad: '#f7768e', add: '#9ece6a', del: '#f7768e',
   },
   status: {
-    running: { icon: '●', word: 'Running', color: '#e0af68' },
-    done: { icon: '✓', word: 'Done', color: '#9ece6a' },
+    running: { icon: '●', word: 'Running', color: '#7aa2f7' },
+    done: { icon: '✓', word: 'Done', color: '#8a909c' },
     failed: { icon: '✗', word: 'Failed', color: '#f7768e' },
     killed: { icon: '■', word: 'Stopped', color: '#8a909c' },
   },
@@ -70,8 +71,8 @@ const KITTY: Theme = {
     accent: '#ff8f70', selBg: '#3d2838', ok: '#a6d189', warn: '#f5c27a', bad: '#f38ba8', add: '#a6d189', del: '#f38ba8',
   },
   status: {
-    running: { icon: '🐱', word: 'Running', color: '#f5c27a' },
-    done: { icon: '😺', word: 'Done', color: '#a6d189' },
+    running: { icon: '🐱', word: 'Running', color: '#ff8f70' },
+    done: { icon: '😺', word: 'Done', color: '#b8968a' },
     failed: { icon: '😿', word: 'Failed', color: '#f38ba8' },
     killed: { icon: '🙀', word: 'Stopped', color: '#b8968a' },
   },
@@ -99,8 +100,8 @@ const FISH: Theme = {
     accent: '#4fb3d9', selBg: '#173042', ok: '#8bd5a0', warn: '#f2c26b', bad: '#f28b82', add: '#8bd5a0', del: '#f28b82',
   },
   status: {
-    running: { icon: '🎣', word: 'Running', color: '#f2c26b' },
-    done: { icon: '🐟', word: 'Done', color: '#8bd5a0' },
+    running: { icon: '🎣', word: 'Running', color: '#4fb3d9' },
+    done: { icon: '🐟', word: 'Done', color: '#86a5b5' },
     failed: { icon: '🐡', word: 'Failed', color: '#f28b82' },
     killed: { icon: '🪝', word: 'Stopped', color: '#86a5b5' },
   },
@@ -128,8 +129,8 @@ const DOG: Theme = {
     accent: '#e6a85a', selBg: '#3a2d22', ok: '#a6d189', warn: '#f5d76e', bad: '#f08a7a', add: '#a6d189', del: '#f08a7a',
   },
   status: {
-    running: { icon: '🐕', word: 'Running', color: '#f5d76e' },
-    done: { icon: '🐶', word: 'Done', color: '#a6d189' },
+    running: { icon: '🐕', word: 'Running', color: '#e6a85a' },
+    done: { icon: '🐶', word: 'Done', color: '#b09a82' },
     failed: { icon: '🥺', word: 'Failed', color: '#f08a7a' },
     killed: { icon: '🦴', word: 'Stopped', color: '#b09a82' },
   },

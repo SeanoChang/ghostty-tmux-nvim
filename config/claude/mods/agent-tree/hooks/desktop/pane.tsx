@@ -1,6 +1,6 @@
 import type { AgentNode, DeskUi, EditRecord, PatternsDoc, TraceZoom, ViewProps } from '../../types'
 import { HISTORY_FILTERS, HISTORY_FILTER_NAMES, historyItems, historyStats, outcomeOf, runTokens } from '../history'
-import { aspects, boardLanes, criticalPath, idleGaps, insights, listTimelineRows, rollup, timelineRows, type Lane } from '../lens'
+import { boardLanes, criticalPath, idleGaps, insights, listTimelineRows, liveGroups, rollup, timelineRows, type Lane } from '../lens'
 import {
   childrenOf, counts, fileRows, folderKey, joinNodes, lineDiff, noReportReason, overlaps, pipeline, prettyModel, prettyType, runKey,
   runTree, scopeNodes, shortPaths, topItems, type Item,
@@ -9,10 +9,10 @@ import { kTokens, reportFacts, reportOf } from '../report'
 import { ZOOMS, ZOOM_NAMES } from '../trace'
 import { unifiedHunks } from '../view'
 import {
-  BriefBlock, Chip, Empty, Heading, KindMark, ReportBlock, SectionLabel, StatusMark, STATUS_WORD, SummaryCard, aiLabel, briefMarkdown, changeTotals, clock, duration, metaLine, num,
-  mdText, outputMarkdown, tilesOf, tint, tokensOf, type Els, type Part, type Tile,
+  BriefBlock, Chip, Empty, Heading, KindMark, PlainHeader, ReportBlock, SectionLabel, StatusMark, STATUS_GLYPH, STATUS_WORD, aiLabel, briefMarkdown, changeTotals, clock, duration, factsOf, metaLine, num,
+  mdText, outputMarkdown, tint, tokensOf, type Els, type Fact, type Part,
 } from './parts'
-import { STRIP_H, clip, diffBarSvg, iconSvg, rulerSvg, sparkSvg, spriteSvg, statusBarSvg, statusColor, stripSvg, traceSvg, walkSvg, type DeskTokens, type TimeBar } from './svg'
+import { STRIP_H, clip, diffBarSvg, iconSvg, rulerSvg, sparkSvg, spriteSvg, statusBarSvg, statusColor, stripSvg, traceSvg, walkSlot, type DeskTokens, type TimeBar } from './svg'
 
 // The desktop's own view of agent-tree: native controls, Svg pictures and pixel
 // cats, drawn straight into the pane (a Client's elements have no Svg). It takes
@@ -119,7 +119,7 @@ function Header(c: Ctx, history: AgentNode[], run: AgentNode | undefined) {
           <Button key="back" plain label={`‹ ${ui.tab === 'live' ? 'Live' : 'History'}`} onPress={() => openRun(c, null)} />
           {lensBar}
           <Box flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
-            {inPart ? <Text color={t.muted} wrap="truncate-end">in {run.label}</Text> : null}
+            {inPart ? <Button key="crumb" plain dimColor label={`in ${run.label}`} onPress={() => c.acts.set({ sel: null, file: null })} /> : null}
           </Box>
           {ExplainButton(c, run)}
         </Box>
@@ -153,9 +153,9 @@ function Header(c: Ctx, history: AgentNode[], run: AgentNode | undefined) {
       </Box>
       {/* row 3: one quiet status line */}
       <Box flexDirection="row" columnGap={1} flexWrap="wrap">
-        {tally(cnt.running, 'running', t.warn)}<Text color={t.muted}>·</Text>
-        {tally(cnt.done, 'done', t.ok)}<Text color={t.muted}>·</Text>
-        {tally(cnt.failed + cnt.stopped, 'failed or stopped', t.bad)}<Text color={t.muted}>·</Text>
+        {tally(cnt.running, `${STATUS_GLYPH.running} running`, statusColor(t, 'running'))}<Text color={t.muted}>·</Text>
+        {tally(cnt.done, `${STATUS_GLYPH.done} done`, t.muted)}<Text color={t.muted}>·</Text>
+        {tally(cnt.failed + cnt.stopped, `${STATUS_GLYPH.failed} failed or stopped`, t.bad)}<Text color={t.muted}>·</Text>
         <Text color={t.muted}>{ui.onlyRepo && c.data.repo ? shortHome(c.data.repo) : 'all repos'}</Text><Text color={t.muted}>·</Text>
         <Text color={c.data.ai === 'off' ? t.muted : t.accent}>AI · {c.data.ai ?? 'cheap'}</Text>
         <Text color={t.muted}>(change in /config)</Text>
@@ -251,40 +251,60 @@ function LiveList(c: Ctx) {
   return <Box flexDirection="column" gap={1}>{items.map(it => RunCard(c, it.node, c.data.nodes))}</Box>
 }
 
+// A live run: its name in bold with its counts, then one row per agent grouped by
+// status (running, then failed or stopped, then done, which folds). No tinted box:
+// weight, glyphs and spacing carry the order.
 function RunCard(c: Ctx, n: AgentNode, nodes: AgentNode[]) {
-  const { Box, Text, Button, Svg } = c.els
-  const { t } = c
+  const { Box, Text, Button } = c.els
+  const { t, ui } = c
   const scope = scopeNodes(nodes, { kind: 'node', id: n.id })
-  const agents = scope.filter(k => k.kind === 'agent')
-  const r = rollup(n.kind === 'agent' ? [n] : agents)
+  const agents = scope.filter(k => k.kind === 'agent' && k.id !== n.id)
   const files = fileRows(scope)
   const ch = changeTotals(files)
   const clash = n.kind === 'group' ? overlaps(agents) : []
+  const cn = counts(agents)
+  const sum = [cn.running ? `${cn.running} running` : '', cn.failed + cn.stopped ? `${cn.failed + cn.stopped} failed or stopped` : '', cn.done ? `${cn.done} done` : ''].filter(Boolean).join(' · ')
+  const open = (k: AgentNode) => c.acts.set({ run: n.id, sel: k.id, file: null })
+  const doneKey = `done:${n.id}`
+  const row = (k: AgentNode) => {
+    const step = k.status === 'running' ? (k.activity ?? k.lastTool ?? '') : (reportOf(k)?.result ?? '')
+    const quiet = isQuiet(k, c.now)
+    return (
+      <Box key={`lr-${k.id}`} flexDirection="row" gap={1} alignItems="center" paddingLeft={2} hover={{ backgroundColor: tint(t.accent, '14') }}>
+        {StatusMark(c.els, t, k.status, 14, quiet)}
+        <Box flexShrink={1} minWidth={10} overflow="hidden"><Button key={`lsel:${k.id}`} plain label={clip(k.label, 48)} onPress={() => open(k)} /></Box>
+        <Box flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
+          {quiet
+            ? <Text color={t.warn} wrap="truncate-end">⚑ quiet {duration(c.now - (k.lastToolAt ?? k.startedAt))}</Text>
+            : <Text color={t.muted} wrap="truncate-end">{step ? `· ${step}` : ''}</Text>}
+        </Box>
+        <Box flexShrink={0}><Text color={t.muted}>{duration((k.endedAt ?? c.now) - k.startedAt)}{k.tokens ? ` · ${kTokens(k.tokens)}` : ''}</Text></Box>
+      </Box>
+    )
+  }
   return (
-    <Box key={`card-${n.id}`} flexDirection="column" backgroundColor={tint(n.status === 'running' ? t.accent : t.rule)} paddingX={2} paddingY={1}>
-      <Box flexDirection="row" gap={1} alignItems="center">
+    <Box key={`card-${n.id}`} flexDirection="column" paddingBottom={1}>
+      <Box flexDirection="row" gap={1} alignItems="center" flexWrap="wrap">
         {StatusMark(c.els, t, n.status)}
         {KindMark(c.els, t, n.kind)}
         <Button key={`run:${n.id}`} plain label={clip(n.label, 70)} onPress={() => openRun(c, n.id)} />
-        <Text color={statusColor(t, n.status)}>{STATUS_WORD[n.status]}</Text>
+        <Text color={t.muted}>{sum ? `· ${sum}` : ''}</Text>
       </Box>
-      <Text color={t.muted}>{metaLine(n, c.now)}{n.kind !== 'agent' ? ` · ${agents.length} agents` : ''}{files.length ? ` · +${num(ch.added)} −${num(ch.removed)}` : ''}</Text>
-      {n.kind !== 'agent'
-        ? (
-          <Box flexDirection="row" gap={1} alignItems="center">
-            <Svg source={statusBarSvg(t, { ...r, total: r.total })} alt={`${r.finished} of ${r.total} finished`} width={96} height={6} />
-            <Text color={t.muted}>{r.finished}/{r.total} done</Text>
+      <Box paddingLeft={2}><Text color={t.muted}>{metaLine(n, c.now)}{files.length ? ` · ${files.length} file${files.length === 1 ? '' : 's'} +${num(ch.added)} −${num(ch.removed)}` : ''}</Text></Box>
+      {n.kind === 'agent' && !agents.length ? null : liveGroups(nodes, n.id).map(g => {
+        const isDone = g.status === 'done'
+        const isOpen = !isDone || ui.flipped.includes(doneKey)
+        return (
+          <Box key={`lg-${n.id}-${g.status}`} flexDirection="column" paddingTop={1}>
+            <Box flexDirection="row" gap={1} alignItems="center" paddingLeft={2}>
+              {isDone
+                ? <Button key={`fold:${doneKey}`} plain label={`${isOpen ? '▾' : '▸'} ${STATUS_GLYPH.done} DONE ${g.nodes.length}`} onPress={() => c.acts.set({ flipped: toggle(ui.flipped, doneKey) })} />
+                : <Text color={statusColor(t, g.status)} bold>{STATUS_GLYPH[g.status]} {STATUS_WORD[g.status].toUpperCase()} {g.nodes.length}</Text>}
+            </Box>
+            {isOpen ? g.nodes.map(row) : null}
           </Box>
         )
-        : null}
-      {n.kind === 'group'
-        ? <Box flexDirection="row" gap={1} flexWrap="wrap">{aspects(nodes, n.id).map(a => (
-          <Box key={`asp-${a.node.id}`} flexDirection="row" gap={1} backgroundColor={tint(t.rule, '26')} paddingX={1}>
-            {StatusMark(c.els, t, a.node.status, 12)}
-            <Text>{a.text}</Text>
-          </Box>
-        ))}</Box>
-        : null}
+      })}
       {clash.map(o => <Text key={`clash-${o.path}`} color={t.warn}>⚠ {o.path.split('/').pop()} edited by {o.by.length} members ({o.by.map(b => b.label).join(', ')})</Text>)}
     </Box>
   )
@@ -461,13 +481,18 @@ function Tree(c: Ctx, run: AgentNode) {
   const { Box, Text, Button, Svg } = c.els
   const { t, ui } = c
   const items = runTree(run, c.all, 'all', ui.flipped, ui.flipped)
-  // the picked row gets a tinted ground; its label never has to share space with a marker
-  const pickedBg = `${t.accent}26`
+  // the picked row gets a clear tinted ground, and every row lights under the pointer,
+  // so rows read as pressable; its label never has to share space with a marker
+  const pickedBg = tint(t.accent, '40')
+  const hoverBg = { backgroundColor: tint(t.accent, '14') }
+  const byId = new Map(c.all.map(x => [x.id, x]))
+  // a sub-agent (spawned by an agent, not by the run) draws dim, one step down
+  const isSub = (n: AgentNode) => n.kind === 'agent' && !!n.parentId && byId.get(n.parentId)?.kind === 'agent' && n.parentId !== run.id
   const INDENT = 3
   // the right-hand facts sit in one block that never shrinks, so they line up and never spill
   const facts = (parts: unknown[]) => <Box flexShrink={0} flexDirection="row" gap={1} alignItems="center">{parts}</Box>
-  const label = (key: string, text: string, onPress: () => void) => (
-    <Box flexGrow={1} flexShrink={1} minWidth={10} overflow="hidden"><Button key={key} plain label={text} onPress={onPress} /></Box>
+  const label = (key: string, text: string, onPress: () => void, dim = false) => (
+    <Box flexGrow={1} flexShrink={1} minWidth={10} overflow="hidden"><Button key={key} plain {...(dim ? { dimColor: true } : {})} label={text} onPress={onPress} /></Box>
   )
   const fold = (key: string, isOpen: boolean) => (
     <Box width={2} flexShrink={0}><Button key={`fold:${key}`} plain label={isOpen ? '▾' : '▸'} onPress={() => c.acts.set({ flipped: toggle(ui.flipped, key) })} /></Box>
@@ -484,11 +509,14 @@ function Tree(c: Ctx, run: AgentNode) {
           const kids = n.kind === 'agent' ? [] : scopeNodes(c.all, { kind: 'node', id: n.id }).filter(k => k.kind === 'agent')
           const r = rollup(kids)
           return (
-            <Box key={`tn-${n.id}`} flexDirection="row" gap={1} alignItems="center" paddingLeft={it.depth * INDENT} paddingY={0} {...(isSel ? { backgroundColor: pickedBg } : {})}>
+            <Box key={`tn-${n.id}`} flexDirection="row" gap={1} alignItems="center" paddingLeft={it.depth * INDENT} {...(n.id === run.id ? { paddingBottom: 1 } : {})} hover={hoverBg} {...(isSel ? { backgroundColor: pickedBg } : {})}>
               {it.fold ? fold(it.fold.key, it.fold.isOpen) : noFold}
               {StatusMark(c.els, t, n.status, 16, isQuiet(n, c.now))}
               {KindMark(c.els, t, n.kind)}
-              {label(`sel:${n.id}`, n.label, () => c.acts.set({ sel: n.id, file: null }))}
+              {n.id === run.id
+                // the run itself: bold, the top of the hierarchy (pressing the crumb or Esc returns to it)
+                ? <Box key={`rlabel:${n.id}`} flexGrow={1} flexShrink={1} minWidth={10} overflow="hidden"><Text bold wrap="truncate-end">{n.label}</Text></Box>
+                : label(`sel:${n.id}`, n.label, () => c.acts.set({ sel: n.id, file: null }), isSub(n))}
               {facts([
                 kids.length ? <Svg key="bar" source={statusBarSvg(t, r, 48, 5)} alt={`${r.finished} of ${r.total}`} width={48} height={5} /> : null,
                 kids.length ? <Text key="n" color={t.muted}>{r.finished}/{r.total}</Text> : null,
@@ -554,26 +582,10 @@ function Board(c: Ctx, lanes: Lane[], run: AgentNode | undefined, cols = c.colum
     const cn = counts(cards)
     return [cn.running ? `${cn.running} running` : '', cn.failed + cn.stopped ? `${cn.failed + cn.stopped} failed or stopped` : '', cn.done ? `${cn.done} done` : ''].filter(Boolean).join(' · ')
   }
-  // the card: how the agents stand, as a headline and tiles
-  const every = lanes.flatMap(l => l.cards)
-  const cn = counts(every)
-  const failed = cn.failed + cn.stopped
-  const headline = failed
-    ? `${failed} of ${cn.total} agents failed or stopped.`
-    : cn.running ? `${cn.running} of ${cn.total} agents still run.` : `All ${cn.total} agents finished.`
-  const color = failed ? t.bad : cn.running ? t.warn : t.ok
-  const runs = lanes.filter(l => l.kind !== 'singles').length + (lanes.find(l => l.kind === 'singles')?.cards.length ?? 0)
-  const tiles: Tile[] = [
-    { value: String(cn.running), label: 'running', ...(cn.running ? { color: t.warn } : {}) },
-    { value: String(failed), label: 'failed or stopped', ...(failed ? { color: t.bad } : {}) },
-    { value: String(cn.done), label: 'done', ...(cn.done ? { color: t.ok } : {}) },
-    run ? { value: String(lanes.length), label: lanes.length === 1 ? 'lane' : 'lanes' } : { value: String(runs), label: runs === 1 ? 'run' : 'runs' },
-  ]
   // agents as tiles, tinted by status: two to a row when each still gets 48 columns
   const tileW = cols >= 100 ? Math.floor((cols - 1) / 2) : undefined
   return (
     <Box flexDirection="column" gap={1}>
-      {SummaryCard(c.els, t, { id: 'board', statusWord: 'Board', color, title: run ? run.label : `${ui.tab === 'live' ? 'Live' : 'History'} runs`, result: headline, tiles })}
       {!run ? <Text color={t.muted}>Each section is one run. Press an agent to open its run.</Text> : null}
       {lanes.map(l => {
         const cards = [...l.cards].sort((a, b) => BOARD_ORDER[a.status] - BOARD_ORDER[b.status] || a.startedAt - b.startedAt)
@@ -615,7 +627,8 @@ function Timeline(c: Ctx, run: AgentNode | undefined, tops: AgentNode[], cols = 
   const { t, ui } = c
   // on the run list, each run opens into its agents (newest 8 runs), so the bars are not 4 thin lines
   const list = run ? undefined : listTimelineRows(c.all, tops)
-  const rows = run ? timelineRows(run, c.all, tops, 'all') : list!.rows
+  // inside a run, sub-agents sit under the agent that spawned them, and fold
+  const rows = run ? timelineRows(run, c.all, tops, 'all', ui.flipped) : list!.rows
   // inside a run: the chain that set its end time, outlined, and the idle time, shaded
   const agents = rows.flatMap(r => (r.kind === 'bar' ? [r.node] : []))
   const path = run ? criticalPath(agents, c.now) : undefined
@@ -635,32 +648,26 @@ function Timeline(c: Ctx, run: AgentNode | undefined, tops: AgentNode[], cols = 
     while (top?.parentId && byId.has(top.parentId)) top = byId.get(top.parentId)
     if (top) c.acts.set({ run: top.id, sel: n.id, file: null })
   }
-  // the card: how long it took and where the time went, as a headline and tiles
+  // one quiet line of facts: how long it took and where the time went (no card, no tiles)
   const span = to - from
   const cn = counts(agents)
   const failed = cn.failed + cn.stopped
-  const headline = run
-    ? path && path.ids.length
-      ? `It took ${duration(span)}. ${path.ids.length} agent${path.ids.length === 1 ? '' : 's'} on the critical path set the end time.`
-      : `It took ${duration(span)}.`
-    : `${list!.runs} run${list!.runs === 1 ? '' : 's'} and ${agents.length} agents over ${duration(span)}.`
-  const tiles: Tile[] = run
+  const facts: Fact[] = run
     ? [
-      { value: duration(span), label: 'total time' },
-      ...(path ? [{ value: duration(path.ms), label: `critical path · ${path.ids.length} agent${path.ids.length === 1 ? '' : 's'}`, color: t.accent }] : []),
-      { value: duration(idle.ms), label: 'idle', ...(idle.ms && idle.ms >= span * 0.2 ? { color: t.warn } : {}) },
-      { value: String(agents.length), label: 'agents' },
+      { text: `took ${duration(span)}` },
+      ...(path && path.ids.length ? [{ text: `critical path ${duration(path.ms)} · ${path.ids.length} agent${path.ids.length === 1 ? '' : 's'}`, color: t.accent }] : []),
+      ...(idle.ms ? [{ text: `idle ${duration(idle.ms)}`, ...(idle.ms >= span * 0.2 ? { color: t.warn } : {}) }] : []),
+      { text: `${agents.length} agents` },
     ]
     : [
-      { value: String(list!.runs), label: list!.hidden ? `runs · ${list!.hidden} older hidden` : 'runs' },
-      { value: String(agents.length), label: 'agents' },
-      { value: duration(span), label: 'time span' },
-      { value: String(failed), label: 'failed or stopped', ...(failed ? { color: t.bad } : {}) },
+      { text: `${list!.runs} run${list!.runs === 1 ? '' : 's'}${list!.hidden ? ` (${list!.hidden} older hidden)` : ''}` },
+      { text: `${agents.length} agents over ${duration(span)}` },
+      ...(failed ? [{ text: `${STATUS_GLYPH.failed} ${failed} failed or stopped`, color: t.bad }] : []),
     ]
   const key = [run && path ? 'Outlined bars: critical path' : '', run && idle.ms ? 'shaded: idle' : '', 'press a name to open it'].filter(Boolean).join(' · ')
   return (
     <Box flexDirection="column" gap={1}>
-      {SummaryCard(c.els, t, { id: 'timeline', statusWord: 'Timeline', color: failed ? t.bad : cn.running ? t.warn : t.accent, title: run ? run.label : `${list!.runs} newest runs`, result: headline, tiles })}
+      <Box key="facts-timeline"><Text color={t.muted}>{facts.map((f, i) => <Text key={`tf-${i}`} {...(f.color ? { color: f.color } : {})}>{i ? ' · ' : ''}{f.text}</Text>)}</Text></Box>
       <Box flexDirection="row" columnGap={2} alignItems="center" flexWrap="wrap">
         <Box flexGrow={1} flexShrink={1}><Text color={t.muted}>{key.replace(/^./, ch => ch.toUpperCase())}.</Text></Box>
         {run ? <Button key="save-timeline" plain label="Save picture" hotkey="x" onPress={() => c.acts.exportPic(run.id, 'timeline', ui.zoom)} /> : null}
@@ -678,10 +685,20 @@ function Timeline(c: Ctx, run: AgentNode | undefined, tops: AgentNode[], cols = 
           const n = r.node
           const isSel = ui.sel === n.id
           const bar: TimeBar = { label: n.label, start: n.startedAt, end: n.endedAt ?? c.now, status: n.status, isCritical: onPath.has(n.id) }
+          const depth = r.depth ?? 0
+          // a bar with sub-agents under it (shown, or folded away) gets a fold control
+          const next = rows[i + 1]
+          const hasKids = !!r.hidden || (next?.kind === 'bar' && (next.depth ?? 0) > depth)
+          const foldKey = `tl:${n.id}`
           return (
-            <Box key={`tl-${n.id}`} flexDirection="row" gap={1} alignItems="center" {...(isSel ? { backgroundColor: `${t.accent}26` } : {})}>
-              <Box width={LABEL} flexShrink={0} overflow="hidden" paddingLeft={1}>
-                <Button key={`tsel:${n.id}`} plain {...(onPath.has(n.id) || !run ? {} : { dimColor: true })} label={n.label} onPress={() => pick(n)} />
+            <Box key={`tl-${n.id}`} flexDirection="row" gap={1} alignItems="center" hover={{ backgroundColor: tint(t.accent, '14') }} {...(isSel ? { backgroundColor: tint(t.accent, '40') } : {})}>
+              <Box width={LABEL} flexShrink={0} overflow="hidden" paddingLeft={1 + depth * 2} flexDirection="row">
+                {run
+                  ? <Box width={2} flexShrink={0}>{hasKids ? <Button key={`fold:${foldKey}`} plain label={ui.flipped.includes(foldKey) ? '▸' : '▾'} onPress={() => c.acts.set({ flipped: toggle(ui.flipped, foldKey) })} /> : null}</Box>
+                  : null}
+                <Box flexShrink={1} minWidth={0} overflow="hidden">
+                  <Button key={`tsel:${n.id}`} plain {...(depth > 0 || (run && !onPath.has(n.id)) ? { dimColor: true } : {})} label={r.hidden ? `${n.label} +${r.hidden}` : n.label} onPress={() => pick(n)} />
+                </Box>
               </Box>
               <Svg source={stripSvg(t, bar, from, to, w, idle.gaps)} alt={`${n.label}: ${STATUS_WORD[n.status]}, ${duration(bar.end - bar.start)}`} width={w} height={STRIP_H} />
             </Box>
@@ -710,7 +727,7 @@ function Trace(c: Ctx, run: AgentNode, cols: number) {
       </Box>
     )
   }
-  const lanes = tr.lanes.map(l => ({ label: l.label, chip: l.chip, status: l.status }))
+  const lanes = tr.lanes.map(l => ({ label: l.label, chip: l.chip, status: l.status, ...(l.depth ? { depth: l.depth } : {}) }))
   const timed = tr.rows.filter(r => r.at > 0)
   const from = timed.length ? Math.min(...timed.map(r => r.at)) : c.now
   const to = timed.length ? Math.max(...timed.map(r => r.end ?? r.at)) : c.now
@@ -771,7 +788,7 @@ function Detail(c: Ctx, run: AgentNode, target: Target) {
   const quiet = head ? isQuiet(head, c.now) : false
   const big = t.art
     ? status === 'running' && !quiet
-      ? <Svg source={walkSvg(t.art, 48)} alt="Running" width={48} height={48} isInteractive />
+      ? <Svg source={spriteSvg(t.art, walkSlot(c.now), 48)} alt="Running" width={48} height={48} />
       : <Svg source={spriteSvg(t.art, quiet ? 'quiet' : head?.kind === 'workflow' ? 'workflow' : head?.kind === 'group' ? 'group' : status === 'done' ? 'done' : status === 'failed' ? 'failed' : 'stopped', 48)} alt={STATUS_WORD[status]} width={48} height={48} />
     : <Svg source={iconSvg(quiet ? 'quiet' : status, quiet ? t.warn : statusColor(t, status), 28)} alt={STATUS_WORD[status]} width={28} height={28} />
   const meta = head
@@ -846,14 +863,19 @@ function Detail(c: Ctx, run: AgentNode, target: Target) {
   // the card: status, verdict and numbers in one glance; every view below shares it
   const factScope = target.kind === 'node' ? { kind: 'node' as const, id: target.node.id } : { kind: 'phase' as const, wfId: target.wf.id, phase: target.phase }
   const facts = reportFacts(c.all, factScope, c.now)
+  // a live agent has no verdict yet: it shows what it is doing now instead
+  const live = !!head && head.status === 'running' && !reportOf(head)
   const result = head
-    ? reportOf(head)?.result ?? (head.status === 'running' ? 'Still working.' : noReportReason(head))
+    ? live ? undefined : reportOf(head)?.result ?? noReportReason(head)
     : target.kind === 'phase' ? target.wf.partReports?.[target.phase]?.result ?? `${counts(scope).done} of ${scope.length} agents done.` : ''
+  const nowText = live && head
+    ? [head.activity ?? head.lastTool ?? 'Starting', `${head.tools} tool call${head.tools === 1 ? '' : 's'}`, head.lastToolAt ? `last ${duration(c.now - head.lastToolAt)} ago` : ''].filter(Boolean).join(' · ')
+    : undefined
   const problems = head ? (reportOf(head)?.problems?.length ?? 0) : target.kind === 'phase' ? (target.wf.partReports?.[target.phase]?.problems?.length ?? 0) : 0
   const color = quiet ? t.warn : statusColor(t, status)
   return (
     <Box flexDirection="column" gap={1}>
-      {SummaryCard(c.els, t, { id: 'detail', big, statusWord: quiet ? 'Quiet' : STATUS_WORD[status], color, title, meta, result, tiles: tilesOf(t, facts, problems) })}
+      {PlainHeader(c.els, t, { id: 'detail', big, status, statusWord: quiet ? 'Quiet' : STATUS_WORD[status], color, title, meta, ...(result ? { result } : {}), ...(nowText ? { now: nowText } : {}), facts: factsOf(t, facts, problems) })}
       {quiet && head ? <Text color={t.warn}>No tool call for {duration(c.now - (head.lastToolAt ?? head.startedAt))}. Last: {head.activity ?? head.lastTool ?? 'unknown'}.</Text> : null}
       {tabs}
       {body}

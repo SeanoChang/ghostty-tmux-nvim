@@ -11,6 +11,8 @@ import { DESK, SPRITE_FOR, clip, diffBarSvg, iconSvg, spriteSvg, statusColor, ty
 export type Els = Record<string, any>
 
 export const STATUS_WORD: Record<NodeStatus, string> = { running: 'Running', done: 'Done', failed: 'Failed', killed: 'Stopped' }
+// A glyph per status, so status never rests on colour alone (red vs green reads the same to many).
+export const STATUS_GLYPH: Record<NodeStatus, string> = { running: '◐', done: '✓', failed: '✕', killed: '■' }
 
 export const tokensOf = (theme: ThemeName): DeskTokens => DESK[theme]
 
@@ -30,10 +32,18 @@ export const num = (n: number) => n.toLocaleString('en-US')
 
 // One status mark: the theme's pixel art (a cat, a fish, a dog), or a line icon in
 // minimal. Quiet agents sleep.
+// In the art themes the sprite is small, so a status glyph in its colour stands beside it.
 export function StatusMark(els: Els, t: DeskTokens, status: NodeStatus, px = 16, isQuiet = false) {
-  const { Svg } = els
+  const { Svg, Box, Text } = els
   const word = isQuiet ? 'Quiet' : STATUS_WORD[status]
-  if (t.art) return <Svg source={spriteSvg(t.art, isQuiet ? 'quiet' : SPRITE_FOR[status], px)} alt={word} width={px} height={px} />
+  if (t.art) {
+    return (
+      <Box flexDirection="row" gap={1} alignItems="center" flexShrink={0}>
+        <Svg source={spriteSvg(t.art, isQuiet ? 'quiet' : SPRITE_FOR[status], px)} alt={word} width={px} height={px} />
+        <Text color={isQuiet ? t.warn : statusColor(t, status)}>{STATUS_GLYPH[status]}</Text>
+      </Box>
+    )
+  }
   const name = isQuiet ? 'quiet' : status
   return <Svg source={iconSvg(name, isQuiet ? t.warn : statusColor(t, status), px)} alt={word} width={px} height={px} />
 }
@@ -103,48 +113,48 @@ export function verdictOf(result: string): { verdict: string; rest: string } {
   return { verdict, rest: result.slice(result.indexOf(verdict) + verdict.length).trim() }
 }
 
-export type Tile = { value: string; label: string; color?: string }
+export type Fact = { text: string; color?: string }
 
-// The summary card: what is shown and how it ended, its headline, and its numbers
-// as tiles. The card is tinted in its colour; nothing in it has an outline. The run
-// view, the timeline and the board each open on one, so every view reads the same way.
-export function SummaryCard(els: Els, t: DeskTokens, o: {
-  /** Keys the card's elements: a view's card and the run's card can be on screen together. */
+// The header of what is shown: no tinted box and no tiles, so type carries the order.
+// A status line in its colour (glyph and word), the name in bold, the verdict as a
+// heading when there is one, then one quiet line of facts. A live agent shows what it
+// is doing now instead of a verdict.
+export function PlainHeader(els: Els, t: DeskTokens, o: {
+  /** Keys the header's elements: a view's header and the run's can be on screen together. */
   id: string
-  big?: unknown; statusWord: string; color: string; title: string; meta?: string; result: string; tiles: Tile[]
+  big?: unknown; status?: NodeStatus; statusWord: string; color: string; title: string; meta?: string; result?: string; now?: string; facts: Fact[]
 }) {
   const { Box, Text, Markdown } = els
-  const { verdict, rest } = verdictOf(o.result)
+  const v = o.result ? verdictOf(o.result) : undefined
   return (
-    <Box flexDirection="column" gap={1} backgroundColor={tint(o.color)} paddingX={2} paddingY={1}>
-      <Box flexDirection="row" gap={2} alignItems="flex-start">
-        {o.big ? <Box flexShrink={0} paddingTop={1}>{o.big}</Box> : null}
-        <Box flexDirection="column" flexGrow={1} flexShrink={1}>
-          <Text color={o.color} bold>{o.statusWord.toUpperCase()} · {o.title}</Text>
-          <Markdown key={`verdict-${o.id}`} text={`## ${mdText(verdict)}${rest ? `\n\n${mdText(rest)}` : ''}`} />
-          {o.meta ? <Text color={t.muted}>{o.meta}</Text> : null}
-        </Box>
-      </Box>
-      <Box flexDirection="row" flexWrap="wrap" gap={1}>
-        {o.tiles.map(tl => (
-          <Box key={`tile-${o.id}-${tl.label}`} flexDirection="column" flexGrow={1} minWidth={12} backgroundColor={tint(t.rule, '26')} paddingX={1}>
-            <Text bold {...(tl.color ? { color: tl.color } : {})}>{tl.value}</Text>
-            <Text color={t.muted}>{tl.label}</Text>
-          </Box>
-        ))}
+    <Box key={`card-${o.id}`} flexDirection="row" gap={2} alignItems="flex-start" paddingY={1}>
+      {o.big ? <Box flexShrink={0}>{o.big}</Box> : null}
+      <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+        <Text color={o.color} bold>{o.status ? `${STATUS_GLYPH[o.status]} ` : ''}{o.statusWord.toUpperCase()}</Text>
+        <Box key={`title-${o.id}`}><Text bold>{o.title}</Text></Box>
+        {v ? <Markdown key={`verdict-${o.id}`} text={`### ${mdText(v.verdict)}${v.rest ? `\n\n${mdText(v.rest)}` : ''}`} /> : null}
+        {o.now ? <Box key={`now-${o.id}`}><Text><Text color={o.color}>Now </Text>{o.now}</Text></Box> : null}
+        {o.facts.length
+          ? (
+            <Box key={`facts-${o.id}`}>
+              <Text color={t.muted}>{o.facts.map((f, i) => <Text key={`f-${o.id}-${i}`} {...(f.color ? { color: f.color } : {})}>{i ? ' · ' : ''}{f.text}</Text>)}</Text>
+            </Box>
+          )
+          : null}
+        {o.meta ? <Text color={t.muted}>{o.meta}</Text> : null}
       </Box>
     </Box>
   )
 }
 
-// The tiles for a scope: time, tokens, problems, files, and agents when more than one.
-export function tilesOf(t: DeskTokens, facts: ReturnType<typeof reportFacts>, problems: number): Tile[] {
+// The facts for a scope: time, tokens, problems, files, and agents when more than one.
+export function factsOf(t: DeskTokens, facts: ReturnType<typeof reportFacts>, problems: number): Fact[] {
   return [
-    { value: duration(facts.ms), label: 'time' },
-    { value: facts.tokens ? kTokens(facts.tokens) : '—', label: 'tokens' },
-    { value: String(problems), label: problems === 1 ? 'problem' : 'problems', ...(problems ? { color: t.bad } : {}) },
-    { value: facts.files.length ? `+${num(facts.added)} −${num(facts.removed)}` : '0', label: `${facts.files.length} file${facts.files.length === 1 ? '' : 's'} changed`, ...(facts.files.length ? { color: t.add } : {}) },
-    ...(facts.agents > 1 ? [{ value: String(facts.agents), label: facts.phases ? `agents · ${facts.phases} phases` : 'agents' }] : []),
+    { text: duration(facts.ms) },
+    ...(facts.tokens ? [{ text: `${kTokens(facts.tokens)} tokens` }] : []),
+    ...(problems ? [{ text: `${problems} problem${problems === 1 ? '' : 's'}`, color: t.bad }] : []),
+    ...(facts.files.length ? [{ text: `${facts.files.length} file${facts.files.length === 1 ? '' : 's'} +${num(facts.added)} −${num(facts.removed)}` }] : []),
+    ...(facts.agents > 1 ? [{ text: facts.phases ? `${facts.agents} agents · ${facts.phases} phases` : `${facts.agents} agents` }] : []),
   ]
 }
 
@@ -156,7 +166,7 @@ export function ReportBlock(els: Els, t: DeskTokens, n: AgentNode, all: AgentNod
   const facts = reportFacts(all, { kind: 'node', id: n.id }, now)
   const names = shortPaths(facts.files.map(f => f.path))
   const max = Math.max(1, ...facts.files.map(f => f.added + f.removed))
-  const by = r?.model ? `Report by ${aiLabel(r, now)}` : n.report ? 'Report' : 'Report from what the run kept (no model summary)'
+  const by = r?.model ? `Report by ${aiLabel(r, now)}` : n.report ? 'Report' : n.status === 'running' ? 'The report appears here when it finishes.' : 'Report from what the run kept (no model summary)'
   const details = [
     r?.done?.length ? `### What it did\n\n${r.done.map(d => `- ${mdText(d)}`).join('\n')}` : '',
     r?.decisions?.length ? `### Decisions\n\n${r.decisions.map(d => `- ${mdText(d.text)}${sourceNote(d.source, n.label)}`).join('\n')}` : '',

@@ -1,5 +1,6 @@
 import type { AgentNode, TraceLane, TraceRow, TraceZoom } from '../types'
 import { describeTool, editedPath } from './list'
+import { treeOrder } from './lens'
 
 // The trail behind a run: what each agent did, in order, and how the agents
 // handed work to each other. Read from transcripts when a trace opens; pure here.
@@ -275,7 +276,14 @@ export const MAIN = 'main'
 // `stories`: agents whose steps a model wrote; at the story zoom those steps stand in for
 // their tool calls, spread over the time the agent ran, between its real edits and hand-backs.
 export function buildTrace(run: AgentNode, scope: AgentNode[], events: Map<string, TraceEvent[]>, now: number, zoom: TraceZoom, stories?: Map<string, string[]>): { lanes: TraceLane[]; rows: TraceRow[]; missing: number } {
-  const agents = scope.filter(n => n.kind === 'agent').sort((a, b) => a.startedAt - b.startedAt)
+  // lanes in tree order: each agent, then the agents it spawned, so a child's lane sits by its parent's
+  const ordered = run.kind === 'agent'
+    ? [{ node: run, depth: 0 }, ...treeOrder(scope, run.id).map(r => ({ ...r, depth: r.depth + 1 }))]
+    : treeOrder(scope, run.id)
+  const seen = new Set(ordered.map(r => r.node.id))
+  for (const n of scope.filter(x => x.kind === 'agent' && !seen.has(x.id)).sort((a, b) => a.startedAt - b.startedAt)) ordered.push({ node: n, depth: 0 })
+  const agents = ordered.map(r => r.node)
+  const depthOf = new Map(ordered.map(r => [r.node.id, r.depth]))
   const isAgent = new Set(agents.map(a => a.id))
   const parentLane = (n: AgentNode) => (n.parentId && isAgent.has(n.parentId) ? n.parentId : MAIN)
   const hasMain = agents.some(a => parentLane(a) === MAIN)
@@ -351,7 +359,7 @@ export function buildTrace(run: AgentNode, scope: AgentNode[], events: Map<strin
     const a = agents.find(x => x.id === id)
     const idx = rows.flatMap((r, k) => (r.lane === i || r.to === i ? [k] : []))
     return {
-      id, label: a ? a.label : 'Main session', chip: a ? chipOf(a.label) : 'MS',
+      id, label: a ? a.label : 'Main session', chip: a ? chipOf(a.label) : 'MS', depth: a ? depthOf.get(a.id) ?? 0 : 0,
       status: a ? a.status : run.status === 'running' ? 'running' : 'done',
       from: idx.length ? Math.min(...idx) : 0, to: idx.length ? Math.max(...idx) : 0,
     }

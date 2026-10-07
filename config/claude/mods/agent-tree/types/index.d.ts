@@ -165,6 +165,8 @@ export type TraceZoom = 'story' | 'steps' | 'raw'
 /** One lane of a trace: an agent, or the main session that started the run. */
 export type TraceLane = {
   id: string
+  /** How far under the run's own agents this lane's agent sits (0 = spawned by the run). */
+  depth?: number
   label: string
   /** Two letters the lane is known by in rows. */
   chip: string

@@ -44,23 +44,68 @@ export function boardLanes(run: AgentNode | undefined, nodes: AgentNode[], tops:
   return lanes
 }
 
-export type TimeRow = { kind: 'bar'; node: AgentNode } | { kind: 'label'; text: string }
+// depth: how far under the run's own agents a bar sits (0 = spawned by the run).
+// hidden: a folded bar's agents not shown.
+export type TimeRow = { kind: 'bar'; node: AgentNode; depth?: number; hidden?: number } | { kind: 'label'; text: string }
+
+// Agents in tree order: each agent, then the agents it spawned, each level by start.
+// Clusters and workflows in between hold agents but are not rows themselves.
+// `folded` ids keep their agents out and count them on the folded row.
+export function treeOrder(nodes: AgentNode[], rootId: string, folded: ReadonlySet<string> = new Set()): { node: AgentNode; depth: number; hidden?: number }[] {
+  const out: { node: AgentNode; depth: number; hidden?: number }[] = []
+  const walk = (id: string, depth: number) => {
+    for (const k of childrenOf(nodes, id).sort(byStart)) {
+      if (k.kind !== 'agent') { walk(k.id, depth); continue }
+      if (folded.has(k.id)) {
+        const n = agentsUnder(nodes, k.id).filter(x => x.id !== k.id).length
+        out.push({ node: k, depth, ...(n ? { hidden: n } : {}) })
+        continue
+      }
+      out.push({ node: k, depth })
+      walk(k.id, depth + 1)
+    }
+  }
+  walk(rootId, 0)
+  return out
+}
+
+const foldedSet = (keys: readonly string[]) => new Set(keys.filter(k => k.startsWith('tl:')).map(k => k.slice(3)))
+const asBars = (list: { node: AgentNode; depth: number; hidden?: number }[]): TimeRow[] =>
+  list.map(r => ({ kind: 'bar' as const, node: r.node, depth: r.depth, ...(r.hidden ? { hidden: r.hidden } : {}) }))
 
 // The timeline's rows: on the run list one bar per run; inside a workflow its agents
 // under phase labels; inside a cluster or a subagent every agent under it.
-export function timelineRows(run: AgentNode | undefined, nodes: AgentNode[], tops: AgentNode[], filter: Filter): TimeRow[] {
+export function timelineRows(run: AgentNode | undefined, nodes: AgentNode[], tops: AgentNode[], filter: Filter, folds: readonly string[] = []): TimeRow[] {
   if (!run) return tops.filter(n => passes(n, childrenOf(nodes, n.id), filter)).map(node => ({ kind: 'bar' as const, node }))
   if (run.kind === 'workflow') {
     const out: TimeRow[] = []
     for (const p of pipeline(run, nodes)) {
-      const list = childrenOf(nodes, run.id).filter(k => (k.phase ?? 'Agents') === p.phase && passes(k, [], filter)).flatMap(k => agentsUnder(nodes, k.id)).sort(byStart)
+      // each of the phase's agents, then the agents it spawned under it
+      const folded = foldedSet(folds)
+      const list = childrenOf(nodes, run.id).filter(k => (k.phase ?? 'Agents') === p.phase && passes(k, [], filter)).sort(byStart)
+        .flatMap(k => (k.kind !== 'agent'
+          ? treeOrder(nodes, k.id, folded)
+          : folded.has(k.id)
+            ? [{ node: k, depth: 0, ...(agentsUnder(nodes, k.id).length > 1 ? { hidden: agentsUnder(nodes, k.id).length - 1 } : {}) }]
+            : [{ node: k, depth: 0 }, ...treeOrder(nodes, k.id, folded).map(r => ({ ...r, depth: r.depth + 1 }))]))
       if (!list.length) continue
       out.push({ kind: 'label', text: p.phase })
-      for (const node of list) out.push({ kind: 'bar', node })
+      out.push(...asBars(list))
     }
     return out
   }
-  return agentsUnder(nodes, run.id).filter(n => (run.kind === 'agent' || n.id !== run.id) && passes(n, [], filter)).sort(byStart).map(node => ({ kind: 'bar' as const, node }))
+  // a run that is an agent leads with its own bar; its sub-agents sit under it
+  const folded = foldedSet(folds)
+  const under = treeOrder(nodes, run.id, folded).filter(r => passes(r.node, [], filter))
+  return asBars(run.kind === 'agent' ? [{ node: run, depth: 0 }, ...under.map(r => ({ ...r, depth: r.depth + 1 }))] : under)
+}
+
+// A live run's agents as status groups: running, then failed or stopped, then done;
+// each group by start time.
+const GROUP_ORDER = ['running', 'failed', 'killed', 'done'] as const
+export function liveGroups(nodes: AgentNode[], runId: string): { status: AgentNode['status']; nodes: AgentNode[] }[] {
+  const agents = agentsUnder(nodes, runId).filter(n => n.id !== runId).sort(byStart)
+  return GROUP_ORDER.map(status => ({ status, nodes: agents.filter(n => n.status === status) })).filter(g => g.nodes.length)
 }
 
 // The run list's timeline, opened up: each run as a heading with its agents under

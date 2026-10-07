@@ -56,8 +56,11 @@ export const DESK: Record<ThemeName, DeskTokens> = {
   },
 }
 
+// Running wears the theme's own accent (fish water, kitty coral), so a live run looks
+// like its theme; done is calm, so running and failed stand out. Amber (warn) means
+// "needs a look" only. Status never rests on red vs green: a glyph or word goes with it.
 export const statusColor = (t: DeskTokens, s: NodeStatus) =>
-  s === 'running' ? t.warn : s === 'done' ? t.ok : s === 'failed' ? t.bad : t.stop
+  s === 'running' ? t.accent : s === 'done' ? t.muted : s === 'failed' ? t.bad : t.stop
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
@@ -90,14 +93,10 @@ export function spriteSvg(art: ArtSet, name: Slot, px: number): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round(w * scale)}" height="${Math.round(h * scale)}" viewBox="0 0 ${w} ${h}" shape-rendering="crispEdges">${spriteRects(grid, art.pal)}</svg>`
 }
 
-// The running header sprite walks: four frames, each shown for a quarter of the
-// cycle by SMIL. It needs an interactive Svg, which the desktop draws in a frame.
-export function walkSvg(art: ArtSet, px: number): string {
-  const frames = ['walk0', 'walk1', 'walk2', 'walk3'] as const
-  const layers = frames.map((f, i) =>
-    `<g visibility="hidden">${spriteRects(art.pix[f], art.pal)}<animate attributeName="visibility" values="${frames.map((_, j) => (j === i ? 'visible' : 'hidden')).join(';')}" dur="0.6s" calcMode="discrete" repeatCount="indefinite"/></g>`)
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 16 16" shape-rendering="crispEdges">${layers.join('')}</svg>`
-}
+// The running sprite walks one frame per redraw tick (the pane redraws each second).
+// A plain image: an interactive Svg would sit in a sandboxed frame, which drew a white
+// box and blanked on every redraw.
+export const walkSlot = (now: number): Slot => (['walk0', 'walk1', 'walk2', 'walk3'] as const)[Math.floor(now / 1000) % 4]!
 
 // ── minimal: one line-icon set, 16 px grid ───────────────────────────────────
 const ICON: Record<string, string> = {
@@ -126,7 +125,7 @@ export function iconSvg(name: string, color: string, px = 16): string {
 // A bar split by status: done, running, failed, stopped, then the empty track.
 export function statusBarSvg(t: DeskTokens, c: { done: number; running: number; failed: number; stopped: number; total: number }, w = 96, h = 6): string {
   const total = Math.max(1, c.total)
-  const parts: [number, string][] = [[c.done, t.ok], [c.running, t.warn], [c.failed, t.bad], [c.stopped, t.stop]]
+  const parts: [number, string][] = [[c.done, statusColor(t, 'done')], [c.running, statusColor(t, 'running')], [c.failed, statusColor(t, 'failed')], [c.stopped, statusColor(t, 'killed')]]
   let x = 0
   let rects = `<rect x="0" y="0" width="${w}" height="${h}" rx="${h / 2}" fill="${t.rule}" opacity=".35"/>`
   for (const [n, color] of parts) {
@@ -257,7 +256,7 @@ export function timelineSvg(t: DeskTokens, bars: TimeBar[], from: number, to: nu
 export type TraceMark = { lane: number; to?: number; at: number; kind: string; text: string; isSelected?: boolean }
 
 // `focus`: the lane of the agent picked elsewhere; the other lanes draw faint.
-export function traceSvg(t: DeskTokens, lanes: { label: string; chip: string; status: NodeStatus }[], marks: TraceMark[], from: number, to: number, w: number, focus?: number): string {
+export function traceSvg(t: DeskTokens, lanes: { label: string; chip: string; status: NodeStatus; depth?: number }[], marks: TraceMark[], from: number, to: number, w: number, focus?: number): string {
   const LABEL = Math.min(240, Math.max(140, Math.round(w * 0.28)))
   const plot = Math.max(80, w - LABEL - 20)
   const span = Math.max(1, to - from)
@@ -270,7 +269,9 @@ export function traceSvg(t: DeskTokens, lanes: { label: string; chip: string; st
   const faint = (lane: number) => (focus !== undefined && focus >= 0 && lane !== focus ? ' opacity=".3"' : '')
   const laneRows = lanes.map((l, i) => {
     const y = yOf(i)
-    return `<g${faint(i)}><circle cx="8" cy="${y}" r="4" fill="${statusColor(t, l.status)}"/><text x="18" y="${y + 5}" font-size="${PIC.body}" fill="${t.muted}" font-family="-apple-system, sans-serif">${esc(clip(l.label, fits(LABEL - 26)))}</text><line x1="${LABEL}" y1="${y}" x2="${LABEL + plot}" y2="${y}" stroke="${color(i)}" stroke-opacity=".35" stroke-width="2"/></g>`
+    // a sub-agent's lane is indented under the lane that spawned it
+    const dx = Math.min(3, l.depth ?? 0) * 12
+    return `<g${faint(i)}><circle cx="${8 + dx}" cy="${y}" r="4" fill="${statusColor(t, l.status)}"/><text x="${18 + dx}" y="${y + 5}" font-size="${PIC.body}" fill="${t.muted}" font-family="-apple-system, sans-serif">${esc(clip(l.label, fits(LABEL - 26 - dx)))}</text><line x1="${LABEL}" y1="${y}" x2="${LABEL + plot}" y2="${y}" stroke="${color(i)}" stroke-opacity=".35" stroke-width="2"/></g>`
   }).join('')
   const arrows = marks.filter(m => m.to !== undefined && m.to !== m.lane).map(m => {
     const x0 = x(m.at)
