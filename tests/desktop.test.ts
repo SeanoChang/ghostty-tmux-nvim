@@ -199,7 +199,15 @@ test('desktop: a run\'s timeline names its critical path and saves a picture', a
   await ui.press({ key: 'tab:history' })
   await ui.press({ key: 'run:w1' })
   await ui.press({ key: 'lens:timeline' })
-  expect(await ui.find({ text: /Critical path: 2 agents/ })).toBeDefined()
+  // the timeline opens on its own card: a headline and time tiles
+  expect(await ui.find({ text: /^TIMELINE · Review changed files across dimensions$/ })).toBeDefined()
+  expect(await ui.find({ text: 'critical path · 2 agents' })).toBeDefined()
+  for (const label of ['total time', 'idle', 'agents']) expect(await ui.find({ text: label })).toBeDefined()
+  const md = ((await ui.findAll({ type: 'Markdown' })) as unknown as Found[]).map(m => String(m.props?.text ?? ''))
+  // the time is the large headline; the critical path follows as body text
+  expect(md.some(m => /^## It took [^.]+\.\n\n2 agents on the critical path set the end time\.$/.test(m))).toBe(true)
+  // its phases are section headings, as in the report
+  expect(md).toContain('### Review')
   // each bar's label is a native button that picks the agent
   await ui.press({ key: 'tsel:w1b' })
   expect(await ui.find({ key: 'tsel:w1b' })).toBeDefined()
@@ -241,6 +249,21 @@ test('desktop: a run opens on a tinted summary card with tiles, under one row of
   const boxes = (await ui.findAll({ type: 'Box' })) as unknown as Found[]
   expect(boxes.some(b => b.props?.borderStyle)).toBe(false)
   expect(boxes.some(b => String(b.props?.backgroundColor ?? '').length === 9)).toBe(true)
+  await ui.unmount()
+})
+
+test('desktop: the board opens on its card; lanes are headed sections of status-tinted agent tiles', async ($, on) => {
+  const ui = await desk($, on)
+  await ui.press({ key: 'tab:history' })
+  await ui.press({ key: 'lens:board' })
+  expect(await ui.find({ text: /^BOARD · History runs$/ })).toBeDefined()
+  const md = ((await ui.findAll({ type: 'Markdown' })) as unknown as Found[]).map(m => String(m.props?.text ?? ''))
+  // w1b failed and h2 failed: 2 of 4 agents
+  expect(md).toContain('## 2 of 4 agents failed or stopped.')
+  for (const label of ['running', 'failed or stopped', 'done', 'runs']) expect(await ui.find({ text: label })).toBeDefined()
+  expect(md).toContain('### Review changed files across dimensions')
+  const boxes = (await ui.findAll({ type: 'Box' })) as unknown as Found[]
+  expect(boxes.some(b => b.props?.borderStyle)).toBe(false)
   await ui.unmount()
 })
 

@@ -103,26 +103,29 @@ export function verdictOf(result: string): { verdict: string; rest: string } {
 
 export type Tile = { value: string; label: string; color?: string }
 
-// The summary card: what was picked and how it ended, its verdict, and its numbers
-// as tiles. The card is tinted in its status colour; nothing in it has an outline.
+// The summary card: what is shown and how it ended, its headline, and its numbers
+// as tiles. The card is tinted in its colour; nothing in it has an outline. The run
+// view, the timeline and the board each open on one, so every view reads the same way.
 export function SummaryCard(els: Els, t: DeskTokens, o: {
-  big: unknown; status: NodeStatus; statusWord: string; color: string; title: string; meta: string; result: string; tiles: Tile[]
+  /** Keys the card's elements: a view's card and the run's card can be on screen together. */
+  id: string
+  big?: unknown; statusWord: string; color: string; title: string; meta?: string; result: string; tiles: Tile[]
 }) {
   const { Box, Text, Markdown } = els
   const { verdict, rest } = verdictOf(o.result)
   return (
     <Box flexDirection="column" gap={1} backgroundColor={tint(o.color)} paddingX={2} paddingY={1}>
       <Box flexDirection="row" gap={2} alignItems="flex-start">
-        <Box flexShrink={0} paddingTop={1}>{o.big}</Box>
+        {o.big ? <Box flexShrink={0} paddingTop={1}>{o.big}</Box> : null}
         <Box flexDirection="column" flexGrow={1} flexShrink={1}>
           <Text color={o.color} bold>{o.statusWord.toUpperCase()} · {o.title}</Text>
-          <Markdown key="verdict" text={`## ${mdText(verdict)}${rest ? `\n\n${mdText(rest)}` : ''}`} />
-          <Text color={t.muted}>{o.meta}</Text>
+          <Markdown key={`verdict-${o.id}`} text={`## ${mdText(verdict)}${rest ? `\n\n${mdText(rest)}` : ''}`} />
+          {o.meta ? <Text color={t.muted}>{o.meta}</Text> : null}
         </Box>
       </Box>
       <Box flexDirection="row" flexWrap="wrap" gap={1}>
         {o.tiles.map(tl => (
-          <Box key={`tile-${tl.label}`} flexDirection="column" flexGrow={1} minWidth={12} backgroundColor={tint(t.rule, '26')} paddingX={1}>
+          <Box key={`tile-${o.id}-${tl.label}`} flexDirection="column" flexGrow={1} minWidth={12} backgroundColor={tint(t.rule, '26')} paddingX={1}>
             <Text bold {...(tl.color ? { color: tl.color } : {})}>{tl.value}</Text>
             <Text color={t.muted}>{tl.label}</Text>
           </Box>
