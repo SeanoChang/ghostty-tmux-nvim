@@ -1,0 +1,31 @@
+{
+  "name": "agent-tree",
+  "version": "0.1.0",
+  "description": "Side pane that shows running subagents and workflows as a live tree",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "theme": {
+      "type": "string",
+      "title": "Theme",
+      "description": "How the Agents pane looks: minimal (plain glyphs, any terminal), kitty (emoji cats), fish (lake blues, a catch) or dog (golden tan, dogs on walks)",
+      "default": "minimal",
+      "options": [
+        "minimal",
+        "kitty",
+        "fish",
+        "dog"
+      ]
+    },
+    "ai": {
+      "type": "string",
+      "title": "AI help",
+      "description": "What the Agents pane may ask a model to write: off (no model calls), cheap (Haiku writes reports, titles and story steps) or full (also Sonnet on demand: e explains a run, g finds patterns in History)",
+      "default": "cheap",
+      "options": [
+        "off",
+        "cheap",
+        "full"
+      ]
+    }
+  }
+}

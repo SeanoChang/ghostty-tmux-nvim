@@ -1,0 +1,11 @@
+# The pane's keys work like a remote: arrows move inside one zone at a time.
+direction: down
+
+tabs: "TABS BAR\nLive · History\n\n← → switch tabs" {style.fill: "#e8f0fe"}
+caption: "CAPTION BAR\nAgents · Changes · Output   |   Tree · Board · Timeline · Trace\n\n← → switch views and lenses" {style.fill: "#e8f0fe"}
+content: "CONTENT\nthe list, the timeline, the trace, the text\n\nj k ↑ ↓ move · ← → fold · enter open · b back" {style.fill: "#f1f8e9"}
+
+content -> caption: "↑ on the top row"
+caption -> tabs: "↑"
+tabs -> caption: "↓ or enter"
+caption -> content: "↓ or enter"
