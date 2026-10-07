@@ -5,9 +5,11 @@
 #   ./install.sh                 install everything
 #   ./install.sh --dry-run       print what would happen, change nothing
 #   ./install.sh --only nvim     install one group (see manifest.txt)
+#   ./install.sh --force         re-render templates even when the live file drifted
 #
 # Anything it would overwrite is moved to ~/.dotfiles-backup/<timestamp>/ first.
-# Re-running is safe: already-correct symlinks are left alone.
+# Re-running is safe: already-correct symlinks are left alone, and a rendered
+# template that was changed in place (drift) stops the run unless --force.
 #
 # It never runs sudo, never touches the network, and never deletes anything —
 # files in the way are moved, not removed.
@@ -20,13 +22,15 @@ RENDER_DIR="$HOME/.dotfiles-rendered"
 BACKUP_DIR="$HOME/.dotfiles-backup/$(date +%Y%m%d-%H%M%S)"
 
 DRY_RUN=0
+FORCE=0
 ONLY=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
+    --force)   FORCE=1; shift ;;
     --only)    ONLY="${2:-}"; [ -n "$ONLY" ] || { echo "--only needs a group name" >&2; exit 2; }; shift 2 ;;
-    -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)         echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -124,6 +128,25 @@ install_merge() {
   done
 }
 
+# A linked template's rendered copy is the live file programs read. Some of them
+# write to it (Claude Code saves plugins, hooks and model settings there), and
+# re-rendering would silently drop those writes. Collect every rendered copy
+# that no longer matches what its template renders to, before changing anything.
+drifted=()
+check_drift() {
+  local mode src dest group rel_out out
+  while read -r mode src dest; do
+    case "${mode:-}" in ''|\#*) continue ;; esac
+    [ "$mode" = "link" ] && [ "${src##*.}" = "tmpl" ] || continue
+    group="${src#config/}"; group="${group%%/*}"
+    [ -n "$ONLY" ] && [ "$ONLY" != "$group" ] && continue
+    rel_out="${src#config/}"; rel_out="${rel_out%.tmpl}"
+    out="$RENDER_DIR/$rel_out"
+    [ -f "$out" ] || continue
+    sed "s|__HOME__|$HOME|g" "$REPO/$src" | cmp -s - "$out" || drifted+=("$src|$out")
+  done < "$MANIFEST"
+}
+
 # ── main ─────────────────────────────────────────────────────────────────────
 [ -f "$MANIFEST" ] || { echo "manifest not found: $MANIFEST" >&2; exit 1; }
 
@@ -132,6 +155,30 @@ echo "dotfiles → $HOME"
 [ "$DRY_RUN" -eq 1 ] && echo "${C_WARN}dry run — nothing will be changed${C_OFF}"
 [ -n "$ONLY" ]       && echo "group filter: $ONLY"
 echo
+
+check_drift
+if [ "${#drifted[@]}" -gt 0 ]; then
+  for pair in "${drifted[@]}"; do
+    warn "drifted" "$(tilde "${pair#*|}") no longer matches ${pair%%|*}"
+  done
+  if [ "$FORCE" -eq 1 ]; then
+    # keep the drifted copy; render() writes a fresh one in the main loop
+    for pair in "${drifted[@]}"; do backup "${pair#*|}"; done
+  elif [ "$DRY_RUN" -eq 1 ]; then
+    warn "drifted" "a real run would stop here"
+  else
+    cat >&2 <<EOF
+
+Stopped: re-rendering would overwrite changes made to the live file.
+For each drifted file (template = \$REPO/<src>, live = ~/.dotfiles-rendered/<path>):
+  see the changes   diff <(sed "s|__HOME__|\$HOME|g" <template>) <live>
+  keep them         sed "s|\$HOME|__HOME__|g" <live> > <template>   then review and commit
+  discard them      ./install.sh --force   (the live file is backed up first)
+EOF
+    exit 1
+  fi
+  echo
+fi
 
 count=0
 while read -r mode src dest; do
