@@ -1,39 +1,35 @@
-# Image slots
+# Images
 
-Six placeholders in the top-level `README.md`, each marked with a comment banner
-like `📸 IMAGE SLOT 3 of 6`. Search the README for `IMAGE SLOT` to find them.
+Every image in the top-level `README.md`:
 
-To fill one: drop the file in this directory, then replace that entire comment
-block with the single markdown line the banner gives you.
+| File | What it shows |
+|---|---|
+| `hero.png` | Ghostty with tmux: Neovim renders a design doc (inline mermaid, table, task list) beside a shell pane |
+| `inline-images.gif` | A mermaid block gains a node, and the diagram redraws as the line is typed |
+| `fzf-tab.gif` | `cd ` + Tab: a fuzzy list of folders, with the eza preview following the selection |
+| `tmux-popups.gif` | `prefix+g` floats lazygit over a layout; `prefix+s` opens the session picker and switches session |
+| `nvim-markdown.png` | markview.nvim rendering headings, inline code, code blocks and a table of contents |
+| `agents-pane.png` | Claude Code with the agent-tree pane (fish theme) and the five-line status line |
+| `brief-pane.png` | Claude Code with the Brief pane showing a plan with open decisions |
 
-| # | File | Type | What to capture | Priority |
-|---|---|---|---|---|
-| 1 | `hero.png` | PNG | Full Ghostty window. tmux status bar visible, Neovim open on a markdown file rendering a mermaid diagram inline. ~1600px wide. | **Highest** — it's above the fold |
-| 2 | `inline-images.gif` | GIF | A mermaid code block in Neovim rendering into a real diagram. 10–15s loop. | **Highest** — the headline feature |
-| 3 | `fzf-tab.gif` | GIF | `cd ` + Tab, scrolling directories with the eza preview updating live; then `nvim ` + Tab for the bat file preview. ~10s. | High |
-| 4 | `tmux-popups.gif` | GIF | `prefix+g` floats lazygit over a working layout, close it, `prefix+s` fuzzy-jumps to another session. ~12s. | High |
-| 5 | `nvim-markdown.png` | PNG | Markdown file with headings, a wide table, a code block and a task list, rendered by markview.nvim. | ✅ **done** |
-| 6 | `claude-code.png` | PNG | `prefix+a` splitting Claude Code beside Neovim, custom statusline visible. | ✅ **done** |
+## How they were made
 
-Slots 5 and 6 are filled. The remaining four (1–4) are still comment banners in
-the README.
+The shots are of a real Ghostty window, captured with `screencapture -l`. A
+private tmux server drove it (its own `TMUX_TMPDIR`, an empty shell history and
+a demo-only zoxide database), so no real paths, sessions or history appear.
+The project is a throwaway `~/demo/orderbook` repo with a demo git author.
+GIFs are built from one frame per step with ImageMagick:
 
-> Both existing shots were cropped to remove the macOS menu bar, the Ghostty tab
-> bar and the Dock — the tab bar in particular showed live tmux session names.
-> The statusline username and hostname in `claude-code.png` were replaced with
-> `you@macbook`. Do the same to anything you add.
+```sh
+magick -delay 150 f01.png -delay 60 f02.png … -resize 1200x -colors 128 \
+  -layers Optimize -loop 0 out.gif
+```
 
-## Capture tips
+## Before adding one
 
-- **Recording GIFs:** [vhs](https://github.com/charmbracelet/vhs) produces clean,
-  scriptable, reproducible terminal GIFs — better than screen-recording, and the
-  `.tape` script can live in this directory so captures are repeatable after a
-  config change. `brew install vhs`.
-- **Keep them small.** Under ~3MB each; GitHub is slow to load big GIFs and many
-  readers bail before the loop starts. Trim aggressively — 10 seconds is plenty.
-- **Sizing.** Around 1200–1600px wide renders sharply on GitHub without forcing
-  horizontal scroll on the README.
-- **Before capturing**, clear the scrollback and use a directory whose name you're
-  happy to publish. Screenshots leak paths, branch names and hostnames more often
-  than people expect.
-- **Dark background** matches the badges and the config's own palette.
+- Use a folder name you are happy to publish. Screenshots leak paths, branch
+  names, usernames and hostnames more often than people expect.
+- `eza -l` prints the owner column, so it shows your username.
+- Claude Code may print a settings warning at startup that names a private
+  path. Make sure it is off screen.
+- Keep each file under about 3 MB and around 1200–1400 px wide.
