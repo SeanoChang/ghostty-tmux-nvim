@@ -41,3 +41,5 @@ link   config/claude/settings.json.tmpl      ~/.claude/settings.json
 link   config/claude/statusline-command.sh   ~/.claude/statusline-command.sh
 merge  config/claude/commands                ~/.claude/commands
 merge  config/claude/skills                  ~/.claude/skills
+merge  config/claude/hooks                   ~/.claude/hooks
+merge  config/claude/mods                    ~/.claude/mods

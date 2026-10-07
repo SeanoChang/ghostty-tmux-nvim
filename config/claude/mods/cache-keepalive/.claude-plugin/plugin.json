@@ -1,0 +1,5 @@
+{
+  "name": "cache-keepalive",
+  "version": "0.1.0",
+  "description": "Keeps an idle session's 1-hour prompt cache warm with a tiny forked request, at most 3 times per idle stretch."
+}

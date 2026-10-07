@@ -1,0 +1,5 @@
+{
+  "name": "context-feed",
+  "version": "0.1.0",
+  "description": "Writes the context window's breakdown by category to a file the status line script reads."
+}

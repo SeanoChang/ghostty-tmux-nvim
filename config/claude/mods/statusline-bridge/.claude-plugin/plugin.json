@@ -1,0 +1,6 @@
+{
+  "name": "statusline-bridge",
+  "version": "0.2.0",
+  "description": "The status line as a compact native band in the desktop app: one row of chips, with context and cache detail on demand.",
+  "types": "./types/index.d.ts"
+}
