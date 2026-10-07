@@ -138,7 +138,7 @@ export type ViewProps = {
   /** This session's repository, for the History view's This repo filter. */
   repo?: string
   /** The look chosen in /config: 'kitty' or 'minimal'. */
-  theme?: 'kitty' | 'minimal'
+  theme?: 'kitty' | 'fish' | 'dog' | 'minimal'
   /** The last wheel move over the pane: a new seq means a move the view has not applied yet. */
   wheel?: Wheel
   /** The trace the view asked for: a window of its rows, read from transcripts by the hooks. */

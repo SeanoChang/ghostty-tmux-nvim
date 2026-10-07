@@ -7,7 +7,7 @@ import {
   pipeline, plain, prettyModel, prettyType, scopeNodes, shortPaths, taskText, topItems, transcriptEdits, workSummary, workflowItems,
 } from '../hooks/list'
 import { bar, unifiedHunks, viewProps, viewState, wrap } from '../hooks/view'
-import { cellWidth } from '../hooks/theme'
+import { THEMES, cellWidth } from '../hooks/theme'
 import type { AgentNode } from '../types'
 
 const KEY = 'tree-v7'
@@ -485,6 +485,28 @@ for (const surface of ['terminal'] as const) {
     await ui.unmount()
   })
 }
+
+for (const [theme, failed, workflow, history] of [['fish', '🐡', '🛶', 'The catch'], ['dog', '🥺', '🎾', 'Fetched']] as const) {
+  test(`the ${theme} theme draws its own glyphs and words (terminal)`, { options: { theme } }, async ($, on) => {
+    const ui = await historyPane($, on, 'terminal')
+    expect(await ui.find({ in: KEY, text: new RegExp(failed) })).toBeDefined()
+    expect(await ui.find({ in: KEY, text: new RegExp(workflow) })).toBeDefined()
+    expect(await ui.find({ in: KEY, text: new RegExp(history) })).toBeDefined()
+    expect(await ui.find({ in: KEY, text: /😿/ })).toBeUndefined()
+    await ui.unmount()
+  })
+}
+
+// Emoji widths: a status column lines up only when every mark in a theme takes the
+// same cells, and the counter is right only for marks it can measure (no joiners).
+test('every theme keeps its marks one width and free of joined emoji', () => {
+  for (const t of Object.values(THEMES)) {
+    const marks = [...Object.values(t.status).map(s => s.icon), t.runningAlt, t.traceFail, t.kind.workflow, t.kind.group]
+    expect(new Set(marks.slice(0, 6).map(cellWidth)).size).toBe(1)
+    expect(marks.some(m => m.includes('\u200d'))).toBe(false)
+  }
+  expect(Object.keys(THEMES).sort()).toEqual(['dog', 'fish', 'kitty', 'minimal'])
+})
 
 test('under 60 columns the pane asks to be widened', async ($, on) => {
   const ui = await historyPane($, on)

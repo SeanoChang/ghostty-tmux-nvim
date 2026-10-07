@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface as Engine, Register, Timer } from 'claude-code'
 
 import type { AgentNode, EditRecord, NodeStatus, PatternsDoc, Report, TraceRow, TraceView, TraceZoom, ViewProps } from '../types'
-import { themeOf, type ThemeName } from './theme'
+import { themeNameOf, themeOf, type ThemeName } from './theme'
 import {
   changesLine, cleanTitle, describeTool, diffCounts, editRecords, editedPath, fileRows, firstPrompt, firstSentence, handbackOf, fitProps,
   lineDiff, parseJournal, pipeline, scopeNodes, transcriptEdits, folderKey, runKey,
@@ -600,7 +600,7 @@ async function archive($: Engine) {
 }
 
 export const register: Register = (on, options) => {
-  themeName = options?.theme === 'kitty' ? 'kitty' : 'minimal'
+  themeName = themeNameOf(options?.theme)
   aiMode = AI_MODES.includes(options?.ai as AiMode) ? (options!.ai as AiMode) : 'cheap'
   on('session.start', async ($, e, next) => {
     await $.command.register({

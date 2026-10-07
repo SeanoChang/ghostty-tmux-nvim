@@ -133,8 +133,8 @@ function Header(c: Ctx, history: AgentNode[], run: AgentNode | undefined) {
       {/* row 1: what you look at */}
       <Box flexDirection="row" columnGap={2} rowGap={1} flexWrap="wrap" alignItems="center">
         <Box flexDirection="row" gap={1} alignItems="center">
-          {t.name === 'kitty'
-            ? <Svg source={spriteSvg('pile', 20)} alt="Agents" width={20} height={20} />
+          {t.art
+            ? <Svg source={spriteSvg(t.art, 'group', 20)} alt="Agents" width={20} height={20} />
             : <Svg source={iconSvg('workflow', t.accent, 18)} alt="Agents" width={18} height={18} />}
           <Text bold>Agents</Text>
         </Box>
@@ -246,9 +246,7 @@ function LiveList(c: Ctx) {
   if (c.ui.lens === 'board') return Board(c, boardLanes(undefined, c.data.nodes, items.map(i => i.node), 'all'), undefined)
   if (c.ui.lens === 'timeline') return Timeline(c, undefined, items.map(i => i.node))
   if (!items.length) {
-    return c.t.name === 'kitty'
-      ? Empty(c.els, c.t, 'No cats out.', 'Subagents and workflows appear here while they run, then move to History.')
-      : Empty(c.els, c.t, 'Nothing is running right now.', 'Subagents and workflows appear here while they run, then move to History.')
+    return Empty(c.els, c.t, c.t.words.emptyLive, 'Subagents and workflows appear here while they run, then move to History.')
   }
   return <Box flexDirection="column" gap={1}>{items.map(it => RunCard(c, it.node, c.data.nodes))}</Box>
 }
@@ -321,7 +319,7 @@ function HistoryPage(c: Ctx, history: AgentNode[]) {
       </Box>
       {!ui.query && ui.hfilter === 'all' ? Patterns(c, c.data.patterns) : null}
       {items.length === 0
-        ? Empty(c.els, t, t.name === 'kitty' ? 'No cats have come home yet.' : 'No finished runs yet.', ui.query || ui.hfilter !== 'all' ? 'Nothing matches the search or filter.' : 'Finished runs land here.')
+        ? Empty(c.els, t, t.words.emptyHistory, ui.query || ui.hfilter !== 'all' ? 'Nothing matches the search or filter.' : 'Finished runs land here.')
         : (
           <Box flexDirection="column">
             {items.map((it, i) => {
@@ -771,10 +769,10 @@ function Detail(c: Ctx, run: AgentNode, target: Target) {
     return cn.running ? 'running' as const : cn.failed ? 'failed' as const : cn.stopped ? 'killed' as const : 'done' as const
   })()
   const quiet = head ? isQuiet(head, c.now) : false
-  const big = t.name === 'kitty'
+  const big = t.art
     ? status === 'running' && !quiet
-      ? <Svg source={walkSvg(48)} alt="Running" width={48} height={48} isInteractive />
-      : <Svg source={spriteSvg(quiet ? 'quiet' : head?.kind === 'workflow' ? 'yarn' : head?.kind === 'group' ? 'pile' : status === 'done' ? 'done' : status === 'failed' ? 'failed' : 'stopped', 48)} alt={STATUS_WORD[status]} width={48} height={48} />
+      ? <Svg source={walkSvg(t.art, 48)} alt="Running" width={48} height={48} isInteractive />
+      : <Svg source={spriteSvg(t.art, quiet ? 'quiet' : head?.kind === 'workflow' ? 'workflow' : head?.kind === 'group' ? 'group' : status === 'done' ? 'done' : status === 'failed' ? 'failed' : 'stopped', 48)} alt={STATUS_WORD[status]} width={48} height={48} />
     : <Svg source={iconSvg(quiet ? 'quiet' : status, quiet ? t.warn : statusColor(t, status), 28)} alt={STATUS_WORD[status]} width={28} height={28} />
   const meta = head
     ? [prettyType(head, !!head.phase), prettyModel(head.model), duration((head.endedAt ?? c.now) - head.startedAt), clock(head.startedAt)].filter(Boolean).join(' · ')

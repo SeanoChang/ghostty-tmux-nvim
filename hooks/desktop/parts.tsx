@@ -1,4 +1,5 @@
 import type { AgentNode, Brief, NodeStatus, Report } from '../../types'
+import type { ThemeName } from '../theme'
 import { ago } from '../ai'
 import { firstSentence, noReportReason, prettyModel, shortPaths, taskText, type FileRow } from '../list'
 import { reportFacts, reportOf, kTokens } from '../report'
@@ -11,7 +12,7 @@ export type Els = Record<string, any>
 
 export const STATUS_WORD: Record<NodeStatus, string> = { running: 'Running', done: 'Done', failed: 'Failed', killed: 'Stopped' }
 
-export const tokensOf = (theme: 'kitty' | 'minimal'): DeskTokens => DESK[theme]
+export const tokensOf = (theme: ThemeName): DeskTokens => DESK[theme]
 
 // Who wrote an AI block, what it cost and how old it is: "Haiku · 900 tokens · 2h ago".
 export const aiLabel = (b: { model?: string; tokens?: number; at?: number } | undefined, now: number): string =>
@@ -27,11 +28,12 @@ export function duration(ms: number): string {
 export const clock = (t: number) => new Date(t).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
 export const num = (n: number) => n.toLocaleString('en-US')
 
-// One status mark: a pixel cat in kitty, a line icon in minimal. Quiet agents sleep.
+// One status mark: the theme's pixel art (a cat, a fish, a dog), or a line icon in
+// minimal. Quiet agents sleep.
 export function StatusMark(els: Els, t: DeskTokens, status: NodeStatus, px = 16, isQuiet = false) {
   const { Svg } = els
   const word = isQuiet ? 'Quiet' : STATUS_WORD[status]
-  if (t.name === 'kitty') return <Svg source={spriteSvg(isQuiet ? 'quiet' : SPRITE_FOR[status], px)} alt={word} width={px} height={px} />
+  if (t.art) return <Svg source={spriteSvg(t.art, isQuiet ? 'quiet' : SPRITE_FOR[status], px)} alt={word} width={px} height={px} />
   const name = isQuiet ? 'quiet' : status
   return <Svg source={iconSvg(name, isQuiet ? t.warn : statusColor(t, status), px)} alt={word} width={px} height={px} />
 }
@@ -41,7 +43,7 @@ export function KindMark(els: Els, t: DeskTokens, kind: AgentNode['kind'], px = 
   const { Svg } = els
   if (kind === 'agent') return null
   const alt = kind === 'workflow' ? 'Workflow' : 'Cluster'
-  if (t.name === 'kitty') return <Svg source={spriteSvg(kind === 'workflow' ? 'yarn' : 'pile', px)} alt={alt} width={px} height={px} />
+  if (t.art) return <Svg source={spriteSvg(t.art, kind === 'workflow' ? 'workflow' : 'group', px)} alt={alt} width={px} height={px} />
   return <Svg source={iconSvg(kind === 'workflow' ? 'workflow' : 'group', t.muted, px)} alt={alt} width={px} height={px} />
 }
 
@@ -61,13 +63,13 @@ export function SectionLabel(els: Els, t: DeskTokens, text: string) {
   return <Text color={t.muted} bold>{text.toUpperCase()}</Text>
 }
 
-// The empty state: a scene in kitty, a calm line in minimal.
+// The empty state: the theme's scene when it has pixel art, a calm line in minimal.
 export function Empty(els: Els, t: DeskTokens, title: string, hint: string) {
   const { Box, Text, Svg } = els
   return (
     <Box flexDirection="column" alignItems="center" paddingY={2} gap={1}>
-      {t.name === 'kitty'
-        ? <Svg source={spriteSvg('scene', 128)} alt="A cat asleep on a keyboard" width={128} height={80} />
+      {t.art
+        ? <Svg source={spriteSvg(t.art, 'scene', 128)} alt={t.words.scene} width={128} height={80} />
         : <Svg source={iconSvg('empty', t.rule, 28)} alt="Nothing here" width={28} height={28} />}
       <Text bold>{title}</Text>
       <Text color={t.muted}>{hint}</Text>

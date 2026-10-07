@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 
-import { PIX } from '../hooks/desktop/sprites'
+import { ART, SLOTS } from '../hooks/desktop/sprites'
 import { spriteSvg, walkSvg } from '../hooks/desktop/svg'
 
 // Phase 6: the desktop surface draws its own native view (Svg, Buttons, Code,
@@ -189,6 +189,23 @@ describe('desktop: themes', () => {
     expect(scene).toBeDefined()
     await ui.unmount()
   })
+
+  for (const [theme, empty, alt, emptyHistory] of [
+    ['fish', 'Lines are dry.', 'A rod propped on a dock at night, a fish asleep below', 'Nothing in the bucket yet.'],
+    ['dog', 'No dogs out.', 'A dog asleep by its dog house', 'No dogs are back from walks yet.'],
+  ] as const) {
+    test(`${theme} draws its own pixel sprites and empty scene`, { options: { theme } }, async ($, on) => {
+      const ui = await desk($, on)
+      expect(await ui.find({ text: empty })).toBeDefined()
+      const scene = (await svgs(ui)).find(s => s.props?.alt === alt)
+      expect(String(scene?.props?.source ?? '')).toContain(ART[theme].pal.o!)
+      await ui.press({ key: 'tab:history' })
+      const pixel = (await svgs(ui)).filter(s => String(s.props?.source ?? '').includes('shape-rendering="crispEdges"'))
+      expect(pixel.length).toBeGreaterThan(2)
+      expect(await ui.find({ text: emptyHistory })).toBeUndefined() // History has runs
+      await ui.unmount()
+    })
+  }
 })
 
 test('desktop: a run\'s timeline names its critical path and saves a picture', async ($, on) => {
@@ -217,19 +234,22 @@ test('desktop: a run\'s timeline names its critical path and saves a picture', a
   await ui.unmount()
 })
 
-test('sprites: every grid is rectangular, every pixel in the palette, sizes under the Svg cap', () => {
-  for (const [name, grid] of Object.entries(PIX)) {
-    expect(new Set(grid.map(r => r.length)).size).toBe(1)
-    const svg = spriteSvg(name, 48)
-    expect(svg).toContain('crispEdges')
-    expect(svg.length).toBeLessThan(131_072)
+test('sprites: each art set fills every slot; grids are rectangular, every pixel in its palette, sizes under the Svg cap', () => {
+  for (const set of Object.values(ART)) {
+    for (const slot of SLOTS) {
+      const grid = set.pix[slot]
+      expect(grid.length).toBeGreaterThan(0)
+      expect(new Set(grid.map(r => r.length)).size).toBe(1)
+      expect([...grid.join('')].every(ch => ch === '.' || ch in set.pal)).toBe(true)
+      const svg = spriteSvg(set, slot, slot === 'scene' ? 128 : 48)
+      expect(svg).toContain('crispEdges')
+      expect(svg.length).toBeLessThan(131_072)
+    }
+    expect((walkSvg(set, 48).match(/<animate /g) ?? []).length).toBe(4)
   }
-  expect(spriteSvg('scene', 128).length).toBeLessThan(131_072)
-  const walk = walkSvg(48)
-  expect((walk.match(/<animate /g) ?? []).length).toBe(4)
-  // failed lies down: its top five rows are clear, unlike done, which sits up
-  expect(PIX.failed!.slice(0, 5).every(r => /^\.+$/.test(r))).toBe(true)
-  expect(PIX.done!.slice(0, 5).some(r => /[^.]/.test(r))).toBe(true)
+  // kitty's failed cat lies down: its top five rows are clear, unlike done, which sits up
+  expect(ART.kitty.pix.failed.slice(0, 5).every(r => /^\.+$/.test(r))).toBe(true)
+  expect(ART.kitty.pix.done.slice(0, 5).some(r => /[^.]/.test(r))).toBe(true)
 })
 
 // The run view, direction C: a summary card first, one row of controls, no outlines.

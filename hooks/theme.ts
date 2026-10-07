@@ -1,9 +1,11 @@
 import type { AgentNode, NodeStatus } from '../types'
 
-// Two looks, chosen in /config: minimal works on every terminal (plain Unicode,
-// one accent); kitty is warm and playful (emoji cats, which take two cells).
+// Four looks, chosen in /config: minimal works on every terminal (plain Unicode,
+// one accent); kitty, fish and dog are playful (emoji, which take two cells), each
+// telling one small story: cats out exploring, lines cast for a catch, dogs on walks.
 // Colour carries state before it decorates: ok, warn and bad mean status only.
-export type ThemeName = 'kitty' | 'minimal'
+export type ThemeName = 'kitty' | 'fish' | 'dog' | 'minimal'
+export const THEME_NAMES: readonly ThemeName[] = ['minimal', 'kitty', 'fish', 'dog']
 
 export type Palette = {
   ink: string; soft: string; muted: string; faint: string; rule: string; frame: string
@@ -89,8 +91,69 @@ const KITTY: Theme = {
   quiet: 'ᓚᘏᗢ zzz',
 }
 
-export const THEMES: Record<ThemeName, Theme> = { minimal: MINIMAL, kitty: KITTY }
-export const themeOf = (name: unknown): Theme => (name === 'kitty' ? KITTY : MINIMAL)
+// Lines cast for a catch: lake blues, a fin-orange frame. A failure got away.
+const FISH: Theme = {
+  name: 'fish',
+  c: {
+    ink: '#dcebf3', soft: '#b5cfdc', muted: '#86a5b5', faint: '#56748a', rule: '#22394b', frame: '#4fb3d9',
+    accent: '#4fb3d9', selBg: '#173042', ok: '#8bd5a0', warn: '#f2c26b', bad: '#f28b82', add: '#8bd5a0', del: '#f28b82',
+  },
+  status: {
+    running: { icon: '🎣', word: 'Running', color: '#f2c26b' },
+    done: { icon: '🐟', word: 'Done', color: '#8bd5a0' },
+    failed: { icon: '🐡', word: 'Failed', color: '#f28b82' },
+    killed: { icon: '🪝', word: 'Stopped', color: '#86a5b5' },
+  },
+  runningAlt: '🌊',
+  kind: { workflow: '🛶', group: '🐠', file: '🧾' },
+  bar: { full: '▰', empty: '▱' },
+  warn: '⚠',
+  fold: { open: '▾', closed: '▸' },
+  cursor: '▌',
+  words: {
+    live: 'Out fishing', history: 'The catch',
+    emptyLive: '><(((º> · Lines are dry.', emptyHistory: 'Nothing in the bucket yet.',
+    emptyHint: 'Subagents and workflows (🛶) appear here while they run, then move to History.',
+  },
+  lanes: ['#4fb3d9', '#b4a0f0', '#7fdbd0', '#f29b38', '#e6a5c8', '#c9d6df'],
+  traceFail: '🐡',
+  quiet: '><> zzz',
+}
+
+// Dogs out on walks, back with what they fetched: golden tan and warm browns.
+const DOG: Theme = {
+  name: 'dog',
+  c: {
+    ink: '#f3e6d6', soft: '#dcc6ad', muted: '#b09a82', faint: '#77634f', rule: '#43352a', frame: '#e6a85a',
+    accent: '#e6a85a', selBg: '#3a2d22', ok: '#a6d189', warn: '#f5d76e', bad: '#f08a7a', add: '#a6d189', del: '#f08a7a',
+  },
+  status: {
+    running: { icon: '🐕', word: 'Running', color: '#f5d76e' },
+    done: { icon: '🐶', word: 'Done', color: '#a6d189' },
+    failed: { icon: '🥺', word: 'Failed', color: '#f08a7a' },
+    killed: { icon: '🦴', word: 'Stopped', color: '#b09a82' },
+  },
+  runningAlt: '🦮',
+  kind: { workflow: '🎾', group: '🐾', file: '🧾' },
+  bar: { full: '▰', empty: '▱' },
+  warn: '⚠',
+  fold: { open: '▾', closed: '▸' },
+  cursor: '▌',
+  words: {
+    live: 'Out on walks', history: 'Fetched',
+    emptyLive: 'U・ᴥ・U zzz · No dogs out.', emptyHistory: 'No dogs are back from walks yet.',
+    emptyHint: 'Subagents and workflows (🎾) appear here while they run, then move to History.',
+  },
+  lanes: ['#e6a85a', '#9fb7e8', '#7fcfb8', '#d9a0c8', '#c8e04a', '#d6c8b8'],
+  traceFail: '🥺',
+  quiet: 'U-ᴥ-U zzz',
+}
+
+export const THEMES: Record<ThemeName, Theme> = { minimal: MINIMAL, kitty: KITTY, fish: FISH, dog: DOG }
+// An unknown name (an old setting, a typo) falls back to minimal.
+export const themeNameOf = (name: unknown): ThemeName =>
+  THEME_NAMES.includes(name as ThemeName) ? (name as ThemeName) : 'minimal'
+export const themeOf = (name: unknown): Theme => THEMES[themeNameOf(name)]
 
 // The glyph a row shows for what a node is: only what holds others has one.
 export function kindGlyph(t: Theme, n: Pick<AgentNode, 'kind'>): string {

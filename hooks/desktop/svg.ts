@@ -1,5 +1,6 @@
 import type { NodeStatus } from '../../types'
-import { PIX, PIX_PAL } from './sprites'
+import type { ThemeName } from '../theme'
+import { ART, type ArtSet, type Slot } from './sprites'
 
 // Every picture the desktop view draws, as SVG source strings. An Svg element is
 // drawn as an image, where currentColor means nothing, so every colour is written
@@ -8,7 +9,11 @@ import { PIX, PIX_PAL } from './sprites'
 // The desktop can not tell its light or dark mode to a plugin, so these tokens are
 // mid-tone hues that read on both; text and grounds stay the surface's own.
 export type DeskTokens = {
-  name: 'kitty' | 'minimal'
+  name: ThemeName
+  // the pixel art drawn in place of line icons; minimal has none
+  art?: ArtSet
+  // the empty states' titles, and what the empty Live scene shows (its alt text)
+  words: { emptyLive: string; emptyHistory: string; scene: string }
   accent: string
   ok: string
   warn: string
@@ -21,16 +26,33 @@ export type DeskTokens = {
   lanes: string[]
 }
 
-export const DESK: Record<'kitty' | 'minimal', DeskTokens> = {
+export const DESK: Record<ThemeName, DeskTokens> = {
   minimal: {
     name: 'minimal', accent: '#3b82f6', ok: '#16a34a', warn: '#d97706', bad: '#dc2626', stop: '#6b7280',
     muted: '#6b7280', rule: '#9ca3af', add: '#16a34a', del: '#dc2626',
     lanes: ['#3b82f6', '#8b5cf6', '#0891b2', '#0d9488', '#ea580c', '#64748b'],
+    words: { emptyLive: 'Nothing is running right now.', emptyHistory: 'No finished runs yet.', scene: '' },
   },
   kitty: {
     name: 'kitty', accent: '#e8735a', ok: '#4d9e5c', warn: '#d9893b', bad: '#d9566e', stop: '#9b7f86',
     muted: '#9b7f86', rule: '#d8b8a8', add: '#4d9e5c', del: '#d9566e',
     lanes: ['#e8735a', '#a874c4', '#3aa6c4', '#3ea58f', '#d9893b', '#9b7f86'],
+    art: ART.kitty,
+    words: { emptyLive: 'No cats out.', emptyHistory: 'No cats have come home yet.', scene: 'A cat asleep on a keyboard' },
+  },
+  fish: {
+    name: 'fish', accent: '#2f8fc4', ok: '#2f9e6a', warn: '#d9973b', bad: '#d9566e', stop: '#7c8fa0',
+    muted: '#7c8fa0', rule: '#a9c3d4', add: '#2f9e6a', del: '#d9566e',
+    lanes: ['#2f8fc4', '#8b6fd6', '#2aa198', '#d9893b', '#c06c9f', '#7c8fa0'],
+    art: ART.fish,
+    words: { emptyLive: 'Lines are dry.', emptyHistory: 'Nothing in the bucket yet.', scene: 'A rod propped on a dock at night, a fish asleep below' },
+  },
+  dog: {
+    name: 'dog', accent: '#c98a3c', ok: '#4d9e5c', warn: '#c99a1f', bad: '#d9566e', stop: '#9b8670',
+    muted: '#9b8670', rule: '#d8c2a8', add: '#4d9e5c', del: '#d9566e',
+    lanes: ['#c98a3c', '#6f8fd6', '#3ea58f', '#c06c9f', '#8fa62a', '#9b8670'],
+    art: ART.dog,
+    words: { emptyLive: 'No dogs out.', emptyHistory: 'No dogs are back from walks yet.', scene: 'A dog asleep by its dog house' },
   },
 }
 
@@ -42,7 +64,7 @@ const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replac
 // ── pixel sprites ────────────────────────────────────────────────────────────
 // One rect per run of same-coloured pixels in a row, so a 16×16 sprite stays a
 // few hundred characters and the 64×40 scene stays far under the 131072 cap.
-function spriteRects(grid: readonly string[], dx = 0): string {
+function spriteRects(grid: readonly string[], pal: Record<string, string>, dx = 0): string {
   let out = ''
   grid.forEach((row, y) => {
     let x = 0
@@ -51,29 +73,29 @@ function spriteRects(grid: readonly string[], dx = 0): string {
       if (ch === '.') { x++; continue }
       let end = x + 1
       while (end < row.length && row[end] === ch) end++
-      out += `<rect x="${x + dx}" y="${y}" width="${end - x}" height="1" fill="${PIX_PAL[ch]}"/>`
+      out += `<rect x="${x + dx}" y="${y}" width="${end - x}" height="1" fill="${pal[ch]}"/>`
       x = end
     }
   })
   return out
 }
 
-export const SPRITE_FOR: Record<NodeStatus, string> = { running: 'walk0', done: 'done', failed: 'failed', killed: 'stopped' }
+export const SPRITE_FOR: Record<NodeStatus, Slot> = { running: 'walk0', done: 'done', failed: 'failed', killed: 'stopped' }
 
-export function spriteSvg(name: string, px: number): string {
-  const grid = PIX[name] ?? PIX.done!
+export function spriteSvg(art: ArtSet, name: Slot, px: number): string {
+  const grid = art.pix[name]
   const w = grid[0]!.length
   const h = grid.length
   const scale = px / Math.max(w, h)
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round(w * scale)}" height="${Math.round(h * scale)}" viewBox="0 0 ${w} ${h}" shape-rendering="crispEdges">${spriteRects(grid)}</svg>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${Math.round(w * scale)}" height="${Math.round(h * scale)}" viewBox="0 0 ${w} ${h}" shape-rendering="crispEdges">${spriteRects(grid, art.pal)}</svg>`
 }
 
 // The running header sprite walks: four frames, each shown for a quarter of the
 // cycle by SMIL. It needs an interactive Svg, which the desktop draws in a frame.
-export function walkSvg(px: number): string {
-  const frames = ['walk0', 'walk1', 'walk2', 'walk3']
+export function walkSvg(art: ArtSet, px: number): string {
+  const frames = ['walk0', 'walk1', 'walk2', 'walk3'] as const
   const layers = frames.map((f, i) =>
-    `<g visibility="hidden">${spriteRects(PIX[f]!)}<animate attributeName="visibility" values="${frames.map((_, j) => (j === i ? 'visible' : 'hidden')).join(';')}" dur="0.6s" calcMode="discrete" repeatCount="indefinite"/></g>`)
+    `<g visibility="hidden">${spriteRects(art.pix[f], art.pal)}<animate attributeName="visibility" values="${frames.map((_, j) => (j === i ? 'visible' : 'hidden')).join(';')}" dur="0.6s" calcMode="discrete" repeatCount="indefinite"/></g>`)
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 16 16" shape-rendering="crispEdges">${layers.join('')}</svg>`
 }
 

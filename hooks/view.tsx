@@ -12,7 +12,7 @@ import {
   taskText, topItems, whereLabel, workSummary, type DiffLine, type FileRow, type Filter, type Group, type Item,
   folderKey, joinNodes, runKey,
 } from './list'
-import { cellWidth, fit, kindGlyph, padEnd, padStart, themeOf, type Theme } from './theme'
+import { cellWidth, fit, kindGlyph, padEnd, padStart, themeNameOf, themeOf, type Theme } from './theme'
 import {
   HISTORY_FILTERS, HISTORY_FILTER_NAMES, historyItems, historyStats, outcomeOf, runTokens, sparkline, type HistoryFilter,
 } from './history'
@@ -143,7 +143,7 @@ export function viewProps(raw: unknown): ViewProps {
   return {
     nodes: arrayOf(p.nodes), history: arrayOf(p.history), at: typeof p.at === 'number' ? p.at : 0, diff,
     ...(typeof p.repo === 'string' ? { repo: p.repo } : {}),
-    theme: p.theme === 'kitty' ? 'kitty' : 'minimal',
+    theme: themeNameOf(p.theme),
     wheel: { seq: typeof w?.seq === 'number' ? w.seq : 0, by: typeof w?.by === 'number' ? w.by : 0 },
     ...(traceOf(p.trace) ? { trace: traceOf(p.trace) } : {}),
     ai: p.ai === 'off' || p.ai === 'full' ? p.ai : 'cheap',
