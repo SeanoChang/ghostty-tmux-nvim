@@ -40,6 +40,8 @@ settings.local.json
 # name anyway in case someone points RENDER_DIR inward.
 .dotfiles-rendered/
 .dotfiles-backup/
+# Claude Code writes its API types into each mod for the editor and tsc.
+**/.claude-plugin/types/
 
 # ── noise ────────────────────────────────────────────────────────────────────
 .DS_Store
