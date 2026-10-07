@@ -154,8 +154,8 @@ describe('desktop AI', () => {
     expect(await has(ui, /^Explain · by Sonnet · 640 tokens · just now$/)).toBe(true)
     // outcome and open issues lead, as Markdown headings
     const brief = ((await ui.findAll({ type: 'Markdown' })) as unknown as { props?: { key?: string; text?: string } }[]).map(m => String(m.props?.text ?? '')).join('\n')
-    for (const h of ['#### Still open', '#### Goal', '#### Who did what', '#### How the parts connect']) expect(brief).toContain(h)
-    expect(brief.indexOf('#### Still open')).toBeLessThan(brief.indexOf('#### Goal'))
+    for (const h of ['### Still open', '### Goal', '### Who did what', '### How the parts connect']) expect(brief).toContain(h)
+    expect(brief.indexOf('### Still open')).toBeLessThan(brief.indexOf('### Goal'))
     expect(brief).toContain('Fix cart totals: Made totals multiply by quantity.')
     // Output carries the brief too
     await ui.press({ key: 'view:output' })
@@ -240,6 +240,7 @@ test('on Full, History finds patterns: cards with evidence and what to try; a ru
   // a run chip opens that run
   await ui.press({ key: 'prun:0:r3' })
   expect(await ui.find({ key: 'back' })).toBeDefined()
-  expect(await has(ui, /^Run 3$/)).toBe(true)
+  // the run's name now heads its summary card ("DONE · Run 3")
+  expect(await has(ui, /Run 3$/)).toBe(true)
   await ui.unmount()
 })

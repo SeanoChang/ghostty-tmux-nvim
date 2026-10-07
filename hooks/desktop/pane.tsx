@@ -5,12 +5,12 @@ import {
   childrenOf, counts, fileRows, folderKey, joinNodes, lineDiff, noReportReason, overlaps, pipeline, prettyModel, prettyType, runKey,
   runTree, scopeNodes, shortPaths, topItems, type Item,
 } from '../list'
-import { kTokens, reportOf } from '../report'
+import { kTokens, reportFacts, reportOf } from '../report'
 import { ZOOMS, ZOOM_NAMES } from '../trace'
 import { unifiedHunks } from '../view'
 import {
-  BriefBlock, Chip, Empty, KindMark, ReportBlock, SectionLabel, StatusMark, STATUS_WORD, aiLabel, briefMarkdown, changeTotals, clock, duration, metaLine, num,
-  outputMarkdown, tokensOf, type Els, type Part,
+  BriefBlock, Chip, Empty, Heading, KindMark, ReportBlock, SectionLabel, StatusMark, STATUS_WORD, SummaryCard, aiLabel, briefMarkdown, changeTotals, clock, duration, metaLine, num,
+  mdText, outputMarkdown, tilesOf, tint, tokensOf, type Els, type Part,
 } from './parts'
 import { STRIP_H, clip, diffBarSvg, iconSvg, rulerSvg, sparkSvg, spriteSvg, statusBarSvg, statusColor, stripSvg, traceSvg, walkSvg, type DeskTokens, type TimeBar } from './svg'
 
@@ -105,6 +105,29 @@ function Header(c: Ctx, history: AgentNode[], run: AgentNode | undefined) {
   const lenses: [DeskUi['lens'], string][] = [['tree', 'Tree'], ['timeline', 'Timeline'], ...(run ? [['trace', 'Trace'] as [DeskUi['lens'], string]] : []), ['board', 'Board']]
   // a count draws in its colour only when it is not zero, so the eye lands on what is there
   const tally = (n: number, word: string, color: string) => <Text color={n ? color : t.muted} {...(n ? { bold: true } : {})}>{n} {word}</Text>
+  const lensBar = Segmented(c, 'lens', lenses, ui.lens, v => {
+    c.acts.set({ lens: v, traceOffset: 0 })
+    c.acts.askTrace(v === 'trace' && run ? run.id : null, ui.zoom, 0)
+  })
+  // a run is open: one row of controls, so its summary card sits near the top.
+  // The run's name shows here only when the card below is about a part of it.
+  if (run) {
+    const inPart = !!ui.sel && ui.sel !== run.id
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Box flexDirection="row" columnGap={2} rowGap={1} flexWrap="wrap" alignItems="center">
+          <Button key="back" plain label={`‹ ${ui.tab === 'live' ? 'Live' : 'History'}`} onPress={() => openRun(c, null)} />
+          {lensBar}
+          <Box flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
+            {inPart ? <Text color={t.muted} wrap="truncate-end">in {run.label}</Text> : null}
+          </Box>
+          {ExplainButton(c, run)}
+        </Box>
+        {ui.note ? <Text color={t.warn}>{ui.note}</Text> : null}
+        {ui.confirm === 'explain' ? ConfirmRow(c, 'explain', 'Write a new brief? It asks Sonnet again.', () => c.acts.explain(run.id)) : null}
+      </Box>
+    )
+  }
   return (
     <Box flexDirection="column" gap={1}>
       {/* row 1: what you look at */}
@@ -123,11 +146,8 @@ function Header(c: Ctx, history: AgentNode[], run: AgentNode | undefined) {
       </Box>
       {/* row 2: how you look at it */}
       <Box flexDirection="row" columnGap={2} rowGap={1} flexWrap="wrap" alignItems="center">
-        {Segmented(c, 'lens', lenses, ui.lens, v => {
-          c.acts.set({ lens: v, traceOffset: 0 })
-          c.acts.askTrace(v === 'trace' && run ? run.id : null, ui.zoom, 0)
-        })}
-        {ui.tab === 'history' && !run
+        {lensBar}
+        {ui.tab === 'history'
           ? <Box flexGrow={1} minWidth={24}><Input key="search" placeholder="Search names and outcomes" value={ui.query} onInput={(v: string) => c.acts.set({ query: v })} onSubmit={(v: string) => c.acts.set({ query: v })} /></Box>
           : null}
       </Box>
@@ -141,16 +161,6 @@ function Header(c: Ctx, history: AgentNode[], run: AgentNode | undefined) {
         <Text color={t.muted}>(change in /config)</Text>
       </Box>
       {ui.note ? <Text color={t.warn}>{ui.note}</Text> : null}
-      {run
-        ? (
-          <Box flexDirection="row" gap={1} alignItems="center" flexWrap="wrap">
-            <Button key="back" plain label={`‹ ${ui.tab === 'live' ? 'Live' : 'History'}`} onPress={() => openRun(c, null)} />
-            <Box flexGrow={1} flexShrink={1}><Text bold wrap="truncate-end">{run.label}</Text></Box>
-            {ExplainButton(c, run)}
-          </Box>
-        )
-        : null}
-      {run && ui.confirm === 'explain' ? ConfirmRow(c, 'explain', 'Write a new brief? It asks Sonnet again.', () => c.acts.explain(run.id)) : null}
     </Box>
   )
 }
@@ -218,7 +228,7 @@ function Insights(c: Ctx, run: AgentNode | undefined) {
     <Box flexDirection="column" gap={1}>
       {loud.length
         ? (
-          <Box flexDirection="column" borderStyle="round" borderColor={loud.some(([it]) => it.tone === 'bad') ? t.bad : t.warn} paddingX={1}>
+          <Box flexDirection="column" backgroundColor={tint(loud.some(([it]) => it.tone === 'bad') ? t.bad : t.warn)} paddingX={2} paddingY={1}>
             <Text bold color={loud.some(([it]) => it.tone === 'bad') ? t.bad : t.warn}>Needs a look ({loud.length})</Text>
             {loud.map(([it, i]) => line(it, i))}
           </Box>
@@ -253,7 +263,7 @@ function RunCard(c: Ctx, n: AgentNode, nodes: AgentNode[]) {
   const ch = changeTotals(files)
   const clash = n.kind === 'group' ? overlaps(agents) : []
   return (
-    <Box key={`card-${n.id}`} flexDirection="column" borderStyle="round" borderColor={n.status === 'running' ? t.accent : t.rule} paddingX={1}>
+    <Box key={`card-${n.id}`} flexDirection="column" backgroundColor={tint(n.status === 'running' ? t.accent : t.rule)} paddingX={2} paddingY={1}>
       <Box flexDirection="row" gap={1} alignItems="center">
         {StatusMark(c.els, t, n.status)}
         {KindMark(c.els, t, n.kind)}
@@ -271,7 +281,7 @@ function RunCard(c: Ctx, n: AgentNode, nodes: AgentNode[]) {
         : null}
       {n.kind === 'group'
         ? <Box flexDirection="row" gap={1} flexWrap="wrap">{aspects(nodes, n.id).map(a => (
-          <Box key={`asp-${a.node.id}`} flexDirection="row" gap={1} borderStyle="round" borderColor={t.rule} paddingX={1}>
+          <Box key={`asp-${a.node.id}`} flexDirection="row" gap={1} backgroundColor={tint(t.rule, '26')} paddingX={1}>
             {StatusMark(c.els, t, a.node.status, 12)}
             <Text>{a.text}</Text>
           </Box>
@@ -350,7 +360,7 @@ function Patterns(c: Ctx, doc: PatternsDoc | undefined) {
     c.acts.patterns()
   }
   return (
-    <Box flexDirection="column" gap={1} borderStyle="round" borderColor={t.rule} paddingX={1}>
+    <Box flexDirection="column" gap={1} backgroundColor={tint(t.rule)} paddingX={2} paddingY={1}>
       <Box flexDirection="row" gap={1} alignItems="center" flexWrap="wrap">
         {doc ? <Button key="patterns:fold" plain label={ui.patternsOpen ? '▾' : '▸'} onPress={() => c.acts.set({ patternsOpen: !ui.patternsOpen })} /> : null}
         <Text bold>Patterns across runs</Text>
@@ -420,6 +430,9 @@ function RunView(c: Ctx, run: AgentNode) {
         ? Trace(c, run, full)
         : Tree(c, run)
   const detail = Detail(c, run, target)
+  // a run that is one agent has a one-row tree that only repeats the card's title
+  const lone = ui.lens === 'tree' && run.kind === 'agent' && !childrenOf(nodes, run.id).length
+  if (lone) return detail
   return side
     ? (
       <Box flexDirection="row" gap={2}>
@@ -554,7 +567,7 @@ function Board(c: Ctx, lanes: Lane[], run: AgentNode | undefined, cols = c.colum
           const cards = [...l.cards].sort((a, b) => BOARD_ORDER[a.status] - BOARD_ORDER[b.status] || a.startedAt - b.startedAt)
           const bad = cards.some(k => k.status === 'failed' || k.status === 'killed')
           return (
-            <Box key={`lane-${l.key}`} flexDirection="column" gap={1} borderStyle="round" borderColor={bad ? t.bad : cards.some(k => k.status === 'running') ? t.accent : t.rule} paddingX={1}
+            <Box key={`lane-${l.key}`} flexDirection="column" gap={1} backgroundColor={tint(bad ? t.bad : cards.some(k => k.status === 'running') ? t.accent : t.rule)} paddingX={2} paddingY={1}
               {...(laneW ? { width: laneW } : { flexGrow: 1 })}>
               <Box flexDirection="column">
                 <Text bold>{l.title}</Text>
@@ -767,30 +780,43 @@ function Detail(c: Ctx, run: AgentNode, target: Target) {
     const pr = target.kind === 'phase' ? target.wf.partReports?.[target.phase] : undefined
     body = (
       <Box flexDirection="column" gap={1}>
-        {pr?.model ? <Text color={t.muted}>Part report · {aiLabel(pr, c.now)}</Text> : null}
-        <Text bold>{pr?.result ?? `${counts(scope).done} of ${scope.length} agents done.`}</Text>
-        {pr?.problems?.map((p, i) => <Text key={`pp-${i}`} color={t.bad}>• <Text>{p.text}</Text></Text>)}
-        {SectionLabel(c.els, t, 'Agents')}
+        {pr?.problems?.length
+          ? (
+            <Box key="attention" flexDirection="column">
+              <Box flexDirection="row" gap={1} alignItems="center">
+                <Svg source={iconSvg('warn', t.bad, 16)} alt="Needs your attention" width={16} height={16} />
+                <Text color={t.bad} bold>Needs your attention ({pr.problems.length})</Text>
+              </Box>
+              <Markdown key="pproblems" text={pr.problems.map(p => `- ${mdText(p.text)}`).join('\n')} />
+            </Box>
+          )
+          : null}
+        {Heading(c.els, `Agents (${scope.length})`, 'h-agents')}
         {scope.map(k => (
-          <Box key={`pa-${k.id}`} flexDirection="row" gap={1}>
-            {StatusMark(c.els, t, k.status, 14)}
-            <Button key={`psel:${k.id}`} plain label={clip(k.label, 40)} onPress={() => c.acts.set({ sel: k.id })} />
-            <Text color={t.muted}>{clip(reportOf(k)?.result ?? noReportReason(k), 60)}</Text>
+          <Box key={`pa-${k.id}`} flexDirection="column">
+            <Box flexDirection="row" gap={1} alignItems="center">
+              {StatusMark(c.els, t, k.status, 14)}
+              <Box flexGrow={1} flexShrink={1} overflow="hidden"><Button key={`psel:${k.id}`} plain label={k.label} onPress={() => c.acts.set({ sel: k.id })} /></Box>
+              <Box flexShrink={0}><Text color={t.muted}>{duration((k.endedAt ?? c.now) - k.startedAt)}</Text></Box>
+            </Box>
+            <Box paddingLeft={3}><Text color={t.muted}>{clip(reportOf(k)?.result ?? noReportReason(k), 200)}</Text></Box>
           </Box>
         ))}
+        {pr?.model ? <Text color={t.muted}>Part report by {aiLabel(pr, c.now)}</Text> : null}
       </Box>
     )
   }
+  // the card: status, verdict and numbers in one glance; every view below shares it
+  const factScope = target.kind === 'node' ? { kind: 'node' as const, id: target.node.id } : { kind: 'phase' as const, wfId: target.wf.id, phase: target.phase }
+  const facts = reportFacts(c.all, factScope, c.now)
+  const result = head
+    ? reportOf(head)?.result ?? (head.status === 'running' ? 'Still working.' : noReportReason(head))
+    : target.kind === 'phase' ? target.wf.partReports?.[target.phase]?.result ?? `${counts(scope).done} of ${scope.length} agents done.` : ''
+  const problems = head ? (reportOf(head)?.problems?.length ?? 0) : target.kind === 'phase' ? (target.wf.partReports?.[target.phase]?.problems?.length ?? 0) : 0
+  const color = quiet ? t.warn : statusColor(t, status)
   return (
-    <Box flexDirection="column" gap={1} borderStyle="round" borderColor={t.rule} paddingX={1}>
-      <Box flexDirection="row" gap={2} alignItems="center">
-        {big}
-        <Box flexDirection="column" flexGrow={1}>
-          <Text bold>{clip(title, 90)}</Text>
-          <Text color={t.muted}>{meta}</Text>
-        </Box>
-        {Chip(c.els, t, quiet ? 'Quiet' : STATUS_WORD[status], quiet ? t.warn : statusColor(t, status))}
-      </Box>
+    <Box flexDirection="column" gap={1}>
+      {SummaryCard(c.els, t, { big, status, statusWord: quiet ? 'Quiet' : STATUS_WORD[status], color, title, meta, result, tiles: tilesOf(t, facts, problems) })}
       {quiet && head ? <Text color={t.warn}>No tool call for {duration(c.now - (head.lastToolAt ?? head.startedAt))}. Last: {head.activity ?? head.lastTool ?? 'unknown'}.</Text> : null}
       {tabs}
       {body}

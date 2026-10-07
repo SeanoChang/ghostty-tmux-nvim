@@ -45,14 +45,16 @@ export function KindMark(els: Els, t: DeskTokens, kind: AgentNode['kind'], px = 
   return <Svg source={iconSvg(kind === 'workflow' ? 'workflow' : 'group', t.muted, px)} alt={alt} width={px} height={px} />
 }
 
+
+// A label in a colour, with no outline: the pane draws no borders, only tints.
 export function Chip(els: Els, t: DeskTokens, text: string, color?: string) {
-  const { Box, Text } = els
-  return (
-    <Box borderStyle="round" borderColor={color ?? t.rule} paddingX={1}>
-      <Text color={color ?? t.muted}>{text}</Text>
-    </Box>
-  )
+  const { Text } = els
+  return <Text color={color ?? t.muted} bold>{text}</Text>
 }
+
+// A tint behind a block, as an 8-digit hex: the colour at about 10% (or `alpha`).
+// It reads on light and dark grounds alike, which an outline in a mid-tone did not.
+export const tint = (color: string, alpha = '1a') => `${color}${alpha}`
 
 export function SectionLabel(els: Els, t: DeskTokens, text: string) {
   const { Text } = els
@@ -86,35 +88,80 @@ export const mdText = (s: string) => s.replace(/([\\`*_[\]#<>|])/g, '\\$1')
 // A section heading: Markdown's h4, the one step up from body text.
 export function Heading(els: Els, text: string, key: string) {
   const { Markdown } = els
-  return <Markdown key={key} text={`#### ${mdText(text)}`} />
+  return <Markdown key={key} text={`### ${mdText(text)}`} />
 }
 
 // "the agent it came from", only when it adds something the line does not say.
 const sourceNote = (source: string | undefined, self: string) =>
   source && source.toLowerCase() !== self.toLowerCase() ? ` — _${mdText(source)}_` : ''
 
+// A result split into its verdict (the first sentence, drawn large) and the rest.
+export function verdictOf(result: string): { verdict: string; rest: string } {
+  const verdict = firstSentence(result, 300)
+  return { verdict, rest: result.slice(result.indexOf(verdict) + verdict.length).trim() }
+}
+
+export type Tile = { value: string; label: string; color?: string }
+
+// The summary card: what was picked and how it ended, its verdict, and its numbers
+// as tiles. The card is tinted in its status colour; nothing in it has an outline.
+export function SummaryCard(els: Els, t: DeskTokens, o: {
+  big: unknown; status: NodeStatus; statusWord: string; color: string; title: string; meta: string; result: string; tiles: Tile[]
+}) {
+  const { Box, Text, Markdown } = els
+  const { verdict, rest } = verdictOf(o.result)
+  return (
+    <Box flexDirection="column" gap={1} backgroundColor={tint(o.color)} paddingX={2} paddingY={1}>
+      <Box flexDirection="row" gap={2} alignItems="flex-start">
+        <Box flexShrink={0} paddingTop={1}>{o.big}</Box>
+        <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+          <Text color={o.color} bold>{o.statusWord.toUpperCase()} · {o.title}</Text>
+          <Markdown key="verdict" text={`## ${mdText(verdict)}${rest ? `\n\n${mdText(rest)}` : ''}`} />
+          <Text color={t.muted}>{o.meta}</Text>
+        </Box>
+      </Box>
+      <Box flexDirection="row" flexWrap="wrap" gap={1}>
+        {o.tiles.map(tl => (
+          <Box key={`tile-${tl.label}`} flexDirection="column" flexGrow={1} minWidth={12} backgroundColor={tint(t.rule, '26')} paddingX={1}>
+            <Text bold {...(tl.color ? { color: tl.color } : {})}>{tl.value}</Text>
+            <Text color={t.muted}>{tl.label}</Text>
+          </Box>
+        ))}
+      </Box>
+    </Box>
+  )
+}
+
+// The tiles for a scope: time, tokens, problems, files, and agents when more than one.
+export function tilesOf(t: DeskTokens, facts: ReturnType<typeof reportFacts>, problems: number): Tile[] {
+  return [
+    { value: duration(facts.ms), label: 'time' },
+    { value: facts.tokens ? kTokens(facts.tokens) : '—', label: 'tokens' },
+    { value: String(problems), label: problems === 1 ? 'problem' : 'problems', ...(problems ? { color: t.bad } : {}) },
+    { value: facts.files.length ? `+${num(facts.added)} −${num(facts.removed)}` : '0', label: `${facts.files.length} file${facts.files.length === 1 ? '' : 's'} changed`, ...(facts.files.length ? { color: t.add } : {}) },
+    ...(facts.agents > 1 ? [{ value: String(facts.agents), label: facts.phases ? `agents · ${facts.phases} phases` : 'agents' }] : []),
+  ]
+}
+
+// The report below the card: what needs attention, the parts, the details, the
+// files. The verdict and the numbers are in the card above it.
 export function ReportBlock(els: Els, t: DeskTokens, n: AgentNode, all: AgentNode[], now: number, parts: Part[], onPart: (id: string) => void, partsBy = '') {
   const { Box, Text, Button, Svg, Markdown } = els
   const r: Report | undefined = reportOf(n)
   const facts = reportFacts(all, { kind: 'node', id: n.id }, now)
   const names = shortPaths(facts.files.map(f => f.path))
   const max = Math.max(1, ...facts.files.map(f => f.added + f.removed))
-  const result = r?.result ?? (n.status === 'running' ? 'Still working.' : noReportReason(n))
-  // the verdict is the first sentence, drawn large; the rest of the result follows as body text
-  const verdict = firstSentence(result, 300)
-  const rest = result.slice(result.indexOf(verdict) + verdict.length).trim()
   const by = r?.model ? `Report by ${aiLabel(r, now)}` : n.report ? 'Report' : 'Report from what the run kept (no model summary)'
   const details = [
-    r?.done?.length ? `#### What it did\n\n${r.done.map(d => `- ${mdText(d)}`).join('\n')}` : '',
-    r?.decisions?.length ? `#### Decisions\n\n${r.decisions.map(d => `- ${mdText(d.text)}${sourceNote(d.source, n.label)}`).join('\n')}` : '',
-    r?.next ? `#### Next step\n\n${mdText(r.next)}` : '',
+    r?.done?.length ? `### What it did\n\n${r.done.map(d => `- ${mdText(d)}`).join('\n')}` : '',
+    r?.decisions?.length ? `### Decisions\n\n${r.decisions.map(d => `- ${mdText(d.text)}${sourceNote(d.source, n.label)}`).join('\n')}` : '',
+    r?.next ? `### Next step\n\n${mdText(r.next)}` : '',
   ].filter(Boolean).join('\n\n')
   return (
     <Box flexDirection="column" gap={1}>
-      <Markdown key="verdict" text={`### ${mdText(verdict)}${rest ? `\n\n${mdText(rest)}` : ''}`} />
       {r?.problems?.length
         ? (
-          <Box key="attention" flexDirection="column" borderStyle="round" borderColor={t.bad} paddingX={1}>
+          <Box key="attention" flexDirection="column">
             <Box flexDirection="row" gap={1} alignItems="center">
               <Svg source={iconSvg('warn', t.bad, 16)} alt="Needs your attention" width={16} height={16} />
               <Text color={t.bad} bold>Needs your attention ({r.problems.length})</Text>
@@ -161,17 +208,7 @@ export function ReportBlock(els: Els, t: DeskTokens, n: AgentNode, all: AgentNod
           </Box>
         )
         : null}
-      <Box key="totals" flexDirection="column">
-        <Text color={t.muted}>{[
-          facts.phases ? `${facts.phases} phases` : '',
-          `${facts.agents} agent${facts.agents === 1 ? '' : 's'}`,
-          `${facts.files.length} file${facts.files.length === 1 ? '' : 's'} changed`,
-          facts.files.length ? `+${num(facts.added)} −${num(facts.removed)}` : '',
-          duration(facts.ms),
-          facts.tokens ? `${kTokens(facts.tokens)} tokens` : '',
-        ].filter(Boolean).join('  ·  ')}</Text>
-        <Text color={t.muted}>{by}</Text>
-      </Box>
+      <Text color={t.muted}>{by}</Text>
     </Box>
   )
 }
@@ -182,14 +219,14 @@ export function BriefBlock(els: Els, t: DeskTokens, b: Brief | undefined, writin
   const { Box, Text, Markdown } = els
   const label = writing ? 'Explain · Sonnet is writing…' : `Explain · by ${aiLabel(b, now)}`
   const md = !b ? '' : [
-    b.outcome ? `### ${mdText(b.outcome)}` : '',
-    b.open?.length ? `#### Still open\n\n${b.open.map(o => `- ${mdText(o)}`).join('\n')}` : '',
-    b.goal ? `#### Goal\n\n${mdText(b.goal)}` : '',
-    b.who?.length ? `#### Who did what\n\n${b.who.map(w => `- ${mdText(w)}`).join('\n')}` : '',
-    b.connected ? `#### How the parts connect\n\n${mdText(b.connected)}` : '',
+    b.outcome ? `## ${mdText(b.outcome)}` : '',
+    b.open?.length ? `### Still open\n\n${b.open.map(o => `- ${mdText(o)}`).join('\n')}` : '',
+    b.goal ? `### Goal\n\n${mdText(b.goal)}` : '',
+    b.who?.length ? `### Who did what\n\n${b.who.map(w => `- ${mdText(w)}`).join('\n')}` : '',
+    b.connected ? `### How the parts connect\n\n${mdText(b.connected)}` : '',
   ].filter(Boolean).join('\n\n')
   return (
-    <Box flexDirection="column" gap={1} borderStyle="round" borderColor={t.accent} paddingX={1}>
+    <Box flexDirection="column" gap={1} backgroundColor={tint(t.accent)} paddingX={2} paddingY={1}>
       <Text color={t.accent} bold>{label}</Text>
       {!b
         ? <Text color={t.muted}>Sonnet reads the run's reports, steps and insights.</Text>

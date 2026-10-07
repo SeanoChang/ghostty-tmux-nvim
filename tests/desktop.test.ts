@@ -75,8 +75,8 @@ describe('desktop: a native view', () => {
     await ui.press({ key: 'run:w1' })
     const md = ((await ui.findAll({ type: 'Markdown' })) as unknown as Found[]).map(m => String(m.props?.text ?? '')).join('\n')
     // the verdict is the large heading; each section has its own heading
-    expect(md).toContain('### Found 3 issues; 2 confirmed by verifiers.')
-    for (const h of ['#### Parts (2)', '#### Next step', '#### Changed files (1)']) expect(md).toContain(h)
+    expect(md).toContain('## Found 3 issues; 2 confirmed by verifiers.')
+    for (const h of ['### Parts (2)', '### Next step', '### Changed files (1)']) expect(md).toContain(h)
     expect(await ui.find({ text: 'Needs your attention (1)' })).toBeDefined()
     expect(md).toContain('- retry-after ran out of turns. — _verify:retry-after_')
     expect(await ui.find({ key: 'part:phase:w1:Review' })).toBeDefined()
@@ -92,9 +92,10 @@ describe('desktop: a native view', () => {
     await ui.press({ key: 'tab:history' })
     await ui.press({ key: 'run:h1' })
     await ui.press({ key: 'view:output' })
+    // the summary card's verdict is one Markdown; the Output view is the other
     const md = (await ui.findAll({ type: 'Markdown' })) as unknown as Found[]
-    expect(md.length).toBe(1)
-    expect(String(md[0]!.props?.text)).toContain('find every caller of parseJwt')
+    expect(md.length).toBe(2)
+    expect(md.some(m => String(m.props?.text).includes('find every caller of parseJwt'))).toBe(true)
     await ui.unmount()
   })
 
@@ -221,4 +222,33 @@ test('sprites: every grid is rectangular, every pixel in the palette, sizes unde
   // failed lies down: its top five rows are clear, unlike done, which sits up
   expect(PIX.failed!.slice(0, 5).every(r => /^\.+$/.test(r))).toBe(true)
   expect(PIX.done!.slice(0, 5).some(r => /[^.]/.test(r))).toBe(true)
+})
+
+// The run view, direction C: a summary card first, one row of controls, no outlines.
+test('desktop: a run opens on a tinted summary card with tiles, under one row of controls, with no outlines', async ($, on) => {
+  const ui = await desk($, on)
+  await ui.press({ key: 'tab:history' })
+  await ui.press({ key: 'run:w1' })
+  // one row: back, the lens switch, Explain; Live/History and scope wait on the list
+  expect(await ui.find({ key: 'back' })).toBeDefined()
+  expect(await ui.find({ key: 'lens:timeline' })).toBeDefined()
+  expect(await ui.find({ key: 'tab:live' })).toBeUndefined()
+  expect(await ui.find({ key: 'scope:all' })).toBeUndefined()
+  // the card: status and name, then tiles for time, tokens, problems and files
+  expect(await ui.find({ text: /^DONE · Review changed files across dimensions$/ })).toBeDefined()
+  for (const label of ['time', 'tokens', 'problem', '1 file changed', 'agents · 2 phases']) expect(await ui.find({ text: label })).toBeDefined()
+  // nothing in the pane draws an outline
+  const boxes = (await ui.findAll({ type: 'Box' })) as unknown as Found[]
+  expect(boxes.some(b => b.props?.borderStyle)).toBe(false)
+  expect(boxes.some(b => String(b.props?.backgroundColor ?? '').length === 9)).toBe(true)
+  await ui.unmount()
+})
+
+test('desktop: a run that is one agent shows its card, not a one-row tree', async ($, on) => {
+  const ui = await desk($, on)
+  await ui.press({ key: 'tab:history' })
+  await ui.press({ key: 'run:h1' })
+  expect(await ui.find({ key: 'sel:h1' })).toBeUndefined()
+  expect(await ui.find({ text: /^DONE · Map nark-os agents and memory$/ })).toBeDefined()
+  await ui.unmount()
 })
