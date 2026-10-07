@@ -1,4 +1,8 @@
 {
+  "env": {
+    "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
+    "CLAUDE_CODE_PLUGIN_DIRS": "~/.claude/mods/agent-tree:~/.claude/mods/context-feed:~/.claude/mods/cache-keepalive:~/.claude/mods/brief:~/.claude/mods/statusline-bridge"
+  },
   "permissions": {
     "allow": [
       "mcp__claude_ai_Notion__notion-create-comment",
@@ -38,17 +42,35 @@
       "Bash(git branch -D *)",
       "Bash(git branch -d *)",
       "Bash(git push * --delete *)",
-      "Bash(git clean -fdx*)"
+      "Bash(git clean -fdx*)",
+      "Bash(aws * create-*)",
+      "Bash(aws * delete-*)",
+      "Bash(aws * update-*)",
+      "Bash(aws * put-*)",
+      "Bash(aws s3 rm*)",
+      "Bash(aws s3 rb*)",
+      "Bash(aws s3 sync * --delete*)",
+      "Bash(gcloud * create*)",
+      "Bash(gcloud * delete*)",
+      "Bash(gcloud * update*)",
+      "Bash(gcloud * deploy*)",
+      "Bash(gcloud storage rm*)",
+      "Bash(kubectl get secret* -o*)",
+      "Bash(kubectl get secret* --output*)"
     ]
   },
-  "env": {
-    "CLAUDE_CODE_PLUGIN_DIRS": "~/.claude/mods/agent-tree:~/.claude/mods/context-feed:~/.claude/mods/cache-keepalive:~/.claude/mods/statusline-bridge"
-  },
-  "statusLine": {
-    "type": "command",
-    "command": "sh __HOME__/.claude/statusline-command.sh"
-  },
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash __HOME__/.claude/hooks/second-brain-log-prompt.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
@@ -62,10 +84,13 @@
       }
     ]
   },
+  "statusLine": {
+    "type": "command",
+    "command": "sh __HOME__/.claude/statusline-command.sh"
+  },
   "enabledPlugins": {
     "pyright-lsp@claude-plugins-official": true,
     "rust-analyzer-lsp@claude-plugins-official": true,
-    "superpowers@claude-plugins-official": true,
     "feature-dev@claude-plugins-official": true,
     "gopls-lsp@claude-plugins-official": true,
     "frontend-design@claude-plugins-official": true,
@@ -78,7 +103,9 @@
     "figma@claude-plugins-official": true,
     "skill-creator@claude-plugins-official": true,
     "playwright@claude-plugins-official": true,
-    "slack@claude-plugins-official": true
+    "slack@claude-plugins-official": true,
+    "clangd-lsp@claude-plugins-official": true,
+    "cc-plugin-you-should-know@builtin": true
   },
   "extraKnownMarketplaces": {
     "interface-design": {
@@ -86,12 +113,34 @@
         "source": "github",
         "repo": "Dammyjay93/interface-design"
       }
+    },
+    "claude-code-playground-mods": {
+      "source": {
+        "source": "directory",
+        "path": "__HOME__/dev/tools/claude-code-playground/claude-code/mods"
+      }
     }
   },
   "effortLevel": "xhigh",
+  "modelSettings": {
+    "claude-fable-5-1": {
+      "effortLevel": "high"
+    },
+    "claude-opus-5-5": {
+      "effortLevel": "medium"
+    }
+  },
+  "pluginConfigs": {
+    "agent-tree@inline": {
+      "options": {
+        "theme": "minimal"
+      }
+    }
+  },
   "tui": "fullscreen",
   "skipWorkflowUsageWarning": true,
   "theme": "dark-daltonized",
+  "inputNeededNotifEnabled": true,
   "agentPushNotifEnabled": true,
   "skipAutoPermissionPrompt": true,
   "autoMode": {
@@ -100,25 +149,25 @@
       "**Organization**: None configured",
       "**Cloud provider(s)**: None configured",
       "**Repository visibility**: assume private unless the remote host and repo name indicate otherwise, or a visibility check in the transcript shows public",
-      "**Internal sharing / snippet hosting**: None configured \u2014 treat public paste/gist services as outside the trust boundary",
+      "**Internal sharing / snippet hosting**: None configured — treat public paste/gist services as outside the trust boundary",
       "**Secrets management**: None configured",
       "**Default / protected branches**: None configured",
       "**CI/CD deploy targets**: None configured",
       "**Network posture**: None configured",
-      "**Source control**: The trusted repo and its remote(s) only (no additional orgs configured) \u2014 as scoped by the Trusted repo and Repository visibility entries above",
+      "**Source control**: The trusted repo and its remote(s) only (no additional orgs configured) — as scoped by the Trusted repo and Repository visibility entries above",
       "**Trusted internal domains**: None configured",
       "**Trusted cloud buckets**: None configured",
       "**Key internal services**: None configured",
       "**Internal package registry**: None configured",
       "**Sensitive data locations & audiences**: any file or store holding personal data, confidential business data, credentials, regulated data, or similarly sensitive material; preserve exact handles when known and share only with audiences cleared at the [named+specifics] bar",
       "**Data retention / declassification**: None configured",
-      "**Sensitive remote targets**: any namespace, host, or container whose name carries `prod` or `production` as a whole word or name segment (hyphen/underscore/dot-delimited \u2014 e.g. matches `prod-db`, not `producer`)",
-      "**Protected deployment namespaces / environments**: None configured \u2014 fall back to the Sensitive remote targets heuristic",
+      "**Sensitive remote targets**: any namespace, host, or container whose name carries `prod` or `production` as a whole word or name segment (hyphen/underscore/dot-delimited — e.g. matches `prod-db`, not `producer`)",
+      "**Protected deployment namespaces / environments**: None configured — fall back to the Sensitive remote targets heuristic",
       "**Protected IaC scopes**: IAM, RBAC, networking, quota, and node-pool resources; anything whose name or tag carries `prod` or `production` as a whole word or name segment",
       "### User-specific",
       "**Primary use of Claude Code**: software development",
-      "**Trusted repo**: No repository detected in the current working directory (no tracked files, no remotes) \u2014 treat no local checkout as trusted by default; scope trust to whatever repo is opened once one exists",
-      "**Org-specific CLIs**: None configured \u2014 global CLAUDE.md notes preference for CLIs over MCP servers (gh, aws, gcloud) but names no org-specific tooling"
+      "**Trusted repo**: No repository detected in the current working directory (no tracked files, no remotes) — treat no local checkout as trusted by default; scope trust to whatever repo is opened once one exists",
+      "**Org-specific CLIs**: None configured — global CLAUDE.md notes preference for CLIs over MCP servers (gh, aws, gcloud) but names no org-specific tooling"
     ]
   }
 }
