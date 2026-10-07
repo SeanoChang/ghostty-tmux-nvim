@@ -40,7 +40,7 @@ window-padding-x = 6
 window-padding-y = 4
 
 # ── macOS feel ──────────────────────────────────────────
-macos-titlebar-style = tabs
+macos-titlebar-style = transparent
 window-save-state = always
 confirm-close-surface = false
 shell-integration = detect
