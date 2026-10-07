@@ -618,7 +618,9 @@ export function transcriptEdits(text: string, agentId: string, now: string | und
   }
   return calls
     .filter(c => !failed.has(c.id) && editedPath(c.tool, c.input))
-    .flatMap(c => editRecords(c.tool, c.input, undefined, now).map((r, i) => ({
-      ...r, isNew: c.tool === 'Write' ? undefined : r.isNew, id: `${c.id}:${i}`, agentId, at: c.at,
+    // A transcript can not tell whether a Write made a new file, so isNew is left out
+    // (never set to undefined: props that hold undefined are refused).
+    .flatMap(c => editRecords(c.tool, c.input, undefined, now).map(({ isNew: _unknown, ...r }, i) => ({
+      ...r, id: `${c.id}:${i}`, agentId, at: c.at,
     })))
 }

@@ -329,6 +329,41 @@ test('a run recorded before edits were kept gets its diff from the transcript', 
   await ui.unmount()
 })
 
+// A Write in a transcript can not tell whether the file was new. The record must
+// leave isNew out, not set it to undefined: props that hold undefined are refused,
+// and the pane then draws empty.
+const writeTranscript = JSON.stringify({ type: 'assistant', timestamp: '2026-10-04T13:56:32.000Z', message: { content: [
+  { type: 'tool_use', id: 'tw1', name: 'Write', input: { file_path: '/demo/notes.md', content: '# Notes\n\nfirst line\n' } },
+] } })
+
+test('transcript edits from a Write leave isNew out', () => {
+  const recs = transcriptEdits(writeTranscript, 'a2', '# Notes\n\nfirst line\n')
+  expect(recs.length).toBe(1)
+  expect('isNew' in recs[0]!).toBe(false)
+})
+
+test('a backfilled diff from a Write call still draws', async ($, on) => {
+  mock.clock(on)
+  const at = Date.parse('2026-10-04T13:56:00Z')
+  mock.store(on, { history: [
+    { id: 'wf2', kind: 'workflow', label: 'Write the notes', status: 'done', startedAt: at, endedAt: at + 9000, tools: 0, transcriptDir: '/runs/old' },
+    { id: 'a2', kind: 'agent', parentId: 'wf2', label: 'Write notes.md', phase: 'Draft', status: 'done', startedAt: at, endedAt: at + 5000, tools: 1,
+      changes: { '/demo/notes.md': { edits: 1, added: 3, removed: 0 } } },
+  ] })
+  on('fs.read', (_$, e) => {
+    if (e.path === '/runs/old/agent-a2.jsonl') return { value: writeTranscript }
+    if (e.path === '/demo/notes.md') return { value: '# Notes\n\nfirst line\n' }
+    return { deny: 'missing' }
+  })
+  const ui = await $.ui.mount({ plugin: 'agent-tree', surface: 'terminal', ...PANE })
+  await ui.key({ in: KEY, key: '2' })
+  await ui.key({ in: KEY, key: 'c' })
+  await ui.key({ in: KEY, key: 'return' })
+  const codes = await ui.findAll({ in: KEY, type: 'Code' })
+  expect(codes.some(c => String(c.props.source).includes('+first line'))).toBe(true)
+  await ui.unmount()
+})
+
 test('transcript edits: calls that landed, placed in the file as it is now', () => {
   const recs = transcriptEdits(oldTranscript, 'a1', 'x\n  "retries": 3,\n')
   expect(recs.length).toBe(1)
