@@ -589,7 +589,10 @@ export function runItems(
 export function fitProps<T extends { nodes: AgentNode[]; history: AgentNode[] }>(p: T, limit = 90_000): T {
   const size = (x: unknown) => JSON.stringify(x).length
   if (size(p) <= limit) return p
-  const slim = (n: AgentNode): AgentNode => ({ ...n, prompt: n.prompt?.slice(0, 160), result: n.result?.slice(0, 300) })
+  // a missing prompt or result stays missing: props that hold undefined are refused
+  const slim = (n: AgentNode): AgentNode => ({
+    ...n, ...(n.prompt !== undefined ? { prompt: n.prompt.slice(0, 160) } : {}), ...(n.result !== undefined ? { result: n.result.slice(0, 300) } : {}),
+  })
   let next = { ...p, nodes: p.nodes.map(n => (n.status === 'running' ? n : slim(n))), history: p.history.map(slim) }
   while (size(next) > limit && next.history.length > 0) next = { ...next, history: next.history.slice(Math.ceil(next.history.length / 4)) }
   return next

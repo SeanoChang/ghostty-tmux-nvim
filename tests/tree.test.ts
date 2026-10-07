@@ -244,6 +244,40 @@ test('list building: folds, filters, groups, scopes, pipeline', () => {
   expect(JSON.stringify(fitProps(big)).length).toBeLessThanOrEqual(90_000)
 })
 
+// A history past the props bound is slimmed. A run with no prompt or result must
+// stay without the key: the engine refuses props that hold undefined, and the
+// pane then draws empty in every session.
+const longHistory = (): AgentNode[] => Array.from({ length: 400 }, (_, i) => ({
+  id: `h${i}`, kind: 'agent' as const, label: `Run ${i}`, tools: 0,
+  status: 'done', startedAt: i * 1000, endedAt: i * 1000 + 500, repo: '/repo/a',
+  ...(i % 5 ? { prompt: 'p'.repeat(400) } : {}), ...(i % 3 ? { result: 'r'.repeat(600) } : {}),
+}))
+
+test('slimming a long history leaves no undefined in the props', () => {
+  const holes: string[] = []
+  const walk = (x: unknown, path: string) => {
+    if (x === undefined) holes.push(path)
+    else if (x && typeof x === 'object') for (const [k, v] of Object.entries(x)) walk(v, `${path}.${k}`)
+  }
+  const fitted = fitProps({ nodes: [], history: longHistory() })
+  expect(fitted.history.length).toBeGreaterThan(0)
+  walk(fitted, 'props')
+  expect(holes).toEqual([])
+})
+
+test('the pane draws when the history is past the props bound and some runs have no prompt or result', async ($, on) => {
+  const history = longHistory()
+  expect(JSON.stringify(history).length).toBeGreaterThan(90_000)
+  mock.clock(on)
+  mock.store(on, { history })
+  on('process.run', inRepoA)
+  on('session.root', () => ({ value: '/repo/a' }) as never)
+  const ui = await $.ui.mount({ plugin: 'agent-tree', surface: 'terminal', ...PANE })
+  await ui.key({ in: KEY, key: '2' })
+  expect(await ui.find({ in: KEY, text: /Finished/ })).toBeDefined()
+  await ui.unmount()
+})
+
 test('the view accepts the previous version props and state', () => {
   expect(viewProps({ nodes: [], at: 5 }).history).toEqual([])
   const s = viewState({ sel: 2, first: 0, open: ['a1'], tick: 7, drawer: true, group: 'nope' })
