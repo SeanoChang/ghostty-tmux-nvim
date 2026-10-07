@@ -4,6 +4,9 @@
   "description": "Plans, designs and walkthroughs as a live, scrollable pane beside the chat: html-plan blocks, PNG figures, option cards, tagged questions, build status with evidence, and slim test-first / debugging / verification / review skills",
   "types": "./types/index.d.ts",
   "author": {
-    "name": "Sean"
-  }
+    "name": "SeanoChang",
+    "url": "https://github.com/SeanoChang"
+  },
+  "repository": "https://github.com/SeanoChang/brief",
+  "license": "MIT"
 }

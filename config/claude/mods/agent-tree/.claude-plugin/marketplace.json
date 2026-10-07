@@ -1,0 +1,14 @@
+{
+  "name": "agent-tree",
+  "owner": {
+    "name": "SeanoChang",
+    "url": "https://github.com/SeanoChang"
+  },
+  "plugins": [
+    {
+      "name": "agent-tree",
+      "source": "./"
+    }
+  ],
+  "description": "A live side pane of your Claude Code subagents and workflows"
+}

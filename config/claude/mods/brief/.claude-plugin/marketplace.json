@@ -1,0 +1,14 @@
+{
+  "name": "brief",
+  "owner": {
+    "name": "SeanoChang",
+    "url": "https://github.com/SeanoChang"
+  },
+  "plugins": [
+    {
+      "name": "brief",
+      "source": "./"
+    }
+  ],
+  "description": "Plans, designs and walkthroughs as a live pane beside the Claude Code chat"
+}

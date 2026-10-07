@@ -7,7 +7,7 @@
     "theme": {
       "type": "string",
       "title": "Theme",
-      "description": "How the Agents pane looks: minimal (plain glyphs, any terminal), kitty (emoji cats), fish (lake blues, a catch) or dog (golden tan, dogs on walks)",
+      "description": "How the Agents pane looks: minimal (plain glyphs, any terminal), or kitty, fish or dog (warm colours and emoji)",
       "default": "minimal",
       "options": [
         "minimal",
@@ -27,5 +27,11 @@
         "full"
       ]
     }
-  }
+  },
+  "author": {
+    "name": "SeanoChang",
+    "url": "https://github.com/SeanoChang"
+  },
+  "repository": "https://github.com/SeanoChang/agent-tree",
+  "license": "MIT"
 }
