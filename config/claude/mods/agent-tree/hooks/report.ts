@@ -38,14 +38,25 @@ export const CAP_EACH = 400
 export const CAP_ALL = 4000
 export const CAP_FINAL = 1500
 export const CAP_TASK = 500
+// Output caps: a report's JSON, with its lists and sources, runs past 400 tokens.
+export const REPORT_TOKENS = 800
+export const PART_TOKENS = 600
+// A report kept as raw JSON: its reply was cut, and the old parser kept the text.
+export const isRawReport = (s: string | undefined) => !!s && /^\s*(json\b|```|\{)/.test(s)
 
 // A model's reply as a report: tolerant of fences and chatter, and of the older
 // {outcome, points} digest shape. Fields it cannot read are left out, never undefined.
 export function parseReport(raw: string): Report | undefined {
   const json = /\{[\s\S]*\}/.exec(raw)?.[0]
-  if (!json) return undefined
   let d: Record<string, unknown>
-  try { d = JSON.parse(json) as Record<string, unknown> } catch { return undefined }
+  try { d = JSON.parse(json ?? '') as Record<string, unknown> } catch {
+    // a reply cut at its token cap still holds its verdict: the result string comes first
+    const result = /"result"\s*:\s*("(?:[^"\\]|\\.)*")/.exec(raw)?.[1]
+    let text: unknown
+    try { text = result ? JSON.parse(result) : undefined } catch { text = undefined }
+    const t = typeof text === 'string' ? plain(text).slice(0, 300) : ''
+    return t ? { result: t } : undefined
+  }
   const str = (x: unknown, n: number) => {
     const t = typeof x === 'string' ? plain(x) : ''
     return t ? t.slice(0, n) : undefined

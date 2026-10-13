@@ -7,7 +7,7 @@ import {
   changesLine, cleanTitle, describeTool, diffCounts, editRecords, editedPath, fileRows, firstPrompt, firstSentence, handbackOf, fitProps,
   lineDiff, parseJournal, pipeline, scopeNodes, transcriptEdits, folderKey, runKey,
 } from './list'
-import { REPORT_SYSTEM, kTokens, parseReport, partInput, runInput } from './report'
+import { PART_TOKENS, REPORT_SYSTEM, REPORT_TOKENS, isRawReport, kTokens, parseReport, partInput, runInput } from './report'
 import { ZOOMS, buildTrace, finishParse, newParse, onlyLane, parseLines, traceHits, traceMarks, traceWindow, type TraceEvent } from './trace'
 import {
   AI_MODES, EXPLAIN_SYSTEM, PATTERNS_SYSTEM, STORY_SYSTEM, TIER_NAME, aiAllows, explainInput, parseBrief, parsePatterns,
@@ -443,10 +443,11 @@ async function writePatterns($: Engine) {
 // scans. One Haiku call when it finishes, so the words are there before anyone
 // looks. Written bottom-up: an agent from its own report, a workflow phase from
 // its agents' reports, a cluster or a workflow from its part reports.
-// a reply that is not the asked-for JSON still says something: its first sentence is the result
+// a reply that is not the asked-for JSON still says something: its first sentence is the result;
+// JSON that would not parse is never shown as words
 function reportFrom(r: Completion | undefined, at: number): Report | undefined {
   if (!r?.isAnswered || !r.text) return undefined
-  const fallback = firstSentence(r.text, 300)
+  const fallback = /[{}]/.test(r.text) ? '' : firstSentence(r.text, 300)
   const parsed = parseReport(r.text) ?? (fallback ? { result: fallback } : undefined)
   if (!parsed) return undefined
   const tokens = r.usage ? r.usage.input_tokens + r.usage.output_tokens : 0
@@ -468,7 +469,7 @@ async function digest($: Engine, id: string) {
   const now = await read($, nodes)
   const node = now.find(x => x.id === id) ?? n
   const hasInput = node.kind === 'agent' ? !!node.result?.trim() : kids.length > 0 || !!node.result?.trim()
-  const r = hasInput ? await ask($, 'haiku', { maxTokens: 400, system: REPORT_SYSTEM, prompt: runInput(node, now, answers.get(id)) }) : undefined
+  const r = hasInput ? await ask($, 'haiku', { maxTokens: REPORT_TOKENS, system: REPORT_SYSTEM, prompt: runInput(node, now, answers.get(id)) }) : undefined
   answers.delete(id)
   const report = reportFrom(r, await $.clock.now())
   await patch($, id, x => ({
@@ -512,7 +513,7 @@ async function partDigest($: Engine, wfId: string, phase: string) {
     const total = list.filter(k => k.parentId === wfId && (k.phase ?? 'Agents') === phase).length
     // read now, not when the caller looked: another trigger may have written it meanwhile
     if (!wf || wf.partReports?.[phase]?.count === total) return
-    const r = await ask($, 'haiku', { maxTokens: 300, system: REPORT_SYSTEM, prompt: partInput(wf, phase, list) })
+    const r = await ask($, 'haiku', { maxTokens: PART_TOKENS, system: REPORT_SYSTEM, prompt: partInput(wf, phase, list) })
     const report = reportFrom(r, await $.clock.now())
     await patch($, wfId, x => ({ ...x, partReports: { ...x.partReports, [phase]: { ...(report ?? {}), count: total } } }))
   } finally {
@@ -589,9 +590,11 @@ async function backfillReports($: Engine) {
 
 // Reports written before the whole answer was read came from its first 400 (or 600)
 // characters, and often called finished work unfinished. Each such agent's report is
-// written again from its transcript, once, then each cluster over them. Every open
-// session runs this at its start, so the first takes a mark and the others leave it.
-const REDONE = 'reportsRedone'
+// written again from its transcript, once, then each cluster over them. A report kept
+// as raw JSON, from a reply cut at its token cap, is written again too (the second
+// mark: the first pass made many of those). Every open session runs this at its
+// start, so the first takes a mark and the others leave it.
+const REDONE = 'reportsRedone2'
 const REDO_CONCURRENCY = 4
 async function redoReports($: Engine) {
   if (!aiAllows(aiMode, 'haiku')) return
@@ -602,7 +605,10 @@ async function redoReports($: Engine) {
   const token = `${now}-${Math.random().toString(36).slice(2)}`
   await $.store.set(REDONE, { token, at: now })
   const history = ((await $.store.get(HISTORY)) as AgentNode[] | undefined) ?? []
-  const cut = history.filter(n => n.kind === 'agent' && n.resultLength === undefined && (n.result?.length ?? 0) >= 400)
+  const isCut = (n: AgentNode) => n.resultLength !== undefined || (n.result?.length ?? 0) >= 400
+  const todo = history.filter(n => n.kind === 'agent' && ((n.resultLength === undefined && isCut(n)) || isRawReport(n.summary)))
+  // only a cut answer needs its transcript
+  const cut = todo.filter(isCut)
   const home = await $.env.get('HOME')
   const names = cut.flatMap((n, i) => [...(i ? ['-o'] : []), '-name', `agent-${n.id}.jsonl`])
   const found = cut.length
@@ -621,7 +627,7 @@ async function redoReports($: Engine) {
   const write = async (list: AgentNode[], ns: AgentNode[], full?: (n: AgentNode) => string | undefined) => {
     for (let i = 0; i < ns.length; i += REDO_CONCURRENCY) {
       await Promise.all(ns.slice(i, i + REDO_CONCURRENCY).map(async n => {
-        const r = await ask($, 'haiku', { maxTokens: 400, system: REPORT_SYSTEM, prompt: runInput(n, list, full?.(n)) })
+        const r = await ask($, 'haiku', { maxTokens: REPORT_TOKENS, system: REPORT_SYSTEM, prompt: runInput(n, list, full?.(n)) })
         const report = reportFrom(r, await $.clock.now())
         if (report) reports.set(n.id, report)
       }))
@@ -634,11 +640,12 @@ async function redoReports($: Engine) {
       ...(report ? { report, ...(report.result ? { summary: report.result } : {}), ...(report.done ? { points: report.done } : {}) } : {}),
     }
   }
-  const agents = cut.filter(n => fulls.has(n.id))
+  // a raw report with no transcript is written from the kept copy, its cut named
+  const agents = todo.filter(n => fulls.has(n.id) || isRawReport(n.summary))
   await write(history, agents, n => fulls.get(n.id))
   // a cluster's report reads its members' reports, so it is written after theirs
   const redone = history.map(withReport)
-  const groups = redone.filter(g => g.kind === 'group' && agents.some(a => a.parentId === g.id && reports.has(a.id)))
+  const groups = redone.filter(g => g.kind === 'group' && (isRawReport(g.summary) || agents.some(a => a.parentId === g.id && reports.has(a.id))))
   await write(redone, groups)
   // History may have grown while the reports were written: only these nodes change
   const latest = ((await $.store.get(HISTORY)) as AgentNode[] | undefined) ?? []

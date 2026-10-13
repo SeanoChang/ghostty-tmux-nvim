@@ -2,7 +2,7 @@ import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 
-import { CAP_ALL, CAP_FINAL, REPORT_SYSTEM, runInput } from '../hooks/report'
+import { CAP_ALL, CAP_FINAL, REPORT_SYSTEM, parseReport, runInput } from '../hooks/report'
 import type { AgentNode } from '../types'
 
 // The report Haiku writes must be read from the agent's whole answer, not from the
@@ -34,11 +34,14 @@ const textRows = async (ui: { drawn: (s: { in: string }) => Promise<unknown> }) 
   return (((middle.children?.[1] as Drawn).children ?? []) as unknown[]).map(r => leaves(r).join(''))
 }
 
+// the output cap each report call asked for
+const caps: number[] = []
 function engine(on: On, reports: string[]) {
   const clock = mock.clock(on, { now: NOW })
   mock.store(on)
+  caps.length = 0
   on('model.complete', (_$, e) => {
-    if (e.system === REPORT_SYSTEM) reports.push(e.prompt)
+    if (e.system === REPORT_SYSTEM) { reports.push(e.prompt); caps.push(e.maxTokens ?? 0) }
     const text = e.system === REPORT_SYSTEM ? '{"result":"The map is complete."}' : 'Map the widget repo'
     return { value: { isAnswered: true, usage, text } } as never
   })
@@ -69,6 +72,14 @@ test('an agent report longer than the kept copy reaches Haiku whole', async ($, 
   for (let k = 0; k < 6; k++) await clock.advance(10)
   expect(reports.length).toBe(1)
   expect(reports[0]).toContain(END)
+  // a report of a long answer is long JSON: 400 tokens cut it mid-reply
+  expect(caps[0]).toBeGreaterThanOrEqual(800)
+})
+
+test('a reply cut mid-JSON still gives its result, never the raw JSON', () => {
+  const cut = '```json\n{\n  "result": "8 must-haves listed; 3 covered, 2 \\"missing\\".",\n  "done": ["Read the posting", "Checked the bul'
+  expect(parseReport(cut)?.result).toBe('8 must-haves listed; 3 covered, 2 "missing".')
+  expect(parseReport('```json\n{"done": ["Read the')).toBeUndefined()
 })
 
 test('a report handed back through SubagentHandback reaches Haiku whole', async ($, on) => {
@@ -138,6 +149,9 @@ describe('reports written from a cut copy are written again from the transcript,
     agent('a2', ANSWER.slice(0, 400)),
     agent('a3', ANSWER.slice(0, 400)), // its transcript is gone
     agent('s1', 'A short answer, kept whole.'),
+    // redone once already: b1's reply was cut mid-JSON, b2's parsed
+    { ...agent('b1', ANSWER.slice(0, 400)), resultLength: 979, summary: 'json { "result": "Mapped 4 parts.', report: { result: 'json { "result": "Mapped 4 parts.', ...old } },
+    { ...agent('b2', ANSWER.slice(0, 400)), resultLength: 979, summary: 'Mapped 4 parts.', report: { result: 'Mapped 4 parts.', ...old } },
   ]
   const transcript = JSON.stringify({ message: { role: 'assistant', content: [{ type: 'text', text: ANSWER }] } })
   // the store is kept here, so a test reads what the plugin wrote
@@ -158,8 +172,8 @@ describe('reports written from a cut copy are written again from the transcript,
     on('agent.list', () => ({ value: [] }) as never)
     on('session.root', () => ({ value: '/repo/a' }) as never)
     on('env.get', () => ({ value: '/home/u' }) as never)
-    on('process.run', () => ({ value: { exitCode: 0, stdout: '/p/agent-a1.jsonl\n/p/agent-a2.jsonl\n/p/agent-s1.jsonl\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }) as never)
-    on('fs.read', (_$, e) => (/agent-(a1|a2|s1)\.jsonl$/.test(e.path) ? { value: transcript } : { deny: 'missing' }))
+    on('process.run', () => ({ value: { exitCode: 0, stdout: '/p/agent-a1.jsonl\n/p/agent-a2.jsonl\n/p/agent-s1.jsonl\n/p/agent-b1.jsonl\n/p/agent-b2.jsonl\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }) as never)
+    on('fs.read', (_$, e) => (/agent-(a1|a2|s1|b1|b2)\.jsonl$/.test(e.path) ? { value: transcript } : { deny: 'missing' }))
     return clock
   }
   const start = ($: Engine) => $.session.start({ cwd: '/repo/a', surface: 'terminal', isInteractive: true } as never)
@@ -171,8 +185,9 @@ describe('reports written from a cut copy are written again from the transcript,
     await start($)
     for (let k = 0; k < 10; k++) await clock.advance(10)
     const agentPrompts = reports.filter(p => p.includes('Report:'))
-    expect(agentPrompts.length).toBe(2)
+    expect(agentPrompts.length).toBe(3)
     expect(agentPrompts.every(p => p.includes(END))).toBe(true)
+    expect(caps.every(c => c >= 800)).toBe(true)
     expect(reports.filter(p => p.includes('Part reports, one per member')).length).toBe(1)
     const h = await byId($)
     expect(h.get('a1')?.summary).toBe('The map is complete.')
@@ -182,6 +197,9 @@ describe('reports written from a cut copy are written again from the transcript,
     // no transcript: the old report stays; a whole answer was never cut
     expect(h.get('a3')?.summary).toBe('The file was not read.')
     expect(h.get('s1')?.summary).toBe('The file was not read.')
+    // a report left as raw JSON is written again; a good one is left alone
+    expect(h.get('b1')?.summary).toBe('The map is complete.')
+    expect(h.get('b2')?.summary).toBe('Mapped 4 parts.')
   })
 
   test('a second session start asks nothing again', async ($, on) => {
@@ -192,7 +210,7 @@ describe('reports written from a cut copy are written again from the transcript,
     const first = reports.length
     await start($)
     for (let k = 0; k < 10; k++) await clock.advance(10)
-    expect(first).toBe(3)
+    expect(first).toBe(4)
     expect(reports.length).toBe(first)
   })
 
