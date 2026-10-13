@@ -1,4 +1,4 @@
-import { expect, mock, test } from 'claude-code/testing'
+import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 
@@ -120,6 +120,90 @@ test('with only the kept copy, the prompt says the rest was not kept', () => {
   const prompt = runInput(node, [node])
   expect(prompt).toContain(ANSWER.slice(0, 400))
   expect(prompt).toMatch(/\[… 579 characters left out by the dashboard …\]/)
+})
+
+// History written before the fix: each cut agent's report is written again from its
+// transcript, once, and the cluster over them is written again from their new reports.
+describe('reports written from a cut copy are written again from the transcript, once', () => {
+  const DAY = 24 * HOUR
+  const old = { model: 'Haiku', at: NOW - DAY }
+  const agent = (id: string, result: string): AgentNode => ({
+    id, kind: 'agent', parentId: 'g1', label: `Map ${id}`, status: 'done', startedAt: NOW - DAY, endedAt: NOW - DAY + 1000, tools: 3,
+    result, digested: true, summary: 'The file was not read.', report: { result: 'The file was not read.', ...old }, repo: '/repo/a', repoTried: true, reportTried: true,
+  })
+  const history = (): AgentNode[] => [
+    { id: 'g1', kind: 'group', label: 'Map repos', status: 'done', startedAt: NOW - DAY, endedAt: NOW - DAY + 2000, tools: 0, digested: true,
+      summary: 'Nothing was read.', report: { result: 'Nothing was read.', ...old }, repo: '/repo/a', repoTried: true },
+    agent('a1', ANSWER.slice(0, 400)),
+    agent('a2', ANSWER.slice(0, 400)),
+    agent('a3', ANSWER.slice(0, 400)), // its transcript is gone
+    agent('s1', 'A short answer, kept whole.'),
+  ]
+  const transcript = JSON.stringify({ message: { role: 'assistant', content: [{ type: 'text', text: ANSWER }] } })
+  // the store is kept here, so a test reads what the plugin wrote
+  let store: Record<string, unknown> = {}
+  function mocks(on: On, reports: string[]) {
+    const clock = mock.clock(on, { now: NOW })
+    store = { history: history() }
+    on('store.get', (_$, e) => ({ value: store[e.key] }) as never)
+    on('store.set', (_$, e) => { store[e.key] = e.value; return { value: undefined } as never })
+    on('store.delete', (_$, e) => { delete store[e.key]; return { value: undefined } as never })
+    on('store.keys', () => ({ value: Object.keys(store) }) as never)
+    on('model.complete', (_$, e) => {
+      if (e.system === REPORT_SYSTEM) reports.push(e.prompt)
+      return { value: { isAnswered: true, usage, text: '{"result":"The map is complete."}' } } as never
+    })
+    on('session.start', () => ({ cwd: '/repo/a' }) as never)
+    on('command.register', () => ({ value: undefined }) as never)
+    on('agent.list', () => ({ value: [] }) as never)
+    on('session.root', () => ({ value: '/repo/a' }) as never)
+    on('env.get', () => ({ value: '/home/u' }) as never)
+    on('process.run', () => ({ value: { exitCode: 0, stdout: '/p/agent-a1.jsonl\n/p/agent-a2.jsonl\n/p/agent-s1.jsonl\n', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }) as never)
+    on('fs.read', (_$, e) => (/agent-(a1|a2|s1)\.jsonl$/.test(e.path) ? { value: transcript } : { deny: 'missing' }))
+    return clock
+  }
+  const start = ($: Engine) => $.session.start({ cwd: '/repo/a', surface: 'terminal', isInteractive: true } as never)
+  const byId = async (_$: Engine) => new Map(((store.history as AgentNode[]) ?? []).map(n => [n.id, n]))
+
+  test('cut agents get new reports from their whole answer; their cluster is written again', async ($, on) => {
+    const reports: string[] = []
+    const clock = mocks(on, reports)
+    await start($)
+    for (let k = 0; k < 10; k++) await clock.advance(10)
+    const agentPrompts = reports.filter(p => p.includes('Report:'))
+    expect(agentPrompts.length).toBe(2)
+    expect(agentPrompts.every(p => p.includes(END))).toBe(true)
+    expect(reports.filter(p => p.includes('Part reports, one per member')).length).toBe(1)
+    const h = await byId($)
+    expect(h.get('a1')?.summary).toBe('The map is complete.')
+    expect(h.get('a1')?.resultLength).toBe(979)
+    expect(h.get('a1')?.result).toBe(ANSWER.slice(0, 400))
+    expect(h.get('g1')?.summary).toBe('The map is complete.')
+    // no transcript: the old report stays; a whole answer was never cut
+    expect(h.get('a3')?.summary).toBe('The file was not read.')
+    expect(h.get('s1')?.summary).toBe('The file was not read.')
+  })
+
+  test('a second session start asks nothing again', async ($, on) => {
+    const reports: string[] = []
+    const clock = mocks(on, reports)
+    await start($)
+    for (let k = 0; k < 10; k++) await clock.advance(10)
+    const first = reports.length
+    await start($)
+    for (let k = 0; k < 10; k++) await clock.advance(10)
+    expect(first).toBe(3)
+    expect(reports.length).toBe(first)
+  })
+
+  test('with AI off nothing is asked and History is left as it was', { options: { ai: 'off' } }, async ($, on) => {
+    const reports: string[] = []
+    const clock = mocks(on, reports)
+    await start($)
+    for (let k = 0; k < 10; k++) await clock.advance(10)
+    expect(reports.length).toBe(0)
+    expect((await byId($)).get('a1')?.summary).toBe('The file was not read.')
+  })
 })
 
 test('the pane says when it shows only the start of a report', async ($, on) => {

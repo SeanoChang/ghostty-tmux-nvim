@@ -587,6 +587,65 @@ async function backfillReports($: Engine) {
   await $.store.set(HISTORY, history.map(n => (tried.has(n.id) ? withResult({ ...n, reportTried: true }, reports.get(n.id), 600) : n)))
 }
 
+// Reports written before the whole answer was read came from its first 400 (or 600)
+// characters, and often called finished work unfinished. Each such agent's report is
+// written again from its transcript, once, then each cluster over them. Every open
+// session runs this at its start, so the first takes a mark and the others leave it.
+const REDONE = 'reportsRedone'
+const REDO_CONCURRENCY = 4
+async function redoReports($: Engine) {
+  if (!aiAllows(aiMode, 'haiku')) return
+  const now = await $.clock.now()
+  const mark = (await $.store.get(REDONE)) as { token: string; at: number; done?: boolean } | undefined
+  // a mark left by a session that ended mid-way is taken over after 15 minutes
+  if (mark && (mark.done || now - mark.at < 15 * 60_000)) return
+  const token = `${now}-${Math.random().toString(36).slice(2)}`
+  await $.store.set(REDONE, { token, at: now })
+  const history = ((await $.store.get(HISTORY)) as AgentNode[] | undefined) ?? []
+  const cut = history.filter(n => n.kind === 'agent' && n.resultLength === undefined && (n.result?.length ?? 0) >= 400)
+  const home = await $.env.get('HOME')
+  const names = cut.flatMap((n, i) => [...(i ? ['-o'] : []), '-name', `agent-${n.id}.jsonl`])
+  const found = cut.length
+    ? await $.process.run(['find', `${home}/.claude/projects`, '-maxdepth', '6', '(', ...names, ')'], { timeoutMs: 20000 }).catch(() => undefined)
+    : undefined
+  // another session took the job while the transcripts were looked for
+  if (((await $.store.get(REDONE)) as { token?: string } | undefined)?.token !== token) return
+  const pathOf = new Map((found?.stdout ?? '').split('\n').filter(Boolean).map(p => [p.replace(/^.*agent-|\.jsonl$/g, ''), p]))
+  const fulls = new Map<string, string>()
+  for (const n of cut) {
+    const path = pathOf.get(n.id)
+    const full = path ? handbackOf(await $.fs.read(path).catch(() => '')) : undefined
+    if (full && full.length > n.result!.length) fulls.set(n.id, full)
+  }
+  const reports = new Map<string, Report>()
+  const write = async (list: AgentNode[], ns: AgentNode[], full?: (n: AgentNode) => string | undefined) => {
+    for (let i = 0; i < ns.length; i += REDO_CONCURRENCY) {
+      await Promise.all(ns.slice(i, i + REDO_CONCURRENCY).map(async n => {
+        const r = await ask($, 'haiku', { maxTokens: 400, system: REPORT_SYSTEM, prompt: runInput(n, list, full?.(n)) })
+        const report = reportFrom(r, await $.clock.now())
+        if (report) reports.set(n.id, report)
+      }))
+    }
+  }
+  const withReport = (n: AgentNode): AgentNode => {
+    const report = reports.get(n.id)
+    return {
+      ...n, ...(fulls.has(n.id) ? { resultLength: fulls.get(n.id)!.length } : {}),
+      ...(report ? { report, ...(report.result ? { summary: report.result } : {}), ...(report.done ? { points: report.done } : {}) } : {}),
+    }
+  }
+  const agents = cut.filter(n => fulls.has(n.id))
+  await write(history, agents, n => fulls.get(n.id))
+  // a cluster's report reads its members' reports, so it is written after theirs
+  const redone = history.map(withReport)
+  const groups = redone.filter(g => g.kind === 'group' && agents.some(a => a.parentId === g.id && reports.has(a.id)))
+  await write(redone, groups)
+  // History may have grown while the reports were written: only these nodes change
+  const latest = ((await $.store.get(HISTORY)) as AgentNode[] | undefined) ?? []
+  await $.store.set(HISTORY, latest.map(withReport))
+  await $.store.set(REDONE, { token, at: now, done: true })
+}
+
 // A finished top-level run, with everything under it, is kept across sessions.
 async function archive($: Engine) {
   const list = await read($, nodes)
@@ -629,6 +688,7 @@ export const register: Register = (on, options) => {
     await archive($)
     await backfillReports($)
     await backfillRepos($)
+    void redoReports($).catch(() => undefined)
     if ((await read($, nodes)).some(n => n.status === 'running')) ensureTimers($)
     // patterns written more than a week ago are written again, in the background, on Full only
     const doc = aiAllows(aiMode, 'sonnet') ? await patternsDoc($) : undefined
