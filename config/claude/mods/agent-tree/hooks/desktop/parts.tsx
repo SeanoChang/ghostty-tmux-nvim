@@ -1,7 +1,7 @@
 import type { AgentNode, Brief, NodeStatus, Report } from '../../types'
 import type { ThemeName } from '../theme'
 import { ago } from '../ai'
-import { firstSentence, noReportReason, prettyModel, shortPaths, taskText, type FileRow } from '../list'
+import { firstSentence, noReportReason, prettyModel, reportHeading, shortPaths, taskText, type FileRow } from '../list'
 import { reportFacts, reportOf, kTokens } from '../report'
 import { DESK, SPRITE_FOR, clip, diffBarSvg, iconSvg, spriteSvg, statusColor, type DeskTokens } from './svg'
 
@@ -275,7 +275,7 @@ export function outputMarkdown(n: AgentNode, kids: AgentNode[]): string {
   if (r?.next) out.push(`**Next:** ${r.next}`)
   if (kids.length) out.push(`**Agents**\n\n${kids.map(k => `- **${k.label}** — ${firstSentence(reportOf(k)?.result ?? noReportReason(k), 160)}`).join('\n')}`)
   const full = n.result && !n.result.startsWith('{') ? n.result : ''
-  if (full && full !== r?.result) out.push(`**Full report**\n\n${full}`)
+  if (full && full !== r?.result) out.push(`**${n.resultLength ? reportHeading(n) : 'Full report'}**\n\n${full}`)
   const task = taskText(n.prompt)
   if (task) out.push(`**Task it was given**\n\n> ${task.replace(/\n/g, '\n> ')}`)
   return out.join('\n\n').slice(0, 9000)

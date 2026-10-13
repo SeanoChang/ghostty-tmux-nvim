@@ -30,6 +30,7 @@ export const REPORT_SYSTEM = [
   'The first sentence of result is the verdict: at most 12 words, with the key number. A reader who stops there knows the outcome. Example: "Found 1 real error; 8 of 9 claims are overstated."',
   'Each problem names the item it is about (a file, claim or agent) and what is wrong with it.',
   'Use [] for an empty list. Decisions are only design choices the input states. Leave out files and line counts: the dashboard adds them from its own records.',
+  'A line "[… N characters left out by the dashboard …]" marks text the dashboard cut, not the agent. Never report that gap as missing, unfinished or unread work.',
 ].join('\n')
 
 // The caps that keep every report call bounded, however big the run.
@@ -112,9 +113,23 @@ export function partInput(wf: AgentNode, phase: string, nodes: AgentNode[]): str
   ].join('\n')
 }
 
+// A long report keeps its start and its end, since agents put the verdict last.
+// The gap is named, so a cut text never reads as unfinished work. `whole` is the
+// length of the text before it was cut, when only a kept copy is at hand.
+const gapLine = (n: number) => `[… ${n.toLocaleString('en-US')} characters left out by the dashboard …]`
+export function cutReport(text: string, cap: number, whole = text.length): string {
+  if (text.length <= cap) return whole > text.length ? `${text}\n${gapLine(whole - text.length)}` : text
+  const tail = Math.floor(cap / 5)
+  const head = cap - tail
+  return `${text.slice(0, head)}\n${gapLine(whole - head - tail)}\n${text.slice(-tail)}`
+}
+
 // A run's report reads one level down: a single agent its own report text; a
-// cluster its members' reports; a workflow its phases' part reports.
-export function runInput(n: AgentNode, nodes: AgentNode[]): string {
+// cluster its members' reports; a workflow its phases' part reports. `full` is the
+// whole answer when it is at hand; else the kept copy is read, its cut named.
+export function runInput(n: AgentNode, nodes: AgentNode[], full?: string): string {
+  const source = full ?? n.result ?? ''
+  const lost = full === undefined && n.resultLength && n.result ? Math.max(0, n.resultLength - n.result.length) : 0
   const task = `Task: ${(n.prompt ?? n.label).slice(0, CAP_TASK)}`
   if (n.kind === 'group') {
     const kids = childrenOf(nodes, n.id).sort((a, b) => a.startedAt - b.startedAt)
@@ -126,10 +141,11 @@ export function runInput(n: AgentNode, nodes: AgentNode[]): string {
       const problems = pr?.problems?.map(x => `${x.text}${x.source ? ` [${x.source}]` : ''}`).join(' ') ?? ''
       return `- ${p.phase} phase [${phaseWords(p)}]: ${pr?.result ?? 'unknown'}${problems ? ` Problems: ${problems}` : ''}`.slice(0, CAP_EACH)
     })
-    const final = readableResult(n.result).slice(0, CAP_FINAL)
+    const readable = readableResult(source)
+    const final = readable ? cutReport(readable, CAP_FINAL, readable.length + lost) : ''
     return [task, '', `Part reports, one per phase (${parts.length}):`, capLines(parts), ...(final ? ['', `Final result: ${final}`] : [])].join('\n')
   }
-  return [task, '', 'Report:', (n.result ?? '').slice(0, CAP_ALL)].join('\n')
+  return [task, '', 'Report:', source ? cutReport(source, CAP_ALL, source.length + lost) : ''].join('\n')
 }
 
 // ── facts from records: what changed and the totals, never from the model ────

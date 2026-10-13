@@ -36,7 +36,10 @@ export type AgentNode = {
   taskId?: string
   transcriptDir?: string
   prompt?: string
+  /** The start of its answer: the pane keeps a short copy, the report reads the whole answer. */
   result?: string
+  /** How long the answer was, set only when `result` holds just its start. */
+  resultLength?: number
   /** One plain sentence on what it found or did, from the digest Haiku writes when it finishes. */
   summary?: string
   /** Up to three key findings from the same digest. */

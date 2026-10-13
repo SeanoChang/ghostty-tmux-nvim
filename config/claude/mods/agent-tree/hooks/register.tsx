@@ -82,6 +82,16 @@ const agentCalls = new Set<string>()
 // Each Agent call's `isolation`, read when its spawn arrives.
 const isolationOf = new Map<string, 'worktree' | 'remote'>()
 const digesting = new Set<string>()
+// Each finished run's whole answer, held until its report is written: the node
+// keeps only its start, and a report read from that start calls the work unfinished.
+const answers = new Map<string, string>()
+const ANSWERS_HELD = 50
+const holdAnswer = (id: string, text: string | undefined) => {
+  if (!text) return
+  answers.delete(id)
+  answers.set(id, text)
+  for (const old of answers.keys()) { if (answers.size <= ANSWERS_HELD) break; answers.delete(old) }
+}
 let reconciler: Timer | undefined
 let poller: Timer | undefined
 const titling = new Set<string>()
@@ -91,6 +101,13 @@ const TITLE_CONCURRENCY = 4
 
 const AGENT_TOOLS = new Set(['Agent', 'Task'])
 const excerpt = (s: string | undefined, n = 400) => (s ? s.slice(0, n) : undefined)
+// A node's kept answer: its start, and its whole length when that start is all it keeps.
+// An empty answer keeps what the node had; a new answer drops an old length.
+const withResult = (n: AgentNode, s: string | undefined, cap = 400): AgentNode => {
+  if (!s) return n
+  const { resultLength: _old, ...rest } = n
+  return { ...rest, result: s.slice(0, cap), ...(s.length > cap ? { resultLength: s.length } : {}) }
+}
 const scriptField = (script: string | undefined, field: string) =>
   new RegExp(`${field}:\\s*['"]([^'"]+)['"]`).exec(script ?? '')?.[1]
 
@@ -276,8 +293,9 @@ async function endWorkflow($: Engine, taskId: string, word: string | undefined, 
   const status = statusOf(word)
   // An agent the journal never saw end did not finish: it was cut with the run.
   await update($, nodes, all =>
-    all.map(n => (n.id === wf.id ? { ...finish(status, at)(n), result: excerpt(result) ?? n.result } : n.parentId === wf.id ? finish('killed', at)(n) : n)),
+    all.map(n => (n.id === wf.id ? withResult(finish(status, at)(n), result) : n.parentId === wf.id ? finish('killed', at)(n) : n)),
   )
+  holdAnswer(wf.id, result)
   void digest($, wf.id)
   await announce($, wf.id)
   await archive($)
@@ -450,7 +468,8 @@ async function digest($: Engine, id: string) {
   const now = await read($, nodes)
   const node = now.find(x => x.id === id) ?? n
   const hasInput = node.kind === 'agent' ? !!node.result?.trim() : kids.length > 0 || !!node.result?.trim()
-  const r = hasInput ? await ask($, 'haiku', { maxTokens: 400, system: REPORT_SYSTEM, prompt: runInput(node, now) }) : undefined
+  const r = hasInput ? await ask($, 'haiku', { maxTokens: 400, system: REPORT_SYSTEM, prompt: runInput(node, now, answers.get(id)) }) : undefined
+  answers.delete(id)
   const report = reportFrom(r, await $.clock.now())
   await patch($, id, x => ({
     ...x, digested: true,
@@ -565,7 +584,7 @@ async function backfillReports($: Engine) {
     if (report) reports.set(n.id, report)
   }
   const tried = new Set(todo.map(n => n.id))
-  await $.store.set(HISTORY, history.map(n => (tried.has(n.id) ? { ...n, reportTried: true, ...(reports.has(n.id) ? { result: excerpt(reports.get(n.id), 600) } : {}) } : n)))
+  await $.store.set(HISTORY, history.map(n => (tried.has(n.id) ? withResult({ ...n, reportTried: true }, reports.get(n.id), 600) : n)))
 }
 
 // A finished top-level run, with everything under it, is kept across sessions.
@@ -707,7 +726,8 @@ export const register: Register = (on, options) => {
       // SubagentHandback is not in the typed tool list, so the name is compared as a string.
       if ((tool as string) === 'SubagentHandback' && typeof input.message === 'string') {
         const report = input.message
-        await patch($, agentId, n => ({ ...n, result: excerpt(report) }))
+        await patch($, agentId, n => withResult(n, report))
+        holdAnswer(agentId, report)
       }
       ensureTimers($)
     } else {
@@ -755,20 +775,19 @@ export const register: Register = (on, options) => {
       const list = await read($, nodes)
       const wf = runningWorkflow(list)
       if (list.some(n => n.id === agentId)) {
-        await patch($, agentId, n => ({
+        await patch($, agentId, n => withResult({
           ...finish(status, at)(n),
           model: n.model ?? u?.model,
-          result: excerpt(e.answer) ?? n.result,
           tokens: (n.tokens ?? 0) + (tokens ?? 0),
-        }))
+        }, e.answer))
       } else if (wf) {
         // A workflow agent that never called a tool is first seen as it ends.
-        await add($, {
+        await add($, withResult({
           id: agentId, kind: 'agent', parentId: wf.id, label: `agent ${agentId.slice(0, 6)}`,
-          model: u?.model, status, startedAt: at - e.durationMs, endedAt: at, tools: 0,
-          result: excerpt(e.answer), tokens,
-        })
+          model: u?.model, status, startedAt: at - e.durationMs, endedAt: at, tools: 0, tokens,
+        }, e.answer))
       }
+      holdAnswer(agentId, e.answer)
       void digest($, agentId)
       void writeStory($, agentId).catch(() => undefined)
       await announce($, agentId)

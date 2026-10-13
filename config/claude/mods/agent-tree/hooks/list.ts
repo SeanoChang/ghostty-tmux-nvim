@@ -175,6 +175,14 @@ export function phaseWords(p: { phase: string; total: number; running: number; d
   return parts.join(', ') || 'waiting'
 }
 
+// The heading over a run's own answer: it says so when the pane keeps only its start.
+export function reportHeading(n: AgentNode): string {
+  const whole = n.kind === 'workflow' ? 'Final result' : 'Full report'
+  const shown = n.result?.length ?? 0
+  if (!n.resultLength || n.resultLength <= shown) return whole
+  return `${n.kind === 'workflow' ? 'Final result' : 'Report'} (first ${shown} of ${n.resultLength.toLocaleString('en-US')} characters)`
+}
+
 // A workflow's return value is often JSON: its strings, joined, read better than its braces.
 export function readableResult(s: string | undefined): string {
   if (!s) return ''
@@ -591,7 +599,8 @@ export function fitProps<T extends { nodes: AgentNode[]; history: AgentNode[] }>
   if (size(p) <= limit) return p
   // a missing prompt or result stays missing: props that hold undefined are refused
   const slim = (n: AgentNode): AgentNode => ({
-    ...n, ...(n.prompt !== undefined ? { prompt: n.prompt.slice(0, 160) } : {}), ...(n.result !== undefined ? { result: n.result.slice(0, 300) } : {}),
+    ...n, ...(n.prompt !== undefined ? { prompt: n.prompt.slice(0, 160) } : {}),
+    ...(n.result !== undefined ? { result: n.result.slice(0, 300), ...(n.result.length > 300 ? { resultLength: n.resultLength ?? n.result.length } : {}) } : {}),
   })
   let next = { ...p, nodes: p.nodes.map(n => (n.status === 'running' ? n : slim(n))), history: p.history.map(slim) }
   while (size(next) > limit && next.history.length > 0) next = { ...next, history: next.history.slice(Math.ceil(next.history.length / 4)) }

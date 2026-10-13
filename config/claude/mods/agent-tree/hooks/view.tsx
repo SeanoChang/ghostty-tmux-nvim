@@ -8,7 +8,7 @@ import {
 import { compareRuns, previousOf, verdict, type Metric } from './compare'
 import {
   GROUPS, GROUP_NAMES, childrenOf, counts, dayLabel, diffCounts, fileRows, firstSentence, isSelectable, lineDiff,
-  noReportReason, overlaps, phaseWords, pipeline, plain, prettyModel, prettyType, readableResult, runTree, scopeNodes, shortPaths,
+  noReportReason, overlaps, phaseWords, pipeline, plain, prettyModel, prettyType, readableResult, reportHeading, runTree, scopeNodes, shortPaths,
   taskText, topItems, whereLabel, workSummary, type DiffLine, type FileRow, type Filter, type Group, type Item,
   folderKey, joinNodes, runKey,
 } from './list'
@@ -804,7 +804,7 @@ const View: ClientModule<JsonValue, State> = (raw, surface) => {
     }
     const report = n.kind === 'workflow' ? readableResult(n.result) : n.result
     if (report) {
-      gap(); para(n.kind === 'workflow' ? 'Final result' : 'Full report', C.accent, true)
+      gap(); para(reportHeading(n), C.accent, true)
       for (const line of report.split('\n')) para(plain(line) || ' ', C.muted)
     }
     if (!isDone && !report && !n.summary) para('Still working — the report appears here when it finishes.', C.muted)
