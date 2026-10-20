@@ -365,8 +365,11 @@ fallback.
    first screen, taken while WebGL is still live; the full-page shot of a tall
    3D page may show the 2D fallback. Ask yourself four things. Does the first screen teach the idea? Is the focal thing obvious?
    Does any text clip or overlap? Does dark mode hold?
-3. Publish with the Artifact tool: `quickstart` first (intent `other`), then
-   publish the assembled file with an `icon` and a one-sentence `description`.
+3. Publish the assembled file with the Artifact tool, with an `icon` and a
+   one-sentence `description`. Do not call `quickstart` and do not load
+   `artifact-design`: this skill carries the page contract (checked by
+   `render_check.py`) and replaces their design guidance. In Claude Code a
+   hook denies plain-page quickstarts.
    The title is a name of two to four words, never "X: an explainer".
 4. A Plan page's source also goes in the repo:
    `docs/plans/<YYYY-MM-DD>-<slug>.src.html` (`references/plan.md`).
