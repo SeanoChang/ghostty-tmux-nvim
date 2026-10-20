@@ -3,12 +3,12 @@ import type { On } from 'claude-code'
 import type { Engine } from 'claude-code/testing'
 
 import {
-  changesLine, cleanTitle, folderKey, describeTool, diffCounts, editRecords, editStats, fileRows, handbackOf, lineDiff, noReportReason, phaseWords, readableResult, firstPrompt, fitProps, markFor, parseDigest, parseJournal,
-  pipeline, plain, prettyModel, prettyType, scopeNodes, shortPaths, taskText, topItems, transcriptEdits, workSummary, workflowItems,
+  changesLine, cleanTitle, folderKey, describeTool, diffCounts, editRecords, editStats, fileRows, handbackOf, lineDiff, noReportReason, phaseWords, readableResult, firstPrompt, fitProps, fitView, markFor, parseDigest, parseJournal,
+  pipeline, plain, prettyModel, prettyType, PROPS_BOUND, scopeNodes, shortPaths, taskText, topItems, transcriptEdits, workSummary, workflowItems,
 } from '../hooks/list'
 import { bar, unifiedHunks, viewProps, viewState, wrap } from '../hooks/view'
 import { THEMES, cellWidth } from '../hooks/theme'
-import type { AgentNode } from '../types'
+import type { AgentNode, EditRecord } from '../types'
 
 const KEY = 'tree-v7'
 const PANE = {
@@ -275,6 +275,100 @@ test('the pane draws when the history is past the props bound and some runs have
   const ui = await $.ui.mount({ plugin: 'agent-tree', surface: 'terminal', ...PANE })
   await ui.key({ in: KEY, key: '2' })
   expect(await ui.find({ in: KEY, text: /Finished/ })).toBeDefined()
+  await ui.unmount()
+})
+
+// A finished agent as a long session keeps it: its report, story and points.
+const heavy = (id: string, startedAt: number, over: Partial<AgentNode> = {}): AgentNode => ({
+  id, kind: 'agent', label: `Run ${id}`, status: 'done', startedAt, endedAt: startedAt + 500, tools: 9,
+  prompt: 'p'.repeat(400), result: 'r'.repeat(400), summary: 's'.repeat(110), points: ['q'.repeat(110), 'q'.repeat(110)],
+  report: {
+    result: 'o'.repeat(300), done: ['d'.repeat(160), 'd'.repeat(160), 'd'.repeat(160)],
+    decisions: [{ text: 'c'.repeat(200), source: 'build' }, { text: 'c'.repeat(200), source: 'build' }],
+    problems: [{ text: 'x'.repeat(200), source: 'build' }], next: 'n'.repeat(200),
+  },
+  story: { steps: ['t'.repeat(120), 't'.repeat(120), 't'.repeat(120)], model: 'Haiku 4.5', at: startedAt },
+  ...over,
+})
+const sizeOf = (x: unknown) => JSON.stringify(x).length
+
+// One long session (poseidon: 63 finished runs in two days) passed the bound on its
+// own runs, with History already gone, and the pane drew empty.
+test('a long session past the props bound loses its oldest finished runs, whole; running work stays', () => {
+  const { endedAt: _a, ...running } = heavy('r1', 1, { status: 'running' })
+  const { endedAt: _b, ...liveWf } = heavy('wf2', 2, { kind: 'workflow', status: 'running' })
+  const nodes = [
+    running, liveWf, heavy('wf2-k', 3, { parentId: 'wf2' }), // a finished agent in a running workflow
+    heavy('wf1', 4, { kind: 'workflow' }), heavy('wf1-k1', 5, { parentId: 'wf1' }), heavy('wf1-k2', 6, { parentId: 'wf1' }),
+    ...Array.from({ length: 63 }, (_, i) => heavy(`a${i}`, 1000 + i * 1000)),
+  ]
+  expect(sizeOf(nodes)).toBeGreaterThan(100_000)
+  const fitted = fitProps({ nodes, history: longHistory() })
+  expect(sizeOf(fitted)).toBeLessThanOrEqual(90_000)
+  const kept = new Set(fitted.nodes.map(n => n.id))
+  expect(['r1', 'wf2', 'wf2-k', 'a62'].every(id => kept.has(id))).toBe(true)
+  // the oldest finished run goes first, with its agents
+  expect(['wf1', 'wf1-k1', 'wf1-k2', 'a0'].some(id => kept.has(id))).toBe(false)
+  expect(fitted.nodes.every(n => !n.parentId || kept.has(n.parentId))).toBe(true)
+  const startOf = (ids: string[]) => ids.map(id => nodes.find(n => n.id === id)!.startedAt)
+  const dropped = nodes.filter(n => !kept.has(n.id) && n.id.startsWith('a')).map(n => n.id)
+  const keptRuns = fitted.nodes.filter(n => n.id.startsWith('a')).map(n => n.id)
+  expect(Math.max(...startOf(dropped))).toBeLessThan(Math.min(...startOf(keptRuns)))
+})
+
+// The live list does not show finished runs; History does. So the finished runs
+// History holds leave the live list before History is cut, and History keeps them.
+test('finished runs History holds leave the live list first, so History still shows them', () => {
+  const { endedAt: _a, ...running } = heavy('r1', 1, { status: 'running' })
+  const done = Array.from({ length: 63 }, (_, i) => heavy(`a${i}`, 1000 + i * 1000))
+  const fitted = fitProps({ nodes: [running, ...done], history: [...longHistory(), ...done] })
+  expect(sizeOf(fitted)).toBeLessThanOrEqual(90_000)
+  expect(fitted.nodes.map(n => n.id)).toEqual(['r1'])
+  expect(fitted.history.some(n => n.id === 'a62')).toBe(true)
+})
+
+// The props are measured whole: an open file's edits count, and a file whose own
+// edits pass half the bound shows its newest ones.
+test('everything sent is measured against the bound, an open diff too', () => {
+  const runs = { nodes: Array.from({ length: 40 }, (_, i) => heavy(`a${i}`, i * 1000)), history: [], at: 5 }
+  const edit = (i: number): EditRecord => ({ id: `e${i}`, agentId: 'a1', path: '/r/x.ts', at: i, line: 1, old: 'o'.repeat(2500), new: 'n'.repeat(2500) })
+  const small = fitView(runs, { theme: 'kitty' as const, diff: { path: '/r/x.ts', edits: [edit(0), edit(1), edit(2)] } })
+  expect(sizeOf(small)).toBeLessThanOrEqual(PROPS_BOUND)
+  expect(small.diff?.edits.length).toBe(3)
+  expect(small.nodes.length).toBeLessThan(40)
+  const many = fitView(runs, { diff: { path: '/r/x.ts', edits: Array.from({ length: 40 }, (_, i) => edit(i)) } })
+  expect(sizeOf(many)).toBeLessThanOrEqual(PROPS_BOUND)
+  expect(sizeOf(many.diff)).toBeLessThanOrEqual(PROPS_BOUND / 2)
+  expect(many.diff?.edits.at(-1)?.id).toBe('e39')
+})
+
+test('the pane draws after a long session of finished runs with reports', async ($, on) => {
+  const clock = mock.clock(on)
+  mock.store(on)
+  on('ui.open', () => ({ value: { isPlaced: true as const } }))
+  on('ui.toast', () => ({ value: undefined }) as never)
+  on('agent.list', () => ({ value: [] }) as never)
+  on('agent.spawn', (_$, e) => ({ model: 'claude-sonnet-5-5', agentId: `cat-${e.tool_use_id}` }))
+  const long = (c: string, n: number) => `${c.repeat(n)}.`
+  const report = JSON.stringify({
+    result: long('o', 290), done: [long('d', 150), long('d', 150), long('d', 150)],
+    decisions: [{ text: long('c', 190), source: 'build' }, { text: long('c', 190), source: 'build' }, { text: long('c', 190), source: 'build' }],
+    problems: [{ text: long('x', 190), source: 'build' }, { text: long('x', 190), source: 'build' }], next: long('n', 190),
+  })
+  on('model.complete', () => ({ value: { isAnswered: true, usage, text: report } }) as never)
+  on('prompt.submit', () => ({ text: '' }) as never)
+  on('turn.complete', () => ({ text: '' }) as never)
+  for (let i = 0; i < 70; i++) {
+    await $.prompt.submit({ text: `step ${i}`, origin: { kind: 'user' }, wait: false } as never)
+    await $.agent.spawn({ ...spawnBase, tool_use_id: `t${i}`, prompt: `Build step ${i}: ${'p'.repeat(500)}`, description: `Build step ${i}`, subagentType: 'general-purpose' } as never)
+    await clock.advance(1000)
+    await $.turn.complete({ agentId: `cat-t${i}`, answer: `Step ${i} built. ${'a'.repeat(800)}`, durationMs: 1000, isAborted: false, reason: 'answer', usage } as never)
+    await clock.advance(1000)
+  }
+  const ui = await $.ui.mount({ plugin: 'agent-tree', surface: 'terminal', ...PANE })
+  // finished runs are History's: the newest are there to read
+  await ui.key({ in: KEY, key: '2' })
+  expect(await ui.find({ in: KEY, text: /Build step 69/ })).toBeDefined()
   await ui.unmount()
 })
 

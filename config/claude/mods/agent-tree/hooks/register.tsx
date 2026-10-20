@@ -4,7 +4,7 @@ import type { EngineInterface as Engine, Register, Timer } from 'claude-code'
 import type { AgentNode, EditRecord, NodeStatus, PatternsDoc, Report, TraceRow, TraceView, TraceZoom, ViewProps } from '../types'
 import { themeNameOf, themeOf, type ThemeName } from './theme'
 import {
-  changesLine, cleanTitle, describeTool, diffCounts, editRecords, editedPath, fileRows, firstPrompt, firstSentence, handbackOf, fitProps,
+  changesLine, cleanTitle, describeTool, diffCounts, editRecords, editedPath, fileRows, firstPrompt, firstSentence, handbackOf, fitView,
   lineDiff, parseJournal, pipeline, scopeNodes, transcriptEdits, folderKey, runKey,
 } from './list'
 import { PART_TOKENS, REPORT_SYSTEM, REPORT_TOKENS, isRawReport, kTokens, parseReport, partInput, runInput } from './report'
@@ -1005,17 +1005,18 @@ async function viewProps($: Engine): Promise<ViewProps> {
   const patterns = await patternsDoc($)
   const ai = { ai: aiMode, aiWeek: await aiWeek($), explaining: [...explaining], patternsBusy, ...(patterns ? { patterns } : {}), ...(exported ? { exported } : {}) }
   const trace = traceReq && traceSnap ? { trace: traceSnap } : {}
-  // the trace's window takes its share of the props bound first; runs fill the rest
-  const room = 90_000 - (trace.trace ? JSON.stringify(trace.trace).length : 0)
-  const base = { ...fitProps({ nodes: await read($, nodes), history, at: await $.clock.now() }, room - (patterns ? JSON.stringify(patterns).length : 0)), ...await repoProp($), theme: themeName, wheel: await read($, wheel), ...trace, ...ai }
-  if (!diffPath) return base
-  await backfill($, diffPath, [...history, ...base.nodes])
+  const live = await read($, nodes)
+  const runs = { nodes: live, history, at: await $.clock.now() }
+  const rest = { ...await repoProp($), theme: themeName, wheel: await read($, wheel), ...trace, ...ai }
+  if (!diffPath) return fitView(runs, rest)
+  await backfill($, diffPath, [...history, ...live])
   const pastEdits = ((await $.store.get(EDITS)) as EditRecord[] | undefined) ?? []
   const seen = new Set<string>()
   const forFile = [...pastEdits, ...(await read($, edits))]
     .filter(r => r.path === diffPath && !seen.has(r.id) && seen.add(r.id))
     .sort((a, b) => a.at - b.at)
-  return { ...base, diff: { path: diffPath, edits: forFile } }
+  // the open file's edits are measured with the rest, before the runs take what is left
+  return fitView(runs, { ...rest, diff: { path: diffPath, edits: forFile } })
 }
 
 // Agents that changed this file but left no edit records (runs from before edits
