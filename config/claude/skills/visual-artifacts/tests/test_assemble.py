@@ -114,7 +114,8 @@ def test_root_refuses_a_symlink_that_leaves_the_root(tmp_path):
 
 
 @pytest.mark.parametrize("name", [".env", ".env.production", "deploy/id_rsa", "certs/server.pem", "keys/api.key",
-                                  "config/credentials.json", "secrets.yaml", ".npmrc", "infra/terraform.tfstate", ".ssh/config"])
+                                  "config/credentials.json", "secrets.yaml", ".npmrc", "infra/terraform.tfstate", ".ssh/config",
+                                  "secrets/prod.yaml", "config/credentials/db.json", "deploy/prod.tfvars"])
 def test_root_refuses_files_that_look_like_secrets(tmp_path, name):
     root = repo(tmp_path)
     (root / name).parent.mkdir(parents=True, exist_ok=True)
@@ -135,6 +136,21 @@ SECRETS = {
     "AWS key": "aws = '" + "AKIA" + "QWERTYUIOPASDFGH" + "'",
     "GitHub token": "token: " + "ghp_" + "Ab3" * 12,
     "API key": 'API_KEY = "' + "sk-" + "ant-" + "x7Yq" * 8 + '"',
+    "YAML password": "password: " + "hunter2" * 2,
+    "env file key": "export API_KEY=" + "abcd1234" + "efgh5678",
+    "prefixed name": 'DB_PASSWORD = "' + "s3cr3t" + "-value" + '"',
+    "connection URL": "dsn = postgres://app:" + "pa55" + "word99@db:5432/app",
+    "value starting with $": 'password = "' + "$uper" + "S3cret" + '"',
+    "unquoted value starting with $": "password: " + "$uper" + "S3cret",
+    "URL password starting with $": "dsn = postgres://app:" + "$uper" + "S3cret@db/app",
+    "suffixed name": 'API_KEY_PROD = "' + "k7Pq" * 4 + '"',
+    "value of $ and letters": 'password = "' + "$ecret" + "password" + '"',
+    "URL password of $ and letters": "dsn = postgres://app:" + "$ecret" + "pass@db/app",
+    "uppercase value with underscores": 'secret = "' + "ZXCVB_" + "12345_QWERT" + '"',
+    "$ and capitals with digits": 'password = "' + "$W7XQ" + "_P2M9" + '"',
+    "URL password of $ and capitals with digits": "dsn = postgres://app:" + "$ABC" + "123XY@db/app",
+    "literal default after a variable": 'password = "${DB_PASS:-' + "hunter2" + 'x}"',
+    "literal inside angle brackets": 'api_key = "<' + "S3cr3t" + 'P4ss>"',
 }
 
 
@@ -147,6 +163,36 @@ def test_root_refuses_a_slice_that_holds_a_secret_and_never_prints_it(tmp_path, 
     assert "config.go:2" in str(e.value)
     tokens = re.findall(r"[\w-]{12,}", SECRETS[kind])
     assert SECRETS[kind] not in str(e.value) and not any(t in str(e.value) for t in tokens), "the error names the place, never the value"
+
+
+@pytest.mark.parametrize("line", [
+    "password: ${DB_PASSWORD}",
+    'password = "${DB_PASSWORD}"',
+    'token = "$GITHUB_TOKEN"',
+    "dsn = postgres://app:${DB_PASS}@db/app",
+    'apiKeyEnv: "OPENAI_API_KEY"',
+    'api_key = "<your-api-key>"',
+    'token = request.headers.get("Authorization")',
+    "secret_key = settings.SECRET_KEY",
+    'api_key = os.environ["API_KEY"]',
+    'tokenizer = load_tokenizer("bert-base-uncased")',
+    "max_tokens: 4096",
+    "url = postgres://app@db:5432/app",
+    "password_hash = hash_password(raw)",
+])
+def test_code_and_placeholders_that_name_a_secret_still_embed(tmp_path, line):
+    root = repo(tmp_path)
+    (root / "config.py").write_text(line + "\n", encoding="utf-8")
+    assert 'data-start="1"' in asm.assemble(cite("config.py", "1"), root=root)
+
+
+@pytest.mark.parametrize("src", ["alias.go", "gateway/../gateway/router.go"])
+def test_embedded_list_names_the_file_whose_code_was_embedded(tmp_path, src):
+    root = repo(tmp_path)
+    (root / "alias.go").symlink_to(root / "gateway" / "router.go")
+    embedded = {}
+    asm.assemble(cite(src, "1-2"), root=root, embedded=embedded)
+    assert embedded == {"gateway/router.go": {(1, 2)}}
 
 
 def test_main_lists_every_file_whose_code_is_now_in_the_page(tmp_path, capsys):

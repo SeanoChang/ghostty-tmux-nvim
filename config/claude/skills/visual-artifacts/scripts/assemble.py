@@ -73,9 +73,24 @@ def _asset(name: str) -> str:
 SECRET_NAMES = re.compile(
     r"(^|/)(\.env(\.[\w.-]+)?|\.npmrc|\.pypirc|\.netrc|\.htpasswd|\.git-credentials|\.dockercfg|kubeconfig"
     r"|id_(rsa|dsa|ecdsa|ed25519)[\w.-]*|(credentials|secrets?)(\.(json|ya?ml|toml|ini|conf|cfg|txt|csv|env))?|client_secret[\w.-]*\.json"
-    r"|[\w.-]+\.(pem|key|p12|pfx|jks|keystore|kdbx|tfstate|tfstate\.backup))$"
-    r"|(^|/)\.(ssh|gnupg|aws)/", re.I)
+    r"|[\w.-]+\.(pem|key|p12|pfx|jks|keystore|kdbx|tfstate|tfstate\.backup|tfvars))$"
+    r"|(^|/)(\.ssh|\.gnupg|\.aws|secrets?|credentials)/", re.I)
 SAFE_NAMES = re.compile(r"\.(example|sample|template|dist)$", re.I)
+# A name that says its value is a credential (db_password, GITHUB_TOKEN, apiKey, API_KEY_PROD), then := or :.
+_KEY = (r"(?i:password|passwd|passphrase|secret|private[_-]?key|api[_-]?key|access[_-]?key|token)[\w-]*"
+        r"[\"']?\s*[:=]\s*")
+
+
+def _live(end: str) -> str:
+    """Fails when the whole value, up to `end`, is a bare name in a placeholder shape: ${DB_PASS}, $DB_PASS,
+    <your-key>, {{ vault_pass }}, or an ALL_CAPS name ending in KEY, TOKEN, SECRET or PASSWORD, such as
+    OPENAI_API_KEY. A name holds letters and underscores only: a digit or a default (${X:-...}) means the
+    value is checked, as are $ecret, $uperS3cret and bcrypt hashes."""
+    return (r"(?!(?:\$\{[A-Za-z_]+\}|\$[A-Z_]+|<[A-Za-z][A-Za-z_-]*>|\{\{\s*[A-Za-z_][A-Za-z_.]*\s*\}\}"
+            r"|[A-Z][A-Z_]*_(?:KEY|TOKEN|SECRET|PASSWORD|PASS|PWD))" + end + ")")
+
+
+_BARE = r"[\w!@#$%^&*+/=~-]"
 # Lines that look like a live secret. The error names the place and the kind, never the value.
 SECRET_TEXT = [
     ("private key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
@@ -83,7 +98,10 @@ SECRET_TEXT = [
     ("GitHub token", re.compile(r"\b(gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{22,})")),
     ("Slack token", re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}")),
     ("API key", re.compile(r"\bsk-[A-Za-z0-9_-]{20,}|\bAIza[0-9A-Za-z_-]{35}\b|\b[rs]k_live_[0-9A-Za-z]{20,}")),
-    ("password or token", re.compile(r"(?i)\b(password|passwd|secret|api[_-]?key|token)\w*[\"']?\s*[:=]\s*[\"'][^\"'\s]{8,}[\"']")),
+    ("password or token", re.compile(_KEY + r"[\"']" + _live(r"[\"']") + r"[^\"'\s]{8,}[\"']")),
+    # Unquoted (YAML, env, INI): only a literal with letters and digits, so code such as settings.KEY or get_key() still embeds.
+    ("password or token", re.compile(_KEY + _live(r"(?:[\s,;#]|$)") + rf"(?={_BARE}*\d)(?={_BARE}*[A-Za-z]){_BARE}{{8,}}(?![^\s,;#])")),
+    ("connection string with a password", re.compile(r"\b[A-Za-z][\w+.-]*://[^/\s:@]*:" + _live("@") + r"[^/\s@]{4,}@")),
 ]
 
 
@@ -95,8 +113,9 @@ def _git(root: pathlib.Path, *args: str) -> str | None:
     return r.stdout.strip() if r.returncode == 0 else None
 
 
-def _cited(root: pathlib.Path, src: str, lines: str) -> tuple[str, int, str | None]:
-    """The text of lines a-b of root/src, its first line number, and the commit it came from."""
+def _cited(root: pathlib.Path, src: str, lines: str) -> tuple[str, int, str | None, str]:
+    """The text of lines a-b of root/src, its first line number, the commit it came from, and the
+    path of the file actually read (symlinks and .. resolved), relative to root."""
     path = (root / src).resolve()
     if src.startswith("/") or not path.is_relative_to(root):
         raise AssembleError(f"'{src}' is outside the root {root}; cite files inside the repo only")
@@ -121,7 +140,7 @@ def _cited(root: pathlib.Path, src: str, lines: str) -> tuple[str, int, str | No
         ref = _git(root, "rev-parse", "--short", "HEAD")
         if ref and _git(root, "status", "--porcelain", "--", rel):
             ref += "-dirty"
-    return "\n".join(text[a - 1 : b]), a, ref
+    return "\n".join(text[a - 1 : b]), a, ref, rel
 
 
 def _fill_code(src: str, root: pathlib.Path | None, embedded: dict | None) -> str:
@@ -132,14 +151,14 @@ def _fill_code(src: str, root: pathlib.Path | None, embedded: dict | None) -> st
             if m.group(3).strip():
                 return m.group(0)  # filled earlier; keep it
             raise AssembleError(f"<pre data-src=\"{path}\"> cites code; pass --root <repo> to fill it")
-        text, start, ref = _cited(root, path, lines)
+        text, start, ref, rel = _cited(root, path, lines)
         attrs["data-start"] = str(start)
         if ref:
             attrs["data-ref"] = ref
         else:
             attrs.pop("data-ref", None)
         if embedded is not None:
-            embedded.setdefault(pathlib.Path(path).as_posix(), set()).add((start, start + text.count("\n")))
+            embedded.setdefault(rel, set()).add((start, start + text.count("\n")))
         tag = " ".join(f'{k}="{v}"' if v else k for k, v in attrs.items())  # values stay as written: re-escaping would grow &amp; on each run
         return f"<pre {tag}><code{m.group(2)}>{html.escape(text, quote=False)}</code></pre>"
 
