@@ -593,7 +593,8 @@ export function runItems(
   return out
 }
 
-// Keep the client's props under the tree bound: drop bulky text first, then the oldest history.
+// Keep the client's props under the tree bound: drop bulky text first, then this session's
+// finished runs that History holds, then the oldest history, then any finished run left.
 export function fitProps<T extends { nodes: AgentNode[]; history: AgentNode[] }>(p: T, limit = 90_000): T {
   const size = (x: unknown) => JSON.stringify(x).length
   if (size(p) <= limit) return p
@@ -603,8 +604,52 @@ export function fitProps<T extends { nodes: AgentNode[]; history: AgentNode[] }>
     ...(n.result !== undefined ? { result: n.result.slice(0, 300), ...(n.result.length > 300 ? { resultLength: n.resultLength ?? n.result.length } : {}) } : {}),
   })
   let next = { ...p, nodes: p.nodes.map(n => (n.status === 'running' ? n : slim(n))), history: p.history.map(slim) }
+  // A long session can pass the bound on its own runs. The live list does not show
+  // finished runs, History does: the ones it holds go first, and History keeps them.
+  const held = new Set(next.history.map(n => n.id))
+  next = dropFinished(next, limit, top => held.has(top.id))
   while (size(next) > limit && next.history.length > 0) next = { ...next, history: next.history.slice(Math.ceil(next.history.length / 4)) }
-  return next
+  return dropFinished(next, limit, () => true)
+}
+
+// This session's oldest finished runs go, whole, until the props fit, so no agent
+// loses its parent; running work stays. `may` says which runs can go.
+function dropFinished<T extends { nodes: AgentNode[] }>(p: T, limit: number, may: (top: AgentNode) => boolean): T {
+  const size = (x: unknown) => JSON.stringify(x).length
+  let over = size(p) - limit
+  if (over <= 0) return p
+  const byId = new Map(p.nodes.map(n => [n.id, n]))
+  const topOf = (n: AgentNode) => { let x = n; while (x.parentId && byId.has(x.parentId)) x = byId.get(x.parentId)!; return x }
+  const runs = new Map<AgentNode, AgentNode[]>()
+  for (const n of p.nodes) { const top = topOf(n); runs.set(top, [...(runs.get(top) ?? []), n]) }
+  const finished = [...runs].filter(([top, run]) => may(top) && run.every(n => n.status !== 'running')).sort(([a], [b]) => a.startedAt - b.startedAt)
+  const gone = new Set<AgentNode>()
+  for (const [top, run] of finished) {
+    if (over <= 0) break
+    gone.add(top)
+    over -= run.reduce((sum, n) => sum + size(n) + 1, 0)
+  }
+  return gone.size ? { ...p, nodes: p.nodes.filter(n => !gone.has(topOf(n))) } : p
+}
+
+// The engine refuses a Client whose props serialize past 100,000 characters, and the
+// pane then draws empty. The slack covers any difference in how the engine counts.
+export const PROPS_BOUND = 98_000
+
+// The view's whole props: everything beside the runs is measured, and the runs take
+// the room it leaves. An open file's own edits take at most half: its oldest go first.
+export function fitView<T extends { nodes: AgentNode[]; history: AgentNode[]; at: number }, R extends { diff?: { path: string; edits: EditRecord[] }; [key: string]: unknown }>(runs: T, rest: R, bound = PROPS_BOUND): T & R {
+  const size = (x: unknown) => JSON.stringify(x).length
+  let fixed = rest
+  if (rest.diff && size(rest.diff) > bound / 2) {
+    let over = size(rest.diff) - bound / 2
+    let cut = 0
+    while (over > 0 && cut < rest.diff.edits.length) over -= size(rest.diff.edits[cut++]) + 1
+    fixed = { ...rest, diff: { ...rest.diff, edits: rest.diff.edits.slice(cut) } }
+  }
+  const empty = { nodes: [], history: [], at: runs.at }
+  const room = bound - (size({ ...empty, ...fixed }) - size(empty))
+  return { ...fitProps(runs, room), ...fixed }
 }
 
 // An agent's transcript keeps every edit call it made, so a run recorded before
