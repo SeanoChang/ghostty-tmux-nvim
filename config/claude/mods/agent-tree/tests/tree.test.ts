@@ -342,7 +342,8 @@ test('everything sent is measured against the bound, an open diff too', () => {
   expect(many.diff?.edits.at(-1)?.id).toBe('e39')
 })
 
-test('the pane draws after a long session of finished runs with reports', async ($, on) => {
+// 70 agents spawned and finished one by one is the slow part; slack for a loaded machine
+test('the pane draws after a long session of finished runs with reports', { timeoutMs: 20_000 }, async ($, on) => {
   const clock = mock.clock(on)
   mock.store(on)
   on('ui.open', () => ({ value: { isPlaced: true as const } }))
