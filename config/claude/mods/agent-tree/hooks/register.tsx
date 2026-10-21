@@ -23,6 +23,14 @@ const PANE = 'agent-tree'
 // Bumped when the view module's props or state change shape: a new key mounts a
 // fresh instance, where the old one would carry its state into the new code.
 const VIEW_KEY = 'tree-v7'
+// A view that failed (one draw over its budget, a throw) is not drawn again under
+// its key, so each failure moves it to a new key: at most FAULT_RETRIES in
+// FAULT_WINDOW, after which it waits for a reload as before.
+const FAULT_RETRIES = 3
+const FAULT_WINDOW = 10 * 60_000
+let viewGen = 0
+let faultsAt: number[] = []
+const viewKey = () => (viewGen ? `${VIEW_KEY}-${viewGen}` : VIEW_KEY)
 const TITLE = 'Agents'
 const HISTORY = 'history'
 const HISTORY_RUNS = 150
@@ -957,6 +965,19 @@ export const register: Register = (on, options) => {
     return {}
   })
 
+  // A load failure is the module itself, so a fresh instance would fail the same way.
+  on('ui.fault', { component: 'Pane', requestId: PANE }, async ($, e, next) => {
+    const r = await next(e)
+    const now = await $.clock.now()
+    faultsAt = faultsAt.filter(t => now - t < FAULT_WINDOW)
+    if (e.element === viewKey() && e.phase !== 'load' && faultsAt.length < FAULT_RETRIES) {
+      faultsAt.push(now)
+      viewGen++
+      $.ui.invalidate('ui.render')
+    }
+    return r
+  })
+
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const els = $.ui.resolve(e)
     // phase 6: the desktop draws its own native view; presses write the desk state
@@ -993,7 +1014,7 @@ export const register: Register = (on, options) => {
     if (!('Client' in els)) return <els.Text dimColor>The Agents pane needs the terminal or desktop.</els.Text>
     const { Client } = els
 
-    return <Client key={VIEW_KEY} module="./view.tsx" props={await viewProps($)} width="100%" height={rows} />
+    return <Client key={viewKey()} module="./view.tsx" props={await viewProps($)} width="100%" height={rows} />
   })
 }
 
