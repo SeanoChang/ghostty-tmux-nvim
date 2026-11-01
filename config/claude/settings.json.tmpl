@@ -1,6 +1,7 @@
 {
   "env": {
     "CLAUDE_CODE_SUBAGENT_MODEL": "sonnet",
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "50",
     "CLAUDE_CODE_PLUGIN_DIRS": "~/.claude/mods/agent-tree:~/.claude/mods/context-feed:~/.claude/mods/cache-keepalive:~/.claude/mods/brief:~/.claude/mods/statusline-bridge"
   },
   "permissions": {
@@ -20,8 +21,7 @@
       "mcp__claude_ai_Notion__notion-update-data-source",
       "mcp__claude_ai_Notion__notion-update-page",
       "Read(/__HOME__/Desktop/sean-thoughts/**)",
-      "Edit(/__HOME__/Desktop/sean-thoughts/**)",
-      "Write(/__HOME__/Desktop/sean-thoughts/**)"
+      "Edit(/__HOME__/Desktop/sean-thoughts/**)"
     ],
     "deny": [
       "Bash(terraform apply*)",
@@ -57,6 +57,34 @@
       "Bash(gcloud storage rm*)",
       "Bash(kubectl get secret* -o*)",
       "Bash(kubectl get secret* --output*)"
+    ],
+    "ask": [
+      "Bash(alembic upgrade*)",
+      "Bash(alembic downgrade*)",
+      "Bash(*prisma migrate*)",
+      "Bash(*prisma db push*)",
+      "Bash(*manage.py migrate*)",
+      "Bash(*manage.py flush*)",
+      "Bash(rails db:*)",
+      "Bash(bin/rails db:*)",
+      "Bash(flyway migrate*)",
+      "Bash(dbmate up*)",
+      "Bash(supabase db reset*)",
+      "Bash(supabase db push*)",
+      "Bash(brew install*)",
+      "Bash(brew upgrade*)",
+      "Bash(npm install -g*)",
+      "Bash(npm i -g*)",
+      "Bash(pnpm add -g*)",
+      "Bash(pipx install*)",
+      "Bash(uv tool install*)",
+      "Bash(cargo install*)",
+      "Bash(go install*)",
+      "Bash(gem install*)",
+      "Edit(~/.zshrc)",
+      "Edit(~/.zprofile)",
+      "Edit(~/.bashrc)",
+      "Edit(~/.bash_profile)"
     ]
   },
   "hooks": {
@@ -117,7 +145,8 @@
     "playwright@claude-plugins-official": true,
     "slack@claude-plugins-official": true,
     "clangd-lsp@claude-plugins-official": true,
-    "cc-plugin-you-should-know@builtin": true
+    "cc-plugin-you-should-know@builtin": true,
+    "swift-lsp@claude-plugins-official": true
   },
   "extraKnownMarketplaces": {
     "interface-design": {
@@ -145,7 +174,7 @@
   "pluginConfigs": {
     "agent-tree@inline": {
       "options": {
-        "theme": "minimal"
+        "theme": "fish"
       }
     }
   },
@@ -176,6 +205,7 @@
       "**Sensitive remote targets**: any namespace, host, or container whose name carries `prod` or `production` as a whole word or name segment (hyphen/underscore/dot-delimited — e.g. matches `prod-db`, not `producer`)",
       "**Protected deployment namespaces / environments**: None configured — fall back to the Sensitive remote targets heuristic",
       "**Protected IaC scopes**: IAM, RBAC, networking, quota, and node-pool resources; anything whose name or tag carries `prod` or `production` as a whole word or name segment",
+      "**Host containment**: None configured — assume Claude Code runs on an ordinary developer machine or CI runner with open internet",
       "### User-specific",
       "**Primary use of Claude Code**: software development",
       "**Trusted repo**: No repository detected in the current working directory (no tracked files, no remotes) — treat no local checkout as trusted by default; scope trust to whatever repo is opened once one exists",
