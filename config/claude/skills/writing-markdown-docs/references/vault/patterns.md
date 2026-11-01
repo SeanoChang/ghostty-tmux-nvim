@@ -2,7 +2,7 @@
 
 The vault has **no templates folder** — `.obsidian/templates.json` does not exist and the core Templates plugin is unconfigured. The templates below were reconstructed from the two largest exact frontmatter-plus-heading signatures (265 and 219 notes, together 484 of the 1,049 notes with frontmatter). They are the real convention.
 
-Frontmatter shown here is already normalized to the committed key set in `references/conventions.md` — it is **not** verbatim what older notes carry.
+Frontmatter shown here is already normalized to the committed key set in `references/vault/conventions.md` — it is **not** verbatim what older notes carry.
 
 ## Contents
 
@@ -62,7 +62,7 @@ status: draft
 
 **`## System-Level Thinking` is the section that carries the most value and is most often left thin.** It is where the mechanism gets connected to a real system under real constraints — the part that can't be reconstructed from a textbook. Write it before padding the concept sections.
 
-Open the first concept section with a model or a stated failure, never a definition. See the Voice section in `SKILL.md`.
+Open the first concept section with a model or a stated failure, never a definition. See Voice in `references/vault.md`.
 
 ## Scaffolds
 
@@ -227,7 +227,7 @@ One per topic folder: `NN-00 MOC — Topic.md`, `type: moc`, `tags: [MOC, …]`.
 
 **`## Planned` holds unwritten notes as plain text, not wikilinks.** This is how a curriculum gets planned without creating 20 scaffolds or 20 broken forward links.
 
-Once properties are normalized, the `## Order` list can be replaced by an embedded Base filtered on folder — see `references/hygiene.md`. Keep `## Planned` hand-written either way.
+Once properties are normalized, the `## Order` list can be replaced by an embedded Base filtered on folder — see `references/vault/hygiene.md`. Keep `## Planned` hand-written either way.
 
 ## Decision note
 

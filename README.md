@@ -28,7 +28,7 @@ things that change how the terminal feels day to day:
   with live previews. `zoxide` replaces `cd`. `sesh` jumps between tmux sessions
   and project folders.
 - **Claude Code is part of the setup.** Global working rules, a five-line status
-  line, hooks, seven skills, and five mods that add native panes: a live tree
+  line, hooks, six skills, and five mods that add native panes: a live tree
   of subagents, and a plan pane beside the chat.
 - **One command, with a safety net.** `./install.sh` links everything and moves
   anything in the way into a timestamped backup folder. It never deletes, and
@@ -83,7 +83,7 @@ nvim                       # lazy.nvim bootstraps itself on first launch
 | **[tmux](https://github.com/tmux/tmux)** | Default `Ctrl-b` prefix. Floating popups for lazygit, yazi, sessions and builds. `Ctrl-hjkl` moves between tmux panes and Neovim splits alike. Sessions survive reboots |
 | **[Neovim](https://neovim.io) + [LazyVim](https://lazyvim.github.io)** | 23 LazyVim extras, including Go, Python, Java and C/C++. `Space` leader with which-key, a macOS shortcut layer, and inline image and diagram rendering |
 | **[zsh](https://www.zsh.org)** | [powerlevel10k](https://github.com/romkatv/powerlevel10k) instant prompt, [fzf-tab](https://github.com/Aloxaf/fzf-tab) fuzzy completion with previews, [zoxide](https://github.com/ajeetdsouza/zoxide), [eza](https://github.com/eza-community/eza) |
-| **[Claude Code](https://claude.com/claude-code)** | Global working rules, a five-line status line, two hooks, two slash commands, seven skills, five mods, and a `claude-or` wrapper that routes the CLI through OpenRouter |
+| **[Claude Code](https://claude.com/claude-code)** | Global working rules, a five-line status line, two hooks, two slash commands, six skills, five mods, and a `claude-or` wrapper that routes the CLI through OpenRouter |
 
 ![fzf-tab: cd plus Tab opens a fuzzy list of folders, and the eza preview follows the selection](docs/images/fzf-tab.gif)
 
@@ -138,6 +138,7 @@ Groups are the path segment after `config/`: `ghostty`, `tmux`, `nvim`, `zsh`,
     ├── git/                gitconfig.tmpl (placeholders), ignore
     ├── claude/             CLAUDE.md, settings.json.tmpl, statusline-command.sh,
     │                       commands/, skills/, hooks/, mods/
+    ├── codex/AGENTS.md     Codex rules: main-worker and subagent modes
     └── mermaid/            TokyoNight mermaid theme
 ```
 
@@ -276,17 +277,16 @@ workflow: one logs each prompt, and one checks at the end of a session whether
 anything is worth saving to the notes vault. A test script covers both.
 
 **Commands and skills.** Two slash commands live in `config/claude/commands/`:
-`/explore` and `/map`. Seven skills live in `config/claude/skills/`, and Claude
+`/explore` and `/map`. These skills live in `config/claude/skills/`, and Claude
 loads whichever one matches the request:
 
 | Skill | What it's for |
 |---|---|
-| `writing-markdown-docs` | House style for docs, with a reference per document type (RCA, runbook, design, handoff…) and a `check_doc.py` linter |
-| `building-html` | Standalone HTML reports and tools: three themes, a section recipe, an SVG figure for each section, and a checker |
+| `writing-markdown-docs` | House style for docs, with a reference per document type (learn, design, report, runbook, handoff…), Obsidian vault notes, and a `check_doc.py` linter with a `--vault` mode |
+| `visual-artifacts` | Learning pages published as Claude Artifacts: explorables (3D, simulations, charts), working prototypes, and layered guides, on one Anthropic-style design system with a render checker |
 | `tui-design` | Designing and reviewing terminal UIs: layout, keybindings, colour, redraw and resize |
 | `scaffold-docs` | Writes a `CLAUDE.md` entry point into each meaningful folder and keeps a versioned changelog |
 | `orient` | Reads those scaffold docs at the start of a session instead of exploring the tree again |
-| `obsidian-writing` | Writes notes for an Obsidian vault: frontmatter, links, callouts, Canvas and Bases |
 | `ccdash-analysis` | Turns a local [ccdash](https://github.com/SeanoChang/ccdash) archive into ranked, evidence-backed changes to model routing and subagent use |
 
 ### Routing Claude Code through OpenRouter

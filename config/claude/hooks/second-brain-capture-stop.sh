@@ -28,7 +28,7 @@ $prompts
 Pick only the ones plausibly worth vault attention (a concept, a course fact, a
 design decision) and ignore pure session mechanics. For those: run
 \`sb find\` on each, then apply the second-brain-obsidian capture gates —
-\`sb propose\` (promote via obsidian-writing) if the session produced
+\`sb propose\` (write the note via writing-markdown-docs) if the session produced
 generalizable knowledge, \`sb gap\` if a question stayed unanswered.
 If nothing here is worth capturing, say so in one line and finish."
 

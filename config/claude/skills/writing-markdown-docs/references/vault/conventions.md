@@ -51,7 +51,7 @@ M1-08 Paper — RAG for Knowledge-Intensive NLP Tasks (Lewis et al. 2020).md
 β1-04 Math — FLOPS Calculation, Bandwidth Utilization, Optimal Tile Size Derivation.md
 ```
 
-**Reserved type-words** follow the ID and replace the topic noun. Each maps to a `type:` value and a template in `references/patterns.md`:
+**Reserved type-words** follow the ID and replace the topic noun. Each maps to a `type:` value and a template in `references/vault/patterns.md`:
 
 `Paper —` · `SOTA —` · `Math —` · `PROJECT —` · `LAB —` · `INTERVIEW —`
 

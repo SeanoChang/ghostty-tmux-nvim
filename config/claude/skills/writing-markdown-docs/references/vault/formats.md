@@ -2,7 +2,7 @@
 
 Syntax and failure modes for each representation. Organized by durability tier.
 
-For `~/vaults/Seano` the capability facts are already recorded in `SKILL.md`; run `scripts/vault_probe.py` only when working in a different vault.
+For `~/vaults/Seano` the capability facts are already recorded in `references/vault.md`; run `scripts/vault_probe.py` only when working in a different vault.
 
 ## Contents
 

@@ -31,7 +31,7 @@ Twelve measured defects, the order they must be fixed in, and what becomes possi
 | 11 | `prereqs` vs `prerequisites`, plus list-vs-string | 486 notes | Key drift |
 | 12 | 2 commits in 8 days, dirty tree, obsidian-git never auto-committed | — | Process |
 
-**#1 is the worst.** It is invisible from inside Obsidian, it breaks every future query on the vault's most-used discriminator, and it got there because two folders were authored in different sessions — which means it will happen again to the next key unless the committed set in `references/conventions.md` is actually enforced.
+**#1 is the worst.** It is invisible from inside Obsidian, it breaks every future query on the vault's most-used discriminator, and it got there because two folders were authored in different sessions — which means it will happen again to the next key unless the committed set in `references/vault/conventions.md` is actually enforced.
 
 **#3 is eight times larger than the stub count suggests.** Scaffolds carry enough words and links to clear both stub thresholds, so a stub scan reports 18 while the real unwritten backlog is 143.
 
@@ -82,7 +82,7 @@ Steps 2–9 are mechanical and scriptable. Steps 10–11 are not.
 | `course` | Always a list. 13 Learning notes are bare strings |
 | `tags` | Inline array form. 234 notes use block-list form — convert to match the 794 |
 | `status` | `skeleton`→`scaffold`; `research-complete`→`draft`; `complete`/`current`/`approved`→`done`. One note has a ~200-char prose sentence as its status — read it, then replace |
-| `level` | Split per `references/conventions.md`, then delete the key |
+| `level` | Split per `references/vault/conventions.md`, then delete the key |
 | `title` | Chinese or differing → `aliases`. Duplicates H1 → drop. One bare value parses as a date object |
 | `verified` | Drop. 71 booleans plus 2 parsing as dates under one key |
 
