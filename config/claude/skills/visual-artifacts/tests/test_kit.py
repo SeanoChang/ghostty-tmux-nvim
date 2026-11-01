@@ -165,6 +165,7 @@ def test_docs_rail_pager_and_summary(browser):
     assert pg.evaluate("[...document.querySelectorAll('.docs-rail .rail-link')].map(a => a.textContent)") == ["Methods", "GPTQ"]
     assert pg.evaluate("[...document.querySelectorAll('#methods .pager a')].map(a => a.className)") == ["prev"]
     assert pg.evaluate("[...document.querySelectorAll('#idea .pager a')].map(a => a.className)") == ["prev", "next"]
+    pg.evaluate("location.hash = 'overview'"); pg.wait_for_timeout(50)  # the summary lives on the overview page; read it while it is shown
     cards = pg.evaluate("[...document.querySelectorAll('[data-docs-summary] .card-link')].map(a => a.getAttribute('href') + ' ' + a.innerText.replace(/\\s+/g, ' ').trim())")
     assert cards == ["#idea START HERE The idea Store fewer bits.", "#methods MECHANISM Methods Protect the outliers."]
 
@@ -1077,3 +1078,274 @@ def test_pages_not_under_review_get_no_review_chrome(browser):
     assert pg.evaluate("document.querySelectorAll('.task [data-comment]').length") == 5
     pg.click("#task-3 [data-comment]")
     assert pg.evaluate("document.querySelectorAll('.is-hit').length") == 0, "opening a comment does not select the task"
+
+
+# ── components added 2026-10-27: pane, rail, scenarios, open questions, css fixes ──
+
+@pytest.mark.slow
+def test_display_math_does_not_inherit_the_display_heading_size(browser):
+    pg = load(browser, '<p id="p">x</p><div class="tex display" id="t">x</div>')
+    assert pg.evaluate("getComputedStyle(t).fontSize") == pg.evaluate("getComputedStyle(p).fontSize")
+
+
+@pytest.mark.slow
+def test_hidden_buttons_stay_hidden(browser):
+    pg = load(browser, '<button class="btn" id="b" hidden>x</button>')
+    assert pg.evaluate("getComputedStyle(b).display") == "none"
+
+
+PANE_ITEMS = "[{key:'a', eyebrow:'Part 1', title:'Alpha', html:'<p id=pa>A</p>'}, {key:'b', eyebrow:'Part 2', title:'Beta', html:() => '<p id=pb>B</p>'}]"
+
+
+@pytest.mark.slow
+def test_pane_opens_steps_and_closes_on_escape(browser):
+    pg = load(browser, '<button id="o">open</button>', script=f"window.sel = []; document.getElementById('o').onclick = () => Kit.pane.open({PANE_ITEMS}, 0, {{ onSelect: it => sel.push(it ? it.key : null) }});")
+    pg.click("#o"); pg.wait_for_timeout(300)
+    assert pg.evaluate("!!document.getElementById('pa') && !document.querySelector('.pane').hidden")
+    pg.click(".pane [data-pane-next]")
+    assert pg.evaluate("!!document.getElementById('pb')")
+    pg.keyboard.press("Escape"); pg.wait_for_timeout(300)
+    assert pg.evaluate("document.querySelector('.pane').hidden")
+    assert pg.evaluate("sel") == ["a", "b", None]
+    assert pg.evaluate("document.activeElement.id") == "o"
+    assert pg.errors == []
+
+
+@pytest.mark.slow
+def test_pane_with_one_item_hides_its_arrows(browser):
+    pg = load(browser, "<main></main>", script="Kit.pane.open([{key:'a', eyebrow:'', title:'Only', html:'x'}]);")
+    pg.wait_for_timeout(100)
+    assert pg.evaluate("document.querySelectorAll('.pane [data-pane-prev], .pane [data-pane-next]').length") == 2
+    assert pg.evaluate("[...document.querySelectorAll('.pane [data-pane-prev], .pane [data-pane-next]')].every(b => getComputedStyle(b).display === 'none')")
+
+
+@pytest.mark.slow
+def test_pane_card_renders_the_standard_parts(browser):
+    pg = load(browser, "<main></main>", script="document.body.insertAdjacentHTML('beforeend', Kit.paneCard({ fig: '<svg id=f></svg>', lede: 'What it does.', in: 'Requests', out: 'Tokens', numbers: [['1.5 s', 'prefill']], fails: [['Hot replica', 'Spill over']], link: ['#s', 'Serving'] }));")
+    assert pg.evaluate("!!document.querySelector('.pane-fig #f') && document.querySelectorAll('.io > div').length === 2 && document.querySelectorAll('.fails li').length === 1 && !!document.querySelector('a[href=\"#s\"]')")
+
+
+RAIL = """{ rows: [
+  { id: 'n0', label: 'Hook', down: 'no opinion', outs: [{ id: 'l0', edge: 'deny', label: 'Blocked', tone: 'bad' }] },
+  { id: 'n1', label: 'Allow rule?', outs: [{ id: 'l1', edge: 'yes', label: 'Runs', tone: 'ok' }] } ] }"""
+
+
+@pytest.mark.slow
+def test_rail_lights_only_the_path_taken(browser):
+    pg = load(browser, '<div id="r"></div>', script=f"window.r = Kit.rail(document.getElementById('r'), {RAIL}); r.show(['n0', 'd-n0', 'n1', 'l1']);")
+    on = pg.evaluate("[...document.querySelectorAll('#r .on')].map(e => e.dataset.id)")
+    assert set(on) == {"n0", "d-n0", "n1", "l1"}
+    assert pg.evaluate("!!document.querySelector('#r .chip.ok.on')") and not pg.evaluate("!!document.querySelector('#r .chip.bad.on')")
+
+
+SCENE = """
+<figure class="fig" id="sf">
+  <div class="seg" data-scenarios></div>
+  <button data-prev></button><span class="step-count"></span><button data-next></button><button data-play></button>
+  <svg><rect data-state="1"/><rect data-state="2"/><g data-sc="drop"></g></svg>
+  <p class="scene-note"></p>
+</figure>
+<figure class="fig codeblock" id="cb"><pre class="code-src" data-sketch><code class="language-go">a()
+b()
+c()</code></pre></figure>
+"""
+SCENE_JS = """window.sc = Kit.scenarios(document.getElementById('sf'), { code: document.getElementById('cb'), scenarios: {
+  normal: { label: 'Normal', steps: [{ state: 1, lines: [1], note: 'first' }, { state: 2, lines: [2, 3], note: 'second' }] },
+  drop: { label: 'Drop', steps: [{ state: 2, lines: [3], note: 'dropped' }] } } });"""
+
+
+@pytest.mark.slow
+def test_scenarios_drive_the_state_the_overlay_and_the_code(browser):
+    pg = load(browser, SCENE, script="Kit.init();" + SCENE_JS)
+    vis = lambda: pg.evaluate("[...document.querySelectorAll('#sf [data-state]')].filter(e => !e.classList.contains('is-off')).map(e => e.dataset.state)")
+    hl = lambda: pg.evaluate("[...document.querySelectorAll('#cb .cl.is-hl')].map(e => +e.dataset.n)")
+    assert vis() == ["1"] and hl() == [1]
+    pg.click("#sf [data-next]")
+    assert vis() == ["2"] and hl() == [2, 3] and "second" in pg.evaluate("document.querySelector('#sf .scene-note').textContent")
+    pg.click('#sf [data-scenarios] [data-value="drop"]')
+    assert pg.evaluate("sc.get()") == {"scenario": "drop", "step": 1}
+    assert hl() == [3] and not pg.evaluate("document.querySelector('#sf [data-sc=drop]').classList.contains('is-off')")
+    assert pg.evaluate("document.querySelectorAll('#cb .cl-pin.dyn').length") == 1
+    assert pg.errors == []
+
+
+OPENQ = """<section id="t">
+  <div class="openq" data-q="q1"><h3>1 · Thin client</h3><p class="decide-q">What breaks?</p><textarea id="a1"></textarea><details class="rubric-d"><summary>Rubric</summary><ol><li>Repo sync</li></ol></details></div>
+  <div class="openq" data-q="q2"><h3>2 · Cost</h3><p class="decide-q">How much?</p><textarea id="a2"></textarea><details class="rubric-d"><summary>Rubric</summary><ol><li>Sum</li></ol></details></div>
+</section>"""
+
+
+@pytest.mark.slow
+def test_open_questions_show_one_bar_only_when_every_answer_has_text(browser):
+    pg = load(browser, OPENQ, script="window.oq = Kit.openQuestions(document.getElementById('t'), { topic: 'agent design' });")
+    bar = "getComputedStyle(document.querySelector('.fab')).display"
+    assert pg.evaluate(bar) == "none"
+    pg.fill("#a1", "sync the repo")
+    assert pg.evaluate(bar) == "none"
+    pg.fill("#a2", "4.06M tokens")
+    assert pg.evaluate(bar) != "none"
+    prompt = pg.evaluate("oq.prompt()")
+    assert "sync the repo" in prompt and "4.06M tokens" in prompt and "Repo sync" in prompt and "agent design" in prompt
+    assert pg.evaluate("getComputedStyle(document.querySelector('.fab [data-grade]')).display") == "none"  # no window.claude here
+
+
+# ── verifier round (2026-10-27): closing state, key routing, grading, overlaps ──
+
+@pytest.mark.slow
+def test_a_closing_pane_ignores_keys_and_reports_closed(browser):
+    pg = load(browser, '<button id="o">open</button>', script=f"window.sel = []; document.getElementById('o').onclick = () => Kit.pane.open({PANE_ITEMS}, 0, {{ onSelect: it => sel.push(it ? it.key : null) }});")
+    pg.click("#o"); pg.wait_for_timeout(50)
+    pg.keyboard.press("Escape")
+    assert pg.evaluate("Kit.pane.isOpen") is False
+    pg.keyboard.press("ArrowRight")
+    assert pg.evaluate("sel") == ["a", None]
+
+
+@pytest.mark.slow
+def test_reopening_during_the_close_animation_returns_focus_to_the_new_opener(browser):
+    pg = load(browser, '<button id="o">one</button><button id="o2">two</button>', script=f"for (const id of ['o', 'o2']) document.getElementById(id).onclick = () => Kit.pane.open({PANE_ITEMS});")
+    pg.click("#o"); pg.wait_for_timeout(50)
+    pg.keyboard.press("Escape")
+    pg.click("#o2"); pg.wait_for_timeout(50)
+    pg.keyboard.press("Escape"); pg.wait_for_timeout(300)
+    assert pg.evaluate("document.activeElement.id") == "o2"
+
+
+@pytest.mark.slow
+def test_an_arrow_key_handled_inside_the_pane_does_not_also_flip_it(browser):
+    items = "[{key:'a', title:'A', html:'<div id=\"in\" tabindex=0>x</div>', after: b => b.querySelector('#in').addEventListener('keydown', e => e.preventDefault())}, {key:'b', title:'B', html:'<p id=\"pb\">b</p>'}]"
+    pg = load(browser, "<main></main>", script=f"Kit.pane.open({items});")
+    pg.wait_for_timeout(50)
+    pg.focus("#in"); pg.keyboard.press("ArrowRight")
+    assert pg.evaluate("!!document.getElementById('in') && !document.getElementById('pb')")
+
+
+@pytest.mark.slow
+def test_arrow_on_the_scenario_switcher_changes_scenario_without_stepping(browser):
+    pg = load(browser, SCENE, script="Kit.init();" + SCENE_JS)
+    pg.click('#sf [data-scenarios] [data-value="drop"]')
+    pg.focus('#sf [data-scenarios] [data-value="drop"]'); pg.keyboard.press("ArrowRight")  # wraps to normal, which has two steps
+    assert pg.evaluate("sc.get()") == {"scenario": "normal", "step": 1}
+
+
+@pytest.mark.slow
+def test_an_answered_check_inside_a_scenarios_figure_stays_visible(browser):
+    body = SCENE.replace('<p class="scene-note"></p>', '<p class="scene-note"></p><div class="decide" id="dq" data-answer="a"><p class="decide-q">Q?</p><div class="decide-options"><button data-choice="a">A</button><button data-choice="b">B</button></div><div class="decide-why" data-for="a">why</div></div>')
+    pg = load(browser, body, script="Kit.init();" + SCENE_JS)
+    pg.click('#dq [data-choice="a"]')
+    pg.click("#sf [data-next]")
+    assert pg.evaluate("getComputedStyle(document.getElementById('dq')).display") != "none"
+
+
+@pytest.mark.slow
+def test_a_second_rail_keeps_its_arrowheads_when_the_first_is_hidden(browser):
+    pg = load(browser, '<div hidden><div id="r1"></div></div><div id="r2"></div>', script=f"Kit.rail(document.getElementById('r1'), {RAIL}); window.r = Kit.rail(document.getElementById('r2'), {RAIL}); r.show(['n0','l0']);")
+    ids = pg.evaluate("[...document.querySelectorAll('#r2 [data-arrow]')].map(p => p.getAttribute('marker-end').match(/#([^)]+)/)[1])")
+    assert ids and all(pg.evaluate(f"document.querySelectorAll('marker[id=\"{i}\"]').length === 1 && !!document.querySelector('#r2 marker[id=\"{i}\"]')") for i in ids)
+
+
+def _grade_vis(pg):
+    return pg.evaluate("getComputedStyle(document.querySelector('.fab [data-grade]')).display")
+
+
+@pytest.mark.slow
+def test_grade_here_needs_a_function_from_the_sample_capability(browser):
+    pg = load(browser, OPENQ, script="window.claude = { use: () => Promise.resolve({}) }; Kit.openQuestions(document.getElementById('t'));")
+    pg.fill("#a1", "x"); pg.fill("#a2", "y"); pg.wait_for_timeout(50)
+    assert _grade_vis(pg) == "none"
+
+
+@pytest.mark.slow
+def test_a_throwing_claude_use_does_not_stop_the_page(browser):
+    pg = load(browser, OPENQ, script="window.claude = { use: () => { throw new Error('nope'); } }; Kit.openQuestions(document.getElementById('t')); window.after = true;")
+    assert pg.evaluate("window.after") is True and pg.errors == []
+
+
+@pytest.mark.slow
+def test_copy_all_says_copied_only_when_the_copy_worked(browser):
+    pg = load(browser, OPENQ, script="Object.defineProperty(navigator, 'clipboard', { value: { writeText: () => Promise.reject(new Error('denied')) } }); Kit.openQuestions(document.getElementById('t'));")
+    pg.fill("#a1", "x"); pg.fill("#a2", "y")
+    pg.click(".fab [data-copy-all]"); pg.wait_for_timeout(100)
+    toasts = pg.evaluate("[...document.querySelectorAll('.toast')].map(t => t.textContent).join(' | ')")
+    assert "Copied every question" not in toasts
+    assert pg.evaluate("!document.querySelector('.grade-out').hidden")
+
+
+@pytest.mark.slow
+def test_arrow_on_a_switcher_inside_a_stepper_does_not_also_step(browser):
+    body = STEPPER.replace('<figure id="f">', '<figure id="f"><div class="seg" id="sw"><button data-value="x" aria-pressed="true">x</button><button data-value="y">y</button></div>')
+    pg = load(browser, body, script="Kit.seg(document.getElementById('sw')); Kit.stepper(document.getElementById('f'));")
+    pg.focus('#sw [data-value="x"]'); pg.keyboard.press("ArrowRight")
+    assert pg.evaluate("document.getElementById('f').dataset.step") == "1"
+
+
+@pytest.mark.slow
+def test_a_copy_button_on_a_codeblock_copies_the_code_without_line_numbers(browser):
+    body = '<figure class="fig codeblock"><pre class="code-src" id="cs" data-sketch><code class="language-go">a := 1\nb := 2</code></pre></figure><button id="cp" data-copy="#cs">copy</button>'
+    pg = load(browser, body, script="window.got = null; Object.defineProperty(navigator, 'clipboard', { value: { writeText: t => { got = t; return Promise.resolve(); } } }); Kit.init();")
+    pg.click("#cp"); pg.wait_for_timeout(50)
+    assert pg.evaluate("got") == "a := 1\nb := 2"
+
+
+@pytest.mark.slow
+def test_labels_of_close_chart_markers_do_not_overlap(browser):
+    pg = load(browser, '<div id="c" style="width:800px"></div>', script="Kit.lineChart(document.getElementById('c'), { series: [{ name: 's', color: 'var(--s1)', data: [[1, 1], [205, 9000]] }], x: { log: true }, y: { log: true }, markers: [{ x: 148, label: 'ridge ≈ 148' }, { x: 205, label: 'HBM full' }] });")
+    boxes = pg.evaluate("[...document.querySelectorAll('#c .marker-label')].map(t => { const b = t.getBBox(); return [b.x, b.y, b.x + b.width, b.y + b.height]; })")
+    assert len(boxes) == 2
+    (a, b) = boxes
+    assert a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1], boxes
+
+
+@pytest.mark.slow
+def test_copying_a_rendered_diff_keeps_its_signs(browser):
+    body = '<figure class="fig codeblock"><pre class="code-src" id="cs" data-diff data-file="a.go"><code class="language-go">@@ -1,2 +1,2 @@\n ctx\n-old\n+new</code></pre></figure><button id="cp" data-copy="#cs">copy</button>'
+    pg = load(browser, body, script="window.got = null; Object.defineProperty(navigator, 'clipboard', { value: { writeText: t => { got = t; return Promise.resolve(); } } }); Kit.init();")
+    pg.click("#cp"); pg.wait_for_timeout(50)
+    assert pg.evaluate("got") == "@@ -1,2 +1,2 @@\n ctx\n-old\n+new"
+
+
+@pytest.mark.slow
+def test_copying_a_wrapper_signs_only_the_diff_rows(browser):
+    body = '<div id="w"><figure class="fig codeblock"><pre class="code-src" data-diff data-file="a.go"><code class="language-go">@@ -1 +1 @@\n-a\n+b</code></pre></figure><figure class="fig codeblock"><pre class="code-src" data-sketch><code class="language-go">plain</code></pre></figure></div><button id="cp" data-copy="#w">copy</button>'
+    pg = load(browser, body, script="window.got = null; Object.defineProperty(navigator, 'clipboard', { value: { writeText: t => { got = t; return Promise.resolve(); } } }); Kit.init();")
+    pg.click("#cp"); pg.wait_for_timeout(50)
+    assert pg.evaluate("got") == "@@ -1 +1 @@\n-a\n+b\nplain"
+
+
+@pytest.mark.slow
+def test_a_switch_in_a_field_is_as_wide_as_its_buttons(browser):
+    pg = load(browser, '<div style="width:300px"><div class="field"><span class="label">TP</span><div class="seg sm" id="s"><button data-value="1">1</button><button data-value="2">2</button></div></div></div>', script="Kit.seg(document.getElementById('s'));")
+    assert pg.evaluate("document.getElementById('s').getBoundingClientRect().width") < 150
+
+
+@pytest.mark.slow
+def test_derivation_formulas_line_up_with_their_step_text(browser):
+    kcss = next((ASSETS / "katex").glob("katex*.css")).read_text(encoding="utf-8")
+    pg = load(browser, f'<style>{kcss}</style><ol class="derive" style="width:600px"><li><span id="t">Step text.</span><div class="tex display"><span class="katex-display"><span class="katex" id="k">x</span></span></div></li></ol>')
+    left = pg.evaluate("[document.getElementById('t').getBoundingClientRect().left, (() => { const r = document.createRange(); r.selectNodeContents(document.getElementById('k')); return r.getBoundingClientRect().left; })()]")
+    assert abs(left[0] - left[1]) < 2, left
+
+
+DEEPER_BARE = """<details class="deeper" open id="d"><summary>Go deeper: blind spots and the softmax across pages</summary>
+<p>Query-dependent detection. A K error is invisible when the dot product is near zero.</p>
+<p>Split softmax. Flash-decoding computes each page with its own running maximum.</p></details>"""
+DEEPER_WRAPPED = """<details class="deeper" open id="d"><summary>Go deeper: blind spots</summary><div class="deeper-body prose">
+<p>Query-dependent detection. A K error is invisible when the dot product is near zero.</p>
+<p>Split softmax. Flash-decoding computes each page with its own running maximum.</p></div></details>"""
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("body", [DEEPER_BARE, DEEPER_WRAPPED], ids=["bare", "wrapped"])
+def test_deeper_body_is_inset_from_the_box_with_or_without_wrapper(browser, body):
+    """An open 'Go deeper' block keeps its text off the border at phone width, with one divider under the summary."""
+    pg = load(browser, f'<main style="padding:16px">{body}</main>', width=390)
+    m = pg.evaluate("""(() => {
+      const d = document.getElementById('d'), box = d.getBoundingClientRect();
+      const ps = [...d.querySelectorAll('p')].map(p => p.getBoundingClientRect());
+      const lines = [...d.querySelectorAll('summary, summary ~ *')].filter(e => parseFloat(getComputedStyle(e).borderTopWidth) > 0 || parseFloat(getComputedStyle(e).borderBottomWidth) > 0);
+      return { left: Math.min(...ps.map(r => r.left)) - box.left, right: box.right - Math.max(...ps.map(r => r.right)),
+               bottom: box.bottom - ps[ps.length - 1].bottom, gap: ps[1].top - ps[0].bottom, dividers: lines.length };
+    })()""")
+    assert m["left"] >= 16 and m["right"] >= 16 and m["bottom"] >= 16, m
+    assert m["gap"] >= 8, m
+    assert m["dividers"] == 1, m

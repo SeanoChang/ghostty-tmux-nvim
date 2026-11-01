@@ -133,6 +133,7 @@ a { color: var(--ink); text-decoration: underline; text-decoration-thickness: 1p
 a:hover { text-decoration-color: var(--ink); }
 hr, .divider { border: 0; border-top: 1px solid var(--line); margin: var(--sp-6) 0; }
 img, svg, canvas, video { max-width: 100%; }
+[hidden] { display: none !important; } /* components set display (.btn is inline-flex), which would beat the UA rule */
 button, input, select, textarea { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
@@ -465,7 +466,12 @@ details.deeper > summary::-webkit-details-marker { display: none; }
 details.deeper > summary::before { content: ""; width: 7px; height: 7px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(-45deg); transition: transform var(--dur) var(--ease); flex: none; margin-left: 2px; }
 details.deeper[open] > summary::before { transform: rotate(45deg); }
 details.deeper > summary .tag { margin-left: auto; white-space: nowrap; font: 500 var(--t-2xs)/1 var(--font-sans); color: var(--muted); letter-spacing: .05em; text-transform: uppercase; }
-details.deeper > .deeper-body { padding: 16px 18px 18px; border-top: 1px solid var(--line); }
+details.deeper[open] > summary { border-bottom: 1px solid var(--line); }
+details.deeper > .deeper-body { padding: 16px 18px 18px; }
+/* content written straight into <details> without .deeper-body still sits inside the box */
+details.deeper > :not(summary, .deeper-body) { margin: 12px 18px 0; }
+details.deeper > summary + :not(.deeper-body) { margin-top: 16px; }
+details.deeper > :not(summary, .deeper-body):last-child { margin-bottom: 18px; }
 details.deeper > .deeper-body.prose { font-size: var(--t-base); }
 
 /* reading depth: Skim hides running prose, leaving takeaways and figures */
@@ -570,7 +576,7 @@ details.check > div { padding: 0 0 16px; color: var(--ink-2); font: 400 var(--t-
 
 /* math (KaTeX) */
 .katex { font-size: 1.06em; }
-.tex.display { display: block; overflow-x: auto; overflow-y: hidden; padding: var(--sp-2) 0; }
+.tex.display { display: block; overflow-x: auto; overflow-y: hidden; padding: var(--sp-2) 0; font: 400 var(--t-base)/1.5 var(--font-sans); letter-spacing: 0; } /* .display is the h1 size; formulas must not inherit it */
 .tex-fallback { font-family: var(--font-mono); font-size: .9em; color: var(--ink); }
 
 /* ── charts (Kit.lineChart, Kit.stackBar) ─────────────────────────────── */
@@ -901,3 +907,73 @@ body.has-respond-bar::after { content: ""; display: block; height: 80px; }
 .nowrap { white-space: nowrap; }
 .center { text-align: center; }
 .mt-0 { margin-top: 0 !important; }
+
+
+/* ── side pane (Kit.pane): the expanded view of a figure ──────────────── */
+.pane-scrim { position: fixed; inset: 0; z-index: 70; background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.pane { position: fixed; z-index: 71; top: 0; right: 0; bottom: 0; width: min(820px, 94vw); background: var(--bg); border-left: 1px solid var(--line); box-shadow: var(--shadow-pop); display: grid; grid-template-rows: auto 1fr; transform: translateX(102%); transition: transform 220ms var(--ease); padding-top: env(safe-area-inset-top, 0px); }
+.pane.open { transform: none; }
+.pane-head { display: flex; align-items: center; gap: var(--sp-2); padding: var(--sp-3) var(--sp-5); border-bottom: 1px solid var(--line); }
+.pane-head h3 { flex: 1; font: 400 var(--t-xl)/1.25 var(--font-serif); color: var(--ink); }
+.pane-head .eyebrow { display: block; margin-bottom: 2px; }
+.pane-body { overflow: auto; padding: var(--sp-5) max(var(--sp-5), env(safe-area-inset-right, 0px)) var(--sp-8) var(--sp-5); display: grid; gap: var(--sp-5); align-content: start; }
+.pane-body h4 { font: 600 var(--t-sm)/1.3 var(--font-sans); color: var(--ink); margin-bottom: var(--sp-2); }
+.pane-lede { font: 400 var(--t-base)/1.6 var(--font-sans); color: var(--ink-2); }
+.pane-fig { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: var(--sp-4); overflow-x: auto; }
+.pane-fig svg { display: block; width: 100%; height: auto; min-width: 520px; }
+.io { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--sp-4); }
+.io > div { display: grid; gap: 6px; padding: var(--sp-3) var(--sp-4); border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); font-size: var(--t-sm); }
+.fails { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; background: var(--line); }
+.fails li { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: var(--sp-4); padding: 10px 14px; background: var(--surface); font-size: var(--t-sm); color: var(--ink-2); }
+.fails li b { color: var(--ink); font-weight: 600; }
+.pane-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--sp-4); }
+body.pane-open { overflow: hidden; }
+
+/* ── decision rail (Kit.rail) ─────────────────────────────────────────── */
+.rail-svg .rl { stroke: var(--line-strong); stroke-width: 1.25; fill: none; }
+.rail-svg .rl.on { stroke: var(--accent); stroke-width: 2.25; }
+.rail-svg .rn { fill: var(--bg); stroke: var(--line-strong); stroke-width: 1.5; }
+.rail-svg .rn.on { fill: var(--accent); stroke: var(--accent); }
+.rail-svg .rt { font: 500 13px var(--font-sans); fill: var(--ink-3); }
+.rail-svg .rt.on { fill: var(--ink); font-weight: 600; }
+.rail-svg .rs { font: 400 11px var(--font-sans); fill: var(--muted); }
+.rail-svg .rs.on { fill: var(--accent-ink); font-weight: 600; }
+.rail-svg .chip rect { fill: none; stroke: var(--line); stroke-width: 1; }
+.rail-svg .chip text { font: 500 12px var(--font-sans); fill: var(--muted); }
+.rail-svg .chip.on.ok rect { fill: var(--ok-soft); stroke: var(--ok); }
+.rail-svg .chip.on.ok text { fill: var(--ok); font-weight: 600; }
+.rail-svg .chip.on.bad rect { fill: var(--bad-soft); stroke: var(--bad); }
+.rail-svg .chip.on.bad text { fill: var(--bad); font-weight: 600; }
+.rail-svg .chip.on.warn rect { fill: var(--warn-soft); stroke: var(--warn); }
+.rail-svg .chip.on.warn text { fill: var(--warn); font-weight: 600; }
+
+/* ── scenarios (Kit.scenarios) ────────────────────────────────────────── */
+.scene-note { margin: 0; padding: var(--sp-3) var(--sp-5); border-top: 1px solid var(--line); font: 400 var(--t-sm)/1.55 var(--font-sans); color: var(--ink); min-height: 3.6em; display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: baseline; }
+.scene-note > b { font: 600 var(--t-2xs)/20px var(--font-mono); min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px; text-align: center; background: var(--accent-btn); color: var(--on-accent); }
+.cl-pin.dyn { animation: va-pop 160ms var(--ease); }
+svg [data-state], svg [data-sc] { transition: opacity 200ms var(--ease); }
+
+/* ── open questions (Kit.openQuestions) ───────────────────────────────── */
+.openq { display: grid; gap: var(--sp-3); padding: var(--sp-4) var(--sp-5); border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); max-width: var(--measure); }
+.openq > h3 { font: 600 var(--t-xs)/1 var(--font-sans); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.openq[data-filled] > h3::after { content: " · answered"; color: var(--ok); }
+.openq textarea { width: 100%; min-height: 132px; resize: vertical; line-height: 1.55; padding: 10px 12px; border-radius: var(--r); background: var(--surface); border: 1px solid var(--line-strong); color: var(--ink); }
+details.rubric-d > summary { cursor: pointer; font: 500 var(--t-sm)/1.3 var(--font-sans); color: var(--ink-3); list-style: none; }
+details.rubric-d > summary::-webkit-details-marker { display: none; }
+details.rubric-d > summary::before { content: "+ "; font-family: var(--font-mono); }
+details.rubric-d[open] > summary::before { content: "− "; }
+details.rubric-d ol { margin: var(--sp-2) 0 0; padding-left: 1.3em; display: grid; gap: 4px; font-size: var(--t-sm); }
+.grade-out { white-space: pre-wrap; font: 400 var(--t-sm)/1.6 var(--font-sans); color: var(--ink-2); padding: var(--sp-4) var(--sp-5); border-radius: var(--r-lg); background: var(--surface); border: 1px solid var(--line); max-width: var(--measure); }
+.fab { position: fixed; z-index: 40; right: max(16px, env(safe-area-inset-right, 0px)); bottom: max(16px, env(safe-area-inset-bottom, 0px)); display: flex; flex-wrap: wrap; gap: var(--sp-2); align-items: center; padding: 8px 8px 8px 14px; border: 1px solid var(--line); border-radius: var(--r-xl); background: var(--surface); box-shadow: var(--shadow-pop); font-size: var(--t-sm); color: var(--ink-3); animation: va-pop 180ms var(--ease); }
+
+/* derivation: numbered steps, one KaTeX line and one plain reason each */
+.derive { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-3); counter-reset: dv; }
+.derive > li { counter-increment: dv; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 4px 12px; align-items: baseline; }
+.derive > li::before { content: counter(dv); font: 600 var(--t-2xs)/22px var(--font-mono); width: 22px; height: 22px; border-radius: 50%; text-align: center; border: 1px solid var(--line-strong); color: var(--muted); }
+.derive > li > .tex.display, .derive > li > .why { grid-column: 2; }
+.derive .why { font-size: var(--t-sm); color: var(--ink-3); }
+
+/* a switch inside a field keeps its own width; derivation formulas start where their step text starts */
+.field > .seg { justify-self: start; }
+.derive .katex-display, .derive .katex-display > .katex { text-align: left; }
+.derive .katex-display { margin: 0.4em 0; }

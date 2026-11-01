@@ -201,7 +201,10 @@
       btn.addEventListener('click', () => {
         const target = document.querySelector(btn.dataset.copy);
         if (!target) return;
-        clip(target.innerText.trim(), () => selectText(target));
+        const rows = $$('.cl', target); // a rendered codeblock: copy the code, not its line numbers; a diff keeps its signs
+        const SIGN = { add: '+', del: '-', ctx: ' ', hunk: '' };
+        const text = rows.length ? rows.map(r => (r.closest('pre.is-diff') ? SIGN[r.dataset.mark] || '' : '') + $('.cl-t', r).textContent).join('\n') : target.innerText.trim();
+        clip(text, () => selectText(target));
       });
     });
   }
@@ -254,7 +257,7 @@
     if (next) { next.type = 'button'; next.innerHTML = next.innerHTML || icon('next'); next.setAttribute('aria-label', 'Next step'); next.addEventListener('click', () => { stop(); go(i + 1); }); }
     if (play) { play.type = 'button'; setPlay(false); play.addEventListener('click', () => (timer ? stop() : startPlay())); }
     root.addEventListener('keydown', e => {
-      if (e.target.closest('input, select, textarea')) return;
+      if (e.defaultPrevented || e.target.closest('input, select, textarea')) return;
       if (e.key === 'ArrowRight') { stop(); go(i + 1); e.preventDefault(); }
       if (e.key === 'ArrowLeft') { stop(); go(i - 1); e.preventDefault(); }
     });
@@ -1110,7 +1113,7 @@
       });
       const bar = document.createElement('div'); bar.className = 'respond-bar';
       bar.innerHTML = `<button type="button" class="btn sm" data-to-answer></button><button type="button" class="btn sm primary" data-respond>${icon('note', 14)}<span>Respond</span></button>`;
-      document.body.appendChild(bar); document.body.classList.add('has-respond-bar');
+      (document.body || document.documentElement).appendChild(bar); document.body.classList.add('has-respond-bar');
       const left = $('[data-to-answer]', bar);
       const count = () => {
         const n = asks.filter(a => !a.dataset.answer).length;
@@ -1406,12 +1409,17 @@
       if (o.x.label) { const t = svgEl('text', { x: W - M.r, y: H - 6, class: 'ax-label', 'text-anchor': 'end' }, svg); t.textContent = o.x.label; }
 
       // markers
+      const placed = [];
       o.markers.forEach(m => {
         if (m.x < Math.min(x0, x1) || m.x > Math.max(x0, x1)) return;
         svgEl('line', { class: 'marker-line', x1: X(m.x), x2: X(m.x), y1: M.t, y2: H - M.b }, svg);
         if (m.label) {
           const t = svgEl('text', { x: X(m.x) + 5, y: M.t + 10, class: 'marker-label' }, svg); t.textContent = m.label;
           if (X(m.x) + 5 + t.getComputedTextLength() > W - 2) { t.setAttribute('x', X(m.x) - 5); t.setAttribute('text-anchor', 'end'); } // flip left near the right edge
+          const w = t.getComputedTextLength(), l = t.getAttribute('text-anchor') === 'end' ? +t.getAttribute('x') - w : +t.getAttribute('x');
+          let y = M.t + 10;
+          while (placed.some(q => Math.abs(q.y - y) < 16 && l < q.r + 6 && l + w > q.l - 6)) y += 16; // a close marker's label drops a line
+          t.setAttribute('y', y); placed.push({ l, r: l + w, y });
         }
       });
 
@@ -1512,8 +1520,220 @@
     return { update(segments, more) { if (segments) o.segments = segments; if (more) o = Object.assign(o, more); draw(); } };
   }
 
+  /* ── side pane: the expanded view of a figure ─────────────────────────────
+     Kit.pane.open(items, index, { onSelect }) · items: [{ key, eyebrow, title, html: string | () => string, after(body) }].
+     A drawer from the right (no blur, a light dim); ← → step through items; Esc, the scrim or a #link closes it. */
+  const pane = (() => {
+    let root = null, scrim, body, title, list = [], idx = 0, opener = null, onSelect = null, hideT = 0, shown = false;
+    function build() {
+      if (root) return;
+      scrim = document.createElement('div'); scrim.className = 'pane-scrim'; scrim.hidden = true;
+      root = document.createElement('aside'); root.className = 'pane'; root.hidden = true;
+      root.setAttribute('role', 'dialog'); root.setAttribute('aria-modal', 'true'); root.setAttribute('aria-labelledby', 'va-pane-title');
+      root.innerHTML = `<div class="pane-head"><button type="button" class="btn ghost icon sm" data-pane-prev aria-label="Previous">${icon('prev')}</button>`
+        + `<button type="button" class="btn ghost icon sm" data-pane-next aria-label="Next">${icon('next')}</button><h3 id="va-pane-title"></h3>`
+        + `<button type="button" class="btn ghost icon" data-pane-close aria-label="Close">${icon('x')}</button></div><div class="pane-body"></div>`;
+      (document.body || document.documentElement).append(scrim, root);
+      body = $('.pane-body', root); title = $('#va-pane-title', root);
+      $('[data-pane-close]', root).addEventListener('click', close);
+      scrim.addEventListener('click', close);
+      $('[data-pane-prev]', root).addEventListener('click', () => step(-1));
+      $('[data-pane-next]', root).addEventListener('click', () => step(1));
+      document.addEventListener('keydown', e => {
+        if (!shown || e.defaultPrevented) return;
+        if (e.key === 'Escape') { e.preventDefault(); close(); }
+        else if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && list.length > 1 && !e.target.closest('input, textarea, select')) step(e.key === 'ArrowRight' ? 1 : -1);
+      });
+      body.addEventListener('click', e => { if (e.target.closest('a[href^="#"]')) close(); });
+    }
+    function paint() {
+      const it = list[idx];
+      title.innerHTML = (it.eyebrow ? `<span class="eyebrow">${esc(it.eyebrow)}</span>` : '') + esc(it.title || '');
+      body.innerHTML = typeof it.html === 'function' ? it.html() : (it.html || '');
+      body.scrollTop = 0;
+      init(body);
+      if (it.after) it.after(body);
+      $$('[data-pane-prev], [data-pane-next]', root).forEach(b => { b.hidden = list.length < 2; });
+      if (onSelect) onSelect(it);
+    }
+    function step(d) { idx = (idx + d + list.length) % list.length; paint(); }
+    function open(items, k = 0, opts = {}) {
+      build(); clearTimeout(hideT);
+      list = items; idx = clamp(k, 0, items.length - 1); onSelect = opts.onSelect || null;
+      if (!shown) opener = document.activeElement;
+      shown = true; root.hidden = false; scrim.hidden = false; document.body.classList.add('pane-open');
+      requestAnimationFrame(() => root.classList.add('open'));
+      paint();
+      $('[data-pane-close]', root).focus();
+    }
+    function close() {
+      if (!shown) return;
+      shown = false; root.classList.remove('open'); scrim.hidden = true; document.body.classList.remove('pane-open');
+      hideT = setTimeout(() => { root.hidden = true; }, reducedMotion() ? 0 : 220);
+      if (onSelect) onSelect(null);
+      if (opener && opener.focus) opener.focus();
+    }
+    return { open, close, get isOpen() { return shown; } };
+  })();
+
+  /** The standard deep-dive for one part of a system, for the pane:
+      { fig, lede, in, out, numbers: [[value, label]], fails: [[cause, what the design does]], link: [href, section name] }. */
+  function paneCard({ fig, lede, in: inp, out, numbers = [], fails = [], link } = {}) {
+    return (fig ? `<div class="pane-fig">${fig}</div>` : '')
+      + (lede ? `<p class="pane-lede">${lede}</p>` : '')
+      + (inp || out ? `<div class="io"><div><span class="eyebrow">In</span><span>${inp || '—'}</span></div><div><span class="eyebrow">Out</span><span>${out || '—'}</span></div></div>` : '')
+      + (numbers.length ? `<div class="pane-stats">${numbers.map(([v, l]) => `<div class="stat"><span class="stat-value">${v}</span><span class="stat-label">${l}</span></div>`).join('')}</div>` : '')
+      + (fails.length ? `<div><h4>When it fails, and what the design does</h4><ul class="fails">${fails.map(([c, r]) => `<li><b>${c}</b><span>${r}</span></li>`).join('')}</ul></div>` : '')
+      + (link ? `<p><a href="${esc(link[0])}">Read the section: ${link[1]} →</a></p>` : '');
+  }
+
+  /* ── decision rail: checks as dots on one hairline, outcomes as chips ──────
+     Kit.rail(el, { rows: [{ id, label, down?, outs: [{ id, edge, label, tone: 'ok'|'bad'|'warn' }] }] }) → { show(path) }.
+     The rail segment below row id is 'd-' + id. Only ids in path are drawn in clay; chip tone shows only when reached. */
+  let railN = 0;
+  function rail(el, { rows, width = 640 } = {}) {
+    const mk = `va-rm${++railN}`, mkf = `${mk}f`;
+    const RX = 30, BX = 236, CX = 360, CW = width - 390;
+    let y = 30; const ys = [];
+    rows.forEach((r, i) => { if (i) y += (r.outs.length > 1 || rows[i - 1].outs.length > 1) ? 76 : 62; ys.push(y); });
+    const H = y + 44;
+    let h = `<svg class="rail-svg" viewBox="0 0 ${width} ${H}" role="img" aria-label="${esc(rows.map(r => r.label).join(', then '))}" style="min-width: 540px">`
+      + `<defs><marker id="${mk}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0 L10 5 L0 10z" style="fill: var(--line-strong)"/></marker>`
+      + `<marker id="${mkf}" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0 L10 5 L0 10z" style="fill: var(--accent)"/></marker></defs>`;
+    rows.forEach((r, i) => {
+      const ry = ys[i];
+      if (r.down && i < rows.length - 1) {
+        const y2 = ys[i + 1];
+        h += `<line class="rl" data-id="d-${esc(r.id)}" x1="${RX}" y1="${ry + 7}" x2="${RX}" y2="${y2 - 7}"/><text class="rs" data-id="d-${esc(r.id)}" x="${RX + 14}" y="${(ry + y2) / 2 + 4}">${esc(r.down)}</text>`;
+      }
+      h += `<circle class="rn" data-id="${esc(r.id)}" cx="${RX}" cy="${ry}" r="6"/><text class="rt" data-id="${esc(r.id)}" x="${RX + 18}" y="${ry + 4.5}">${esc(r.label)}</text>`;
+      const oy = r.outs.length === 1 ? [ry] : r.outs.map((_, j) => ry - 16 + j * 32);
+      r.outs.forEach((o, j) => {
+        const ty = oy[j];
+        const d = ty === ry ? `M${BX} ${ry} H${CX - 6}` : `M${BX} ${ry} C ${BX + 50} ${ry}, ${CX - 70} ${ty}, ${CX - 6} ${ty}`;
+        h += `<path class="rl" data-id="${esc(o.id)}" data-arrow d="${d}" marker-end="url(#${mk})"/>`
+          + `<text class="rs" data-id="${esc(o.id)}" x="${CX - 12}" y="${ty - 6}" text-anchor="end">${esc(o.edge || '')}</text>`
+          + `<g class="chip ${esc(o.tone || 'ok')}" data-id="${esc(o.id)}"><rect x="${CX}" y="${ty - 12}" width="${CW}" height="24" rx="12"/><text x="${CX + 14}" y="${ty + 4}">${esc(o.label)}</text></g>`;
+      });
+    });
+    el.innerHTML = h + '</svg>';
+    function show(path = []) {
+      const on = new Set(path);
+      $$('[data-id]', el).forEach(n => {
+        const hit = on.has(n.dataset.id); n.classList.toggle('on', hit);
+        if (n.hasAttribute('data-arrow')) n.setAttribute('marker-end', hit ? `url(#${mkf})` : `url(#${mk})`);
+      });
+    }
+    return { show, el: el.firstChild };
+  }
+
+  /* ── scenarios: one state machine replayed under several cases, with its code in step ──
+     Kit.scenarios(fig, { scenarios: { key: { label, steps: [{ state, lines, note, pin? }] } }, code: figure.codeblock })
+     fig holds [data-scenarios] (filled with a segmented control), [data-prev] [data-next] [data-play] .step-count,
+     elements marked data-state="n" (shown only on that state), data-sc="key,key" overlays, and a .scene-note. */
+  function scenarios(fig, { scenarios: S, code: codeFig, interval = 2600, start } = {}) {
+    const keys = Object.keys(S);
+    let sc = start && S[start] ? start : keys[0], i = 0, timer = null;
+    const segEl = $('[data-scenarios]', fig), prev = $('[data-prev]', fig), next = $('[data-next]', fig), play = $('[data-play]', fig);
+    const count = $('.step-count', fig), note = $('.scene-note', fig);
+    if (segEl && !segEl.children.length) segEl.innerHTML = keys.map(k => `<button data-value="${esc(k)}"${k === sc ? ' aria-pressed="true"' : ''}>${esc(S[k].label || k)}</button>`).join('');
+    if (codeFig) code(codeFig);
+    const setPlay = on => { if (!play) return; play.innerHTML = icon(on ? 'pause' : 'play') + `<span>${on ? 'Pause' : 'Play'}</span>`; play.setAttribute('aria-pressed', String(on)); };
+    function render() {
+      const steps = S[sc].steps, s = steps[i];
+      $$('[data-state]', fig).filter(e => !e.matches('.decide')).forEach(e => e.classList.toggle('is-off', String(e.dataset.state) !== String(s.state)));
+      $$('[data-sc]', fig).forEach(e => e.classList.toggle('is-off', !e.dataset.sc.split(',').map(x => x.trim()).includes(sc)));
+      if (count) count.textContent = `${i + 1} / ${steps.length}`;
+      if (prev) prev.disabled = i === 0;
+      if (next) next.disabled = i === steps.length - 1;
+      if (note) note.innerHTML = `<b>${esc(String(s.state))}</b><span>${esc(s.note || '')}</span>`;
+      if (codeFig) {
+        const L = s.lines || [];
+        $$('.cl', codeFig).forEach(l => l.classList.toggle('is-hl', L.includes(+l.dataset.n)));
+        $$('.cl-pin.dyn', codeFig).forEach(x => x.remove());
+        const last = L.length ? $(`.cl[data-n="${Math.max(...L)}"]`, codeFig) : null;
+        if (last) { const row = document.createElement('span'); row.className = 'cl-pin dyn'; row.dataset.tone = 'info'; row.textContent = s.pin || s.note || ''; last.insertAdjacentElement('afterend', row); }
+      }
+      fig.dispatchEvent(new CustomEvent('va:scene', { bubbles: true, detail: { scenario: sc, step: i + 1 } }));
+    }
+    const stop = () => { clearInterval(timer); timer = null; setPlay(false); };
+    const go = k => { i = clamp(k, 0, S[sc].steps.length - 1); render(); };
+    if (prev) { prev.type = 'button'; prev.innerHTML = prev.innerHTML || icon('prev'); prev.setAttribute('aria-label', 'Previous step'); prev.addEventListener('click', () => { stop(); go(i - 1); }); }
+    if (next) { next.type = 'button'; next.innerHTML = next.innerHTML || icon('next'); next.setAttribute('aria-label', 'Next step'); next.addEventListener('click', () => { stop(); go(i + 1); }); }
+    if (play) {
+      play.type = 'button';
+      play.addEventListener('click', () => {
+        if (timer) return stop();
+        if (i >= S[sc].steps.length - 1) go(0);
+        timer = setInterval(() => (i >= S[sc].steps.length - 1 ? stop() : go(i + 1)), interval); setPlay(true);
+      });
+    }
+    fig.tabIndex = fig.tabIndex >= 0 ? fig.tabIndex : 0;
+    fig.addEventListener('keydown', e => {
+      if (e.defaultPrevented || e.target.closest('input, select, textarea')) return;
+      if (e.key === 'ArrowRight') { stop(); go(i + 1); e.preventDefault(); }
+      if (e.key === 'ArrowLeft') { stop(); go(i - 1); e.preventDefault(); }
+    });
+    if (segEl) seg(segEl, { value: sc, onChange: v => { stop(); sc = v; i = 0; render(); } });
+    setPlay(false); render();
+    return { set: k => { stop(); sc = k; i = 0; render(); }, go: s => { stop(); go(s - 1); }, get: () => ({ scenario: sc, step: i + 1 }) };
+  }
+
+  /* ── open questions: free answers, one floating bar once every box has text ──
+     Kit.openQuestions(root, { topic }) over .openq blocks (h3 title, .decide-q, textarea, details.rubric-d li).
+     "Copy all for Claude" copies one grading prompt; "Grade all here" asks Claude through the sample capability when the viewer offers it. */
+  function openQuestions(root, { topic = document.title } = {}) {
+    const qs = $$('.openq', root);
+    let out = $('.grade-out', root);
+    if (!out) { out = document.createElement('div'); out.className = 'grade-out'; out.hidden = true; (qs[qs.length - 1] || root).insertAdjacentElement('afterend', out); }
+    out.setAttribute('aria-live', 'polite');
+    const bar = document.createElement('div'); bar.className = 'fab'; bar.hidden = true;
+    bar.setAttribute('role', 'region'); bar.setAttribute('aria-label', 'Grade your answers');
+    bar.innerHTML = `<span>${qs.length} of ${qs.length} answered</span><button type="button" class="btn" data-copy-all>${icon('copy', 14)}<span>Copy all for Claude</span></button><button type="button" class="btn primary" data-grade hidden>Grade all here</button>`;
+    (document.body || document.documentElement).appendChild(bar);
+    const box = q => $('textarea', q), filled = q => !!box(q) && box(q).value.trim().length > 0;
+    const gradingPrompt = () => `You are grading answers about ${topic}. Be strict and specific.\n\n` + qs.map((q, n) => {
+      const rub = $$('.rubric-d li', q).map((li, j) => `   ${j + 1}. ${li.textContent.trim()}`).join('\n');
+      return `Question ${n + 1}: ${($('.decide-q', q) || q).textContent.trim()}\nRubric (1 point each):\n${rub}\nAnswer:\n${box(q).value.trim()}`;
+    }).join('\n\n---\n\n') + `\n\nReply in plain text. For each question, under 120 words:\nQ<n> · Score N/<points>\nRight: …\nMissing or wrong: … (name the rubric points)\n\nEnd with one follow-up question that tests the weakest answer.`;
+    function sync() { qs.forEach(q => q.toggleAttribute('data-filled', filled(q))); bar.hidden = !qs.length || !qs.every(filled); }
+    qs.forEach(q => {
+      const t = box(q); if (!t) return;
+      const key = `va-open:${document.title}:${q.dataset.q || qs.indexOf(q)}`;
+      if (!t.value) t.value = store.get(key, '');
+      t.addEventListener('input', () => { store.set(key, t.value); sync(); });
+    });
+    sync();
+    $('[data-copy-all]', bar).addEventListener('click', () => {
+      const text = gradingPrompt();
+      const showPrompt = () => { out.hidden = false; out.textContent = text; toast('Copy was blocked here. Select the prompt below and copy it.', { tone: 'warn' }); };
+      try {
+        navigator.clipboard.writeText(text).then(() => toast('Copied every question, rubric and answer. Paste it into a Claude chat.', { tone: 'ok' }), showPrompt);
+      } catch (e) { showPrompt(); }
+    });
+    const gradeBtn = $('[data-grade]', bar);
+    let use = null;
+    try { use = global.claude && typeof global.claude.use === 'function' ? global.claude.use('sample') : null; } catch (e) { use = null; }
+    Promise.resolve(use).catch(() => null).then(sample => {
+      if (typeof sample !== 'function') return;
+      gradeBtn.hidden = false;
+      gradeBtn.addEventListener('click', async () => {
+        gradeBtn.disabled = true; out.hidden = false; out.textContent = 'Thinking…'; out.scrollIntoView({ block: 'nearest' });
+        try {
+          const r = await sample(gradingPrompt(), { modelTier: 'default', onText: ({ text }) => { out.textContent = text; } });
+          out.textContent = r.text;
+        } catch (e) {
+          if (e && e.code === 'not_granted') { gradeBtn.hidden = true; out.textContent = 'Grading here was not allowed. Use “Copy all for Claude” instead.'; }
+          else if (e && e.code === 'rate_limited') out.textContent = 'Too many grading requests right now. Wait a minute, then try again.';
+          else out.textContent = (e && e.text ? e.text + '\n\n(The grade stopped early.) ' : '') + 'Grading failed' + (e && e.code ? ` (${e.code})` : '') + '. Use “Copy all for Claude” instead.';
+        } finally { gradeBtn.disabled = false; }
+      });
+    });
+    return { prompt: gradingPrompt, sync, bar };
+  }
+
   /** Wire up everything declarative on the page: icons, copy buttons, glossary terms, checks, math, code and call trees. */
   function init(root = document) { icons(root); copy(root); gloss(root); decide(root); math(root); $$('.fig.codeblock', root).forEach(code); $$('.fig.calls', root).forEach(calls); }
 
-  global.Kit = { $, $$, clamp, esc, ready, reducedMotion, css, isDark, onTheme, store, fmt, icon, icons, status, seg, tabs, range, hotkeys, toast, copy, clip, stepper, depth, gloss, toc, docs, plan, code, calls, decide, math, tex, mark, loop, lineChart, stackBar, niceTicks, init };
+  global.Kit = { $, $$, clamp, esc, ready, reducedMotion, css, isDark, onTheme, store, fmt, icon, icons, status, seg, tabs, range, hotkeys, toast, copy, clip, stepper, depth, gloss, toc, docs, plan, code, calls, decide, math, tex, mark, loop, lineChart, stackBar, niceTicks, pane, paneCard, rail, scenarios, openQuestions, init };
 })(window);

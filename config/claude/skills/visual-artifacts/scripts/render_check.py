@@ -180,10 +180,16 @@ def check_static(html: str) -> list[Issue]:
         add("warn", "viewport-sides", 'add <meta name="claude:viewport-fit-sides" content="cover"> together with the max() side paddings')
 
     scripts = "\n".join(re.findall(r"<script[^>]*>(.*?)</script>", html, re.I | re.S))
+    js = [body for attrs, body in re.findall(r"<script([^>]*)>(.*?)</script>", html, re.I | re.S)
+          if not re.search(r"\btype=", attrs) or re.search(r"\btype=[\"']?(module|text/javascript|application/javascript)\b", attrs)]
+    raw_js = "\n".join(js)
+    code_only = "\n".join(_js_code_only(b) for b in js)  # each script alone, so one odd quote cannot hide the next; 'the 8k prompt (s)' is a label
     for pat, what in ((r"(?<![\w.])(?:window\.)?alert\s*\(", "alert()"), (r"(?<![\w.])(?:window\.)?confirm\s*\(", "confirm()"),
                       (r"(?<![\w.])(?:window\.)?prompt\s*\(", "prompt()"), (r"window\.print\s*\(", "window.print()")):
-        if re.search(pat, scripts):
+        if re.search(pat, code_only):
             add("error", "dead-api", f"{what} never shows in the viewer; build the step into the page")
+        elif re.search(pat.replace(r"\s*\(", r"\("), raw_js):  # the scanner's guess may be wrong: say so instead of passing silently (prose has "prompt (s)")
+            add("warn", "dead-api-text", f"{what} appears only inside a string, regex or comment; if it is a real call, it never shows in the viewer")
     if re.search(r"<a[^>]*\sdownload[\s>=]", html, re.I):
         add("error", "dead-api", "<a download> is inert for viewers; offer the content as copyable text instead")
     if re.search(r"<form[^>]*action=[\"']https?:", html, re.I):
@@ -210,6 +216,7 @@ def check_static(html: str) -> list[Issue]:
     if re.search(r'class="[^"]*\b(math|eq)\b', markup):
         add("warn", "hand-math", 'math is hand-set (.math / .eq); write LaTeX in .tex and render it with KaTeX')
     is_plan = bool(re.search(r"<[^>]+\sdata-plan[\s>]", markup))
+    issues += _check_teaching(markup)
     if is_plan:
         issues += _check_plan(markup) + _check_review(markup, html) + _check_task_code(markup)
     if 'class="docs' in markup:
@@ -224,6 +231,9 @@ def check_static(html: str) -> list[Issue]:
                 continue
             if not re.search(r'class="[^"]*\bdecide\b|<details[^>]*class="[^"]*\bcheck\b', part):
                 add("warn", "no-check", f"section #{sid} ({title}) ends without a check question; add a .decide (or mark data-check=\"none\")")
+            if _words(part) > 220 and not _tags_with(part, "openq") and not re.search(r'<(svg|canvas|table|img)\b', part) and not any(
+                    _tags_with(part, c) for c in ("fig", "codeblock", "pane-fig", "derive", "tex")):
+                add("warn", "no-visual", f"section #{sid} ({title}) is {_words(part)} words with no figure, chart or table; pick a representation for its main idea")
     for tag in re.findall(r"<(?:input|select|textarea)\b[^>]*>", markup, re.I):
         if not re.search(r"\sid=", tag) and 'type="hidden"' not in tag:
             add("warn", "control-id", "give every form control a stable id (the platform restores values across republish)")
@@ -231,12 +241,139 @@ def check_static(html: str) -> list[Issue]:
     return issues
 
 
-def _tags(markup: str, cls: str):
-    """Yield (start offset, attributes) for every tag whose class list holds cls."""
-    for m in re.finditer(r"<\w+\b([^>]*)>", markup):
-        attrs = dict(re.findall(r'([\w:-]+)="([^"]*)"', m.group(1)))
+def _js_code_only(src: str) -> str:
+    """The script with strings, template text, regex literals and comments blanked; ${...} inside templates stays code."""
+    out, i, n, stack = [], 0, len(src), []  # stack: brace depth at each open ${
+    prev = ""  # last significant code character, to tell a regex from a division
+    while i < n:
+        c = src[i]
+        if stack and c == "}" and stack[-1] == 0:
+            stack.pop(); i += 1; i = _skip_template(src, i, out, stack); prev = "{" if out[-1].endswith("${") else "'"; continue
+        if c in "'\"":
+            j = i + 1
+            while j < n and src[j] != c and src[j] != "\n":
+                j += 2 if src[j] == "\\" else 1
+            out.append("''"); i = j + 1; prev = "'"; continue
+        if c == "`":
+            i = _skip_template(src, i + 1, out, stack); prev = "{" if out[-1].endswith("${") else "'"; continue
+        if src.startswith("//", i):
+            j = src.find("\n", i); i = n if j < 0 else j; continue
+        if src.startswith("/*", i):
+            j = src.find("*/", i + 2); i = n if j < 0 else j + 2; continue
+        if c == "/" and _regex_may_start(out, prev):
+            j, cls = i + 1, False
+            while j < n and src[j] != "\n" and (src[j] != "/" or cls):
+                if src[j] == "\\": j += 1
+                elif src[j] == "[": cls = True
+                elif src[j] == "]": cls = False
+                j += 1
+            out.append("/r/"); i = j + 1; prev = "/"; continue
+        if stack:
+            if c == "{": stack[-1] += 1
+            elif c == "}": stack[-1] -= 1
+        out.append(c)
+        if not c.isspace(): prev = c if not (c.isalnum() or c in "_$") else "a"
+        i += 1
+    return "".join(out)
+
+
+_REGEX_AFTER = {"return", "typeof", "void", "case", "await", "in", "of", "delete", "instanceof", "new", "throw", "yield", "do", "else"}
+
+
+def _regex_may_start(out: list, prev: str) -> bool:
+    """A / starts a regex after an operator, an opening bracket or a keyword; after a value it divides."""
+    tail = "".join(out[-24:]).rstrip()
+    if tail.endswith(("++", "--")):
+        return False
+    if prev == "a":
+        m = re.search(r"[A-Za-z_$][\w$]*$", tail)
+        return bool(m) and m.group(0) in _REGEX_AFTER
+    return prev == "" or prev in "(,=:[!&|?{};+-*%<>~^"
+
+
+def _skip_template(src: str, i: int, out: list, stack: list) -> int:
+    """Skip template text from i up to the closing backtick or the next ${, which opens code."""
+    n = len(src)
+    while i < n:
+        if src[i] == "\\": i += 2; continue
+        if src[i] == "`": out.append("``"); return i + 1
+        if src.startswith("${", i): stack.append(0); out.append("`${"); return i + 2
+        i += 1
+    return n
+
+
+def _text(fragment: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", fragment)).strip()
+
+
+def _words(fragment: str) -> int:
+    return len(_text(fragment).split())
+
+
+def _class_tags(markup: str, cls: str, tag: str = r"\w+"):
+    """Yield (start offset, attributes) for every <tag> whose class list holds cls; either quote style."""
+    for m in re.finditer(rf"<({tag})\b([^>]*)>", markup, re.I):
+        attrs = {k: v1 or v2 for k, v1, v2 in re.findall(r"""([\w:-]+)=(?:"([^"]*)"|'([^']*)')""", m.group(2))}
         if cls in attrs.get("class", "").split():
             yield m.start(), attrs
+
+
+def _tags_with(markup: str, cls: str) -> bool:
+    return next(_class_tags(markup, cls), None) is not None
+
+
+def _element_body(markup: str, at: int, tag: str) -> str:
+    """The inside of the <tag> opening at offset at, counting nested tags of the same name."""
+    start = markup.index(">", at) + 1
+    depth = 1
+    for m in re.compile(rf"<(/?){tag}\b[^>]*>", re.I).finditer(markup, start):
+        depth += -1 if m.group(1) else 1
+        if depth == 0:
+            return markup[start:m.start()]
+    return markup[start:]
+
+
+def _check_teaching(markup: str) -> list[Issue]:
+    """Lints from Sean's 2026-10-27 review: code without colour, prose-only 'Go deeper' blocks, check questions
+    whose answer is easy to spot by length or position."""
+    out: list[Issue] = []
+    for m in re.finditer(r"<pre\b([^>]*)>(.*?)</pre>", markup, re.I | re.S):
+        attrs, inner = m.group(1), m.group(2)
+        if "code-src" in attrs or "mermaid" in attrs:
+            continue
+        if inner.strip().count("\n") >= 2:
+            out.append(Issue("warn", "code-plain", "code in a plain <pre> gets no syntax colour or line numbers; put it in figure.codeblock > pre.code-src"))
+            break
+    for at, _ in _class_tags(markup, "deeper", tag="details"):
+        body = _element_body(markup, at, "details")
+        if _words(body) > 50 and not re.search(r'<(svg|canvas|table|figure)\b|class="[^"]*\btex\b', body):
+            summ = _text((re.search(r"<summary[^>]*>(.*?)</summary>", body, re.S) or [None, "?"])[1])[:60]
+            out.append(Issue("warn", "deeper-prose", f"'Go deeper' block '{summ}' is prose only; turn its cases into scenarios on the figure, or give it a diagram"))
+    positions = []
+    heads = list(_class_tags(markup, "decide"))
+    for k, (at, attrs) in enumerate(heads):
+        block = markup[at: heads[k + 1][0] if k + 1 < len(heads) else len(markup)]
+        opts = re.findall(r'<button[^>]*data-choice=["\']([^"\']+)["\'][^>]*>(.*?)</button>', block, re.S)
+        a = attrs.get("data-answer")
+        if not a or len(opts) < 2:
+            continue
+        lens = {c: len(_text(t)) for c, t in opts}
+        if a in lens:
+            positions.append([c for c, _ in opts].index(a))
+            others = [v for c, v in lens.items() if c != a]
+            if len(opts) >= 3 and others and lens[a] > 1.35 * max(others):
+                q = _text((re.search(r'class=["\']decide-q["\'][^>]*>(.*?)</p>', block, re.S) or [None, "?"])[1])[:60]
+                out.append(Issue("warn", "options-uneven", f"the answer to '{q}' is much longer than every other option; make the options the same length and shape"))
+    if len(positions) >= 4:
+        top = max(positions.count(k) for k in set(positions))
+        if top / len(positions) >= 0.6:
+            out.append(Issue("warn", "answer-position", f"{top} of {len(positions)} check questions put the answer in the same position; vary it"))
+    return out
+
+
+def _tags(markup: str, cls: str):
+    """Yield (start offset, attributes) for every tag whose class list holds cls."""
+    return _class_tags(markup, cls)
 
 
 def _check_plan(markup: str) -> list[Issue]:
@@ -256,7 +393,7 @@ def _check_plan(markup: str) -> list[Issue]:
             if d not in ids:
                 out.append(Issue("error", "plan-dangling", f"task {n} depends on task {d}, which does not exist"))
         body = markup[at : tasks[k + 1][0] if k + 1 < len(tasks) else len(markup)]
-        missing = [p for p in ("test", "verify") if f'data-part="{p}"' not in body]
+        missing = [p for p in ("test", "verify") if not re.search(rf'data-part=["\']{p}["\']', body)]
         if missing:
             out.append(Issue("warn", "plan-task-incomplete", f"task {n} has no {' and no '.join(missing)} row; each task names its failing test and its verify command"))
     for _, a in _tags(markup, "file"):

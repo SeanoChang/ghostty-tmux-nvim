@@ -294,7 +294,7 @@ next.ServeHTTP(w, r)</code></pre>
       <div class="doc-head"><span class="eyebrow">Design</span><h1>Interfaces</h1></div>
       <p class="takeaway">The gateway depends on one small interface, so tests can swap Redis for a fake.</p>
       <h2 id="iface-go">Limiter</h2>
-      <div class="cmd"><pre id="iface-limiter"><code class="language-go">type Limiter interface {
+      <figure class="fig codeblock"><div class="fig-head"><div><p class="fig-kicker">Sketch · internal/ratelimit/limiter.go</p><h3 class="fig-title">The Limiter interface</h3></div><button class="btn sm ghost icon" data-copy="#iface-limiter" aria-label="Copy the Limiter interface"><span data-icon="copy"></span></button></div><pre class="code-src" id="iface-limiter" data-sketch data-file="internal/ratelimit/limiter.go"><code class="language-go">type Limiter interface {
     // Take removes cost tokens from key's bucket, if it holds that many.
     Take(ctx context.Context, key string, cost int) (Decision, error)
 }
@@ -303,15 +303,15 @@ type Decision struct {
     Allowed    bool
     Remaining  int
     RetryAfter time.Duration
-}</code></pre><button class="btn sm ghost icon" data-copy="#iface-limiter" aria-label="Copy the Limiter interface"><span data-icon="copy"></span></button></div>
+}</code></pre></figure>
       <h2 id="iface-config">Route limits</h2>
-      <div class="cmd"><pre id="iface-routes"><code>routes:
+      <figure class="fig codeblock"><div class="fig-head"><div><p class="fig-kicker">Sketch · config/routes.yaml</p><h3 class="fig-title">Per-route limits</h3></div><button class="btn sm ghost icon" data-copy="#iface-routes" aria-label="Copy the route config"><span data-icon="copy"></span></button></div><pre class="code-src" id="iface-routes" data-sketch data-file="config/routes.yaml"><code class="language-yaml">routes:
   - match: GET /v1/orders
     rate: 50/s      # refill rate
     burst: 100      # bucket size
   - match: POST /v1/payments
     rate: 5/s
-    burst: 10</code></pre><button class="btn sm ghost icon" data-copy="#iface-routes" aria-label="Copy the route config"><span data-icon="copy"></span></button></div>
+    burst: 10</code></pre></figure>
       <h2 id="iface-headers">Response headers</h2>
       <div class="table-wrap"><table class="table">
         <thead><tr><th>Header</th><th>Sent on</th><th>Value</th></tr></thead>

@@ -420,3 +420,272 @@ def test_render_clean_page_passes(tmp_path):
     report = rc.render(page, out_dir=tmp_path / "shots", widths=(390, 1440), schemes=("light", "dark"))
     assert [i for i in report.issues if i.level == "error"] == []
     assert len(list((tmp_path / "shots").glob("*.png"))) == 8, "a first-screen shot and a full-page shot per run"
+
+
+# ── teaching-quality lints (2026-10-27 round) ────────────────────────────────
+
+def test_plain_pre_outside_a_codeblock_warns():
+    html = GOOD + "<pre><code>for {\n  run()\n  wait()\n}</code></pre>"
+    assert "code-plain" in codes(html, "warn")
+
+
+def test_pre_inside_a_codeblock_passes():
+    html = GOOD + '<figure class="fig codeblock"><pre class="code-src" data-sketch><code class="language-go">for {\n  run()\n  wait()\n}</code></pre></figure>'
+    assert "code-plain" not in codes(html)
+
+
+def test_a_one_line_pre_is_not_code_to_colour():
+    assert "code-plain" not in codes(GOOD + "<pre>pip install x</pre>")
+
+
+def test_a_prose_only_go_deeper_block_warns():
+    words = " ".join(["The client cancels the tool and still appends a result."] * 8)
+    html = GOOD + f'<details class="deeper"><summary>Edge cases</summary><div class="deeper-body prose"><p>{words}</p></div></details>'
+    assert "deeper-prose" in codes(html, "warn")
+
+
+@pytest.mark.parametrize("inner", ['<div class="tex display">a^2</div>', "<svg></svg>", '<table class="table"></table>', '<figure class="fig"></figure>'])
+def test_a_go_deeper_block_with_math_or_a_figure_passes(inner):
+    words = " ".join(["The client cancels the tool and still appends a result."] * 8)
+    html = GOOD + f'<details class="deeper"><summary>Edge cases</summary><div class="deeper-body prose"><p>{words}</p>{inner}</div></details>'
+    assert "deeper-prose" not in codes(html)
+
+
+def check_q(answer, opts):
+    bs = "".join(f'<button data-choice="{c}">{t}</button>' for c, t in opts)
+    return f'<div class="decide" data-answer="{answer}"><p class="decide-q">Q?</p><div class="decide-options">{bs}</div></div>'
+
+
+def test_a_check_whose_answer_is_the_conspicuously_longest_option_warns():
+    q = check_q("b", [("a", "Bigger queue."), ("b", "An idempotency key on the charge, so the payment service returns the first result on retry."), ("c", "More workers.")])
+    assert "options-uneven" in codes(GOOD + q, "warn")
+
+
+def test_a_check_with_balanced_options_passes():
+    q = check_q("b", [("a", "A bigger queue, so the job waits longer before it is retried."), ("b", "An idempotency key, so the payment service returns the first result."), ("c", "More workers, so the retry lands on a different machine sooner.")])
+    assert "options-uneven" not in codes(GOOD + q)
+
+
+def test_the_same_answer_position_on_most_checks_warns():
+    qs = "".join(check_q("a", [("a", "One option here."), ("b", "Two option here."), ("c", "Six option here.")]) for _ in range(5))
+    assert "answer-position" in codes(GOOD + qs, "warn")
+
+
+def test_varied_answer_positions_pass():
+    qs = "".join(check_q(c, [("a", "One option here."), ("b", "Two option here."), ("c", "Six option here.")]) for c in "abcab")
+    assert "answer-position" not in codes(GOOD + qs)
+
+
+def test_a_guide_section_that_is_a_wall_of_text_warns():
+    words = " ".join(["Each request resends the whole conversation to the stateless API."] * 30)
+    html = GOOD + f"""<div class="docs"><main class="docs-main">
+      <section class="doc-page" id="a" data-title="Overview"><figure class="fig"></figure></section>
+      <section class="doc-page" id="b" data-title="Step"><div class="prose"><p>{words}</p></div><div class="decide" data-answer="a"></div></section></main></div>"""
+    msgs = [i.message for i in rc.check_static(html) if i.code == "no-visual"]
+    assert len(msgs) == 1 and "#b" in msgs[0]
+
+
+def test_a_long_section_with_a_figure_passes():
+    words = " ".join(["Each request resends the whole conversation to the stateless API."] * 30)
+    html = GOOD + f"""<div class="docs"><main class="docs-main">
+      <section class="doc-page" id="a" data-title="Overview"><figure class="fig"></figure></section>
+      <section class="doc-page" id="b" data-title="Step"><figure class="fig"><svg></svg></figure><div class="prose"><p>{words}</p></div><div class="decide" data-answer="a"></div></section></main></div>"""
+    assert "no-visual" not in codes(html)
+
+
+def test_options_are_judged_per_question_not_across_the_page():
+    fair = check_q("a", [("a", "A bigger queue, so the job waits longer."), ("b", "An idempotency key, so the retry is safe."), ("c", "More workers, so the retry lands sooner.")])
+    lopsided = check_q("c", [("a", "Bigger queue."), ("b", "More workers."), ("c", "An idempotency key on the charge, so the payment service returns the first result.")])
+    msgs = [i.message for i in rc.check_static(GOOD + fair.replace("Q?", "First?") + lopsided.replace("Q?", "Second?")) if i.code == "options-uneven"]
+    assert len(msgs) == 1 and "Second?" in msgs[0]
+
+
+def test_answer_positions_are_read_per_question():
+    qs = "".join(check_q(c, [("a", "One option here."), ("b", "Two option here."), ("c", "Six option here.")]) for c in "cccca")
+    assert "answer-position" in codes(GOOD + qs, "warn")
+
+
+def test_a_lopsided_question_is_caught_even_when_a_later_one_reuses_its_letters():
+    lopsided = check_q("c", [("a", "Bigger queue."), ("b", "More workers."), ("c", "An idempotency key on the charge, so the payment service returns the first result.")])
+    fair = check_q("a", [("a", "A bigger queue, so the job waits longer."), ("b", "An idempotency key, so the retry is safe."), ("c", "More workers, so it lands sooner.")])
+    msgs = [i.message for i in rc.check_static(GOOD + lopsided.replace("Q?", "First?") + fair.replace("Q?", "Second?")) if i.code == "options-uneven"]
+    assert len(msgs) == 1 and "First?" in msgs[0]
+
+
+# ── verifier round (2026-10-27): false alarms, crashes and misses in the teaching lints ──
+
+def test_the_shipped_templates_pass_their_own_teaching_lints():
+    for name in ("guide.src.html", "plan.src.html"):
+        html = (HERE.parent / "templates" / name).read_text(encoding="utf-8")
+        assert "code-plain" not in codes(html), name
+
+
+def test_a_check_whose_options_share_one_value_does_not_crash():
+    q = check_q("a", [("a", "One."), ("a", "Two."), ("a", "Three.")])
+    rc.check_static(GOOD + q)
+
+
+@pytest.mark.parametrize("visual", ['<ol class="derive"><li><div class="tex display">a</div></li></ol>', '<img src="x.png" alt="x">'])
+def test_a_long_section_built_on_a_derivation_or_an_image_passes(visual):
+    words = " ".join(["Each request resends the whole conversation to the stateless API."] * 30)
+    html = GOOD + f"""<div class="docs"><main class="docs-main">
+      <section class="doc-page" id="a" data-title="Overview"><figure class="fig"></figure></section>
+      <section class="doc-page" id="b" data-title="Step">{visual}<div class="prose"><p>{words}</p></div><div class="decide" data-answer="a"></div></section></main></div>"""
+    assert "no-visual" not in codes(html)
+
+
+def test_a_caption_class_alone_is_not_a_visual():
+    words = " ".join(["Each request resends the whole conversation to the stateless API."] * 30)
+    html = GOOD + f"""<div class="docs"><main class="docs-main">
+      <section class="doc-page" id="a" data-title="Overview"><figure class="fig"></figure></section>
+      <section class="doc-page" id="b" data-title="Step"><p class="fig-note">see above</p><div class="prose"><p>{words}</p></div><div class="decide" data-answer="a"></div></section></main></div>"""
+    assert "no-visual" in codes(html, "warn")
+
+
+def test_a_go_deeper_block_with_a_nested_details_before_its_figure_passes():
+    words = " ".join(["The client cancels the tool and still appends a result."] * 8)
+    html = GOOD + f'<details class="deeper"><summary>Edge</summary><div class="deeper-body"><p>{words}</p><details><summary>a</summary>b</details><svg></svg></div></details>'
+    assert "deeper-prose" not in codes(html)
+
+
+def test_single_quoted_classes_are_linted_too():
+    words = " ".join(["The client cancels the tool and still appends a result."] * 8)
+    html = GOOD + f"<details class='deeper'><summary>Edge</summary><p>{words}</p></details>"
+    assert "deeper-prose" in codes(html, "warn")
+    q = check_q("b", [("a", "Bigger queue."), ("b", "An idempotency key on the charge, so the payment service returns the first result on retry."), ("c", "More workers.")])
+    assert "options-uneven" in codes(GOOD + q.replace('class="decide"', "class='decide'"), "warn")
+
+
+def test_a_check_on_a_section_element_is_judged_on_its_own():
+    lopsided = check_q("c", [("a", "Bigger queue."), ("b", "More workers."), ("c", "An idempotency key on the charge, so the payment service returns the first result.")])
+    lopsided = lopsided.replace("<div class=\"decide\"", "<section class=\"decide\"").replace("</div></div>", "</div></section>")
+    fair = check_q("a", [("a", "A bigger queue, so the job waits longer."), ("b", "An idempotency key, so the retry is safe."), ("c", "More workers, so it lands sooner.")])
+    msgs = [i.message for i in rc.check_static(GOOD + fair.replace("Q?", "First?") + lopsided.replace("Q?", "Second?")) if i.code == "options-uneven"]
+    assert len(msgs) == 1 and "Second?" in msgs[0]
+
+
+def test_two_option_checks_count_toward_answer_position():
+    qs = "".join(check_q("a", [("a", "Yes, it holds."), ("b", "No, it fails.")]) for _ in range(5))
+    assert "answer-position" in codes(GOOD + qs, "warn")
+
+
+@pytest.mark.parametrize("name", ["guide.src.html", "plan.src.html"])
+def test_the_assembled_templates_have_no_static_errors(name):
+    spec = importlib.util.spec_from_file_location("assemble", HERE.parent / "scripts" / "assemble.py")
+    asm = importlib.util.module_from_spec(spec); spec.loader.exec_module(asm)
+    html = asm.assemble((HERE.parent / "templates" / name).read_text(encoding="utf-8"))
+    assert [f"{i.code}: {i.message}" for i in rc.check_static(html) if i.level == "error"] == []
+
+
+def test_dead_api_ignores_the_word_inside_a_string():
+    html = GOOD + "<script>chart({ y: { label: 'TTFT of the 8k prompt (s)' }, note: \"say alert (now)\" });</script>"
+    assert "dead-api" not in codes(html)
+
+
+def test_dead_api_still_catches_a_real_call():
+    assert "dead-api" in codes(GOOD + "<script>const name = prompt('Your name?');</script>", "error")
+
+
+def test_an_open_questions_section_is_not_asked_for_a_figure():
+    words = " ".join(["Explain how the scheduler protects decode latency under load."] * 30)
+    html = GOOD + f"""<div class="docs"><main class="docs-main">
+      <section class="doc-page" id="a" data-title="Overview"><figure class="fig"></figure></section>
+      <section class="doc-page" id="t" data-title="Test yourself"><div class="openq"><p class="decide-q">{words}</p><textarea id="x"></textarea></div><div class="decide" data-answer="a"></div></section></main></div>"""
+    assert "no-visual" not in codes(html)
+
+
+# ── verifier round 2 (2026-10-27) ──
+
+@pytest.mark.parametrize("js", [
+    "el.innerHTML = `<p>Don't</p>`; if (!ok) alert('x'); const t = 'y';",
+    "s.replace(/\"/g, ''); prompt('x'); s.replace(/\"/g, '');",
+    "const a = `${alert('x')}`;",
+    "// don't\nalert(1);",
+    "const r = /'/; confirm('sure?'); const q = 'z';",
+])
+def test_dead_api_sees_calls_past_template_literals_regexes_and_comments(js):
+    assert "dead-api" in codes(GOOD + f"<script>{js}</script>", "error")
+
+
+@pytest.mark.parametrize("js", ["const s = `say alert(now)`;", "const r = /prompt\\(/;", "// call prompt() later\nconst x = 1;", "const d = a / b; const s = 'alert (soon)';"])
+def test_dead_api_ignores_calls_written_inside_text(js):
+    assert "dead-api" not in codes(GOOD + f"<script>{js}</script>")
+
+
+def test_a_plan_task_with_single_quoted_rows_is_complete():
+    html = GOOD + """<div data-plan><div class='blk' data-blk='gw'></div><ol><li class='task' data-task='1' data-touches='gw'>
+      <dl class='task-spec'><dt>Test</dt><dd data-part='test'>t</dd><dt>Verify</dt><dd data-part='verify'>v</dd></dl></li></ol></div>"""
+    assert "plan-task-incomplete" not in codes(html)
+
+
+def test_dead_api_matches_a_reference_on_random_scripts():
+    """Scripts built from parts whose truth is known: the lint must flag exactly those holding a real call."""
+    import random
+    rng = random.Random(20261027)
+    decoy = ["alert(", "prompt (s)", "confirm(x)", "don't", 'say "hi"', "a/b", "}", "{", "`", "\\'"]
+    def lit():
+        t = rng.choice(decoy) + rng.choice(decoy)
+        kind = rng.randrange(5)
+        if kind == 0: return "'" + t.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "") + "'"
+        if kind == 1: return '"' + t.replace("\\", "\\\\").replace('"', '\\"') + '"'
+        if kind == 2: return "`" + t.replace("\\", "\\\\").replace("`", "\\`").replace("${", "$ {") + "`"
+        if kind == 3: return "/" + t.replace("\\", "\\\\").replace("/", "\\/").replace("[", "\\[").replace("]", "\\]").replace("\n", "") + "/g"
+        return "/* " + t.replace("*/", "* /") + " */ 0"
+    for _ in range(400):
+        parts, real = [], False
+        for _ in range(rng.randrange(1, 7)):
+            r = rng.random()
+            if r < 0.12:
+                parts.append(f"{rng.choice(['alert', 'prompt', 'confirm'])}('q');"); real = True
+            elif r < 0.2:
+                inner = rng.choice(["alert('q')", "x + 1"]); real |= inner.startswith("alert")
+                parts.append(f"const t = `{rng.choice(decoy).replace('`', '').replace(chr(92), '')}${{{inner}}}{rng.choice(decoy).replace('`', '').replace(chr(92), '')}`;")
+            elif r < 0.3:
+                parts.append(rng.choice(["const d = w / h / 2;", "x = a++ / 2;", "y = b-- / 3;", "function f(){ return /'\\x60/.test(s) }",
+                                         "const k = typeof /\"/;", "const t = `${/'/.test(s)}`;", "if (a in /'/) {}"]))
+            elif r < 0.4:
+                parts.append("// " + rng.choice(decoy).replace("\n", "") + "\n")
+            else:
+                parts.append(f"const v = {lit()};")
+        js = rng.choice([" ", "\n"]).join(parts)
+        got = "dead-api" in codes(GOOD + f"<script>{js}</script>", "error")
+        assert got == real, js
+
+
+# ── verifier round 3 (2026-10-27): per-script scan, better regex guesses, no silent pass ──
+
+def test_a_call_tree_with_a_glob_does_not_hide_a_later_call():
+    html = GOOD + '<script type="text/plain">~ route()   @ handlers/*.go</script><script>alert(1)</script>'
+    assert "dead-api" in codes(html, "error")
+
+
+def test_a_markdown_script_with_a_lone_backtick_does_not_hide_a_later_call():
+    assert "dead-api" in codes(GOOD + '<script type="text/markdown">Use the `x key</script><script>alert(1)</script>', "error")
+
+
+def test_non_js_scripts_are_not_linted_as_code():
+    assert "dead-api" not in codes(GOOD + '<script type="text/plain">ask prompt(msg) → answer</script>')
+
+
+@pytest.mark.parametrize("js", [
+    "function f(){ return /'/.test(s) } alert(1); const q='z';",
+    "return/'/;alert(1);'q'",
+    "x = a++ / 2; alert(1); y = b / 3;",
+    "const t = `${/'/.test(s)}`; alert(1); 'q'",
+])
+def test_regex_and_division_guesses_that_used_to_hide_a_call(js):
+    assert "dead-api" in codes(GOOD + f"<script>{js}</script>", "error")
+
+
+def test_a_keyword_regex_holding_call_text_is_not_an_error():
+    assert "dead-api" not in codes(GOOD + "<script>function f(){ return /alert(/.test(s) }</script>", "error")
+
+
+def test_call_text_the_scanner_blanked_still_warns():
+    # an object literal divided is read as a regex; the check must say something rather than pass silently
+    html = GOOD + "<script>const v = {a:1} / 2; alert(1); const w = 3 / 4;</script>"
+    assert "dead-api" in codes(html, "error") or "dead-api-text" in codes(html, "warn")
+
+
+def test_prose_in_a_label_does_not_raise_the_text_warning():
+    assert "dead-api-text" not in codes(GOOD + "<script>chart({ y: { label: 'TTFT of the 8k prompt (s)' } });</script>")

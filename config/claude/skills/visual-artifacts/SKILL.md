@@ -15,8 +15,9 @@ description: >-
   simple to deep so I can teach it". Also use when a chat explanation has not
   landed after a couple of rounds: offer (do not build) an interactive
   step-through; and when a design and plan settle in the Brief pane or a plan
-  has three or more tasks: offer (do not build) a Plan page. Not for work documents that stay in markdown (handoffs,
-  runbooks, RCAs, status notes): writing-markdown-docs owns those.
+  has three or more tasks: offer (do not build) a Plan page. A learning request that names no medium comes here.
+  Not for documents asked for as markdown, a doc, notes, a file in the repo or a vault note (learn docs, designs,
+  plans, task cards, reports, handoffs, runbooks): writing-markdown-docs owns those.
 ---
 
 # Visual artifacts
@@ -38,6 +39,12 @@ one screen, then the claims and decisions, then tasks an agent can pick up.
   colour-blind. Data colours come from `--s1`…`--s6`; lines and scatter use
   `--s1`–`--s4`. Every colour is paired with a text label or a pattern, so
   state never depends on colour alone. Status always has an icon and a word.
+- **One worked example first, then the parts.** The first screen plays one
+  real case end to end (a request, a task, a proof). Every later section
+  zooms into one part of that example and reuses its numbers (section 2).
+- **Pick the representation for each idea before writing about it**
+  (section 2a). Text explains a picture; it is never the picture. A section
+  that is mostly prose is a failure (`no-visual`).
 - **Map first, one idea per step, a check question at the end of each step,
   and a visible done / current / locked ladder** (section 2). Plan pages keep
   the map first and skip the checks.
@@ -85,16 +92,55 @@ activity. When two activities weigh the same, build two artifacts.
 
 ## 2. Teaching flow and the ladder
 
+**Mode.** Learn is the default. Build **Quick review** (the answer, the key
+chart and the trade-offs on one screen, then reference sections) or **Full
+review** (every part in order, with all checks) only when Sean asks for one.
+A system design problem in Learn mode never opens with the solution: each
+decision starts with "Your call", and the full architecture comes at the end.
+
+**Pacing comes from familiarity, not from the topic.** Read the memory
+`learning-depth-and-modes` (per-field familiarity), and run `sb find` on the
+topic. When the vault already covers it, treat him as familiar. Unless he says
+he is new to a field, assume basic knowledge: a quick intro, then straight to
+depth. A slower build-up must still reach the same depth.
+
+**Depth bar.** Use the depth he asks for. When he does not say, academic
+topics and learning tech go to Stanford/MIT research level: the real
+mechanism, the math, the numbers with units, and the papers by name. Other
+topics stop at a practitioner's depth.
+
 Sean's teaching style, carried into every learning page:
 
-- **Map before mechanics.** The first screen shows the whole pipeline: what it
-  is, why it exists, and what it feeds. Step-by-step detail comes after.
+- **Worked example before parts.** Open with one real case played end to end
+  (`Kit.stepper` on a sequence or timeline), with live counters for the
+  quantity the page is about. Later sections point back to it and reuse its
+  numbers, so the reader can connect the dots. The PS4 guide failed without
+  this: notation came before the payoff, and no step said which question it
+  unlocked.
+- **Map before mechanics.** The whole pipeline is visible early: what it is,
+  why it exists, and what it feeds. In a system design lesson the full map is
+  the review at the end; earlier sections each add one block.
 - **One idea per step.** A step that needs two figures is two steps.
 - **The reader decides.** Each step asks for a prediction or a choice before
   it explains (`.decide` with `data-kind="decide"`, or a stepper with
   `gate: true`). Clicking "next" alone teaches nothing.
 - **One check question ends each step** (`.decide`). Answers explain why the
-  right option is right and why the others are not.
+  right option is right and why the others are not. Write checks that test
+  understanding, not reading:
+  - every option has the same length and grammatical shape, so the longest or
+    most qualified option is not the answer (`options-uneven`);
+  - each wrong option is a real misconception or a partly true move that
+    loses on a stated detail ("send it to the idle replica"), never a joke;
+  - numbers in the stem make the reader compute ("0.4 s queue against 1.5 s
+    of prefill"), not recall;
+  - the answer's position varies across the page (`answer-position`).
+- **Open questions close every learning page** (`Kit.openQuestions`): two or
+  three free-answer questions, each with a 5-point rubric in
+  `details.rubric-d`. One question asks for a design change, one for a
+  computation, and one for an explanation to a teammate. When every box has
+  text, one floating bar offers "Copy all for Claude" and, inside the viewer,
+  "Grade all here" (the `sample` capability: publish with
+  `capabilities: {sample: {}}`).
 - **A visible ladder: done / current / locked.** `Kit.docs()` shows it in the
   sidebar: a step is done when its checks are answered, the section in view
   wears the grey pill, and later steps are locked until the current check is
@@ -139,6 +185,43 @@ versions, each copyable. *30 s · anyone*: no jargon, one analogy. *2 min ·
 engineer*: the mechanism and one number. *5 min · expert*: trade-offs, where
 it loses, open questions. Each script ends with two likely questions and short
 answers.
+
+## 2a. Pick the representation
+
+Before writing a section, ask what the reader must see, then pick the form
+that shows it best. Be proactive: if an idea can be watched, computed,
+compared or explored, do not summarize it in text.
+
+| The idea is… | Show it as | With |
+|---|---|---|
+| a sequence of messages or events | a sequence or timeline that plays, with live counters | `Kit.stepper`, `data-from` |
+| a control flow or state machine, plus its edge cases | a state diagram with scenario switches, synced to its code | `Kit.scenarios` + `figure.codeblock` |
+| a decision procedure (rules, a gate, a policy) | a lean rail: dots on one hairline, outcomes as chips, the path taken in clay | `Kit.rail` |
+| a quantity that depends on inputs | a calculator: sliders, live result, the formula with values substituted, step by step | `Kit.range`, `Kit.tex` |
+| growth, a trade-off curve, a comparison over time | a line chart (log toggle when the series differ by orders of magnitude) | `Kit.lineChart` |
+| a part-to-whole budget (memory, tokens, time) | a stacked bar that the reader can scrub | `Kit.stackBar` |
+| hardware or a layout along three real axes (TP × PP × DP, a chip, a rack) | a three.js model paired with flat grids that carry the exact reading | three.js, see "When to use 3D" |
+| a hierarchy, a set of decisions, a taxonomy | a tree or mind map | D3 (`d3.hierarchy`, `d3.tree`) |
+| a network, flows between many parts | a force layout or Sankey | D3 |
+| a derivation or proof | numbered steps, one KaTeX line each, with a plain reason per line | `.derive` list, `Kit.tex` |
+| options against criteria | a table, with the chosen row marked | `.table` |
+| code | `figure.codeblock`, never a plain `<pre>` (`code-plain`); tie it to the figure it implements | `Kit.code`, `Kit.scenarios` |
+| a part of a system with more to say than fits | a side pane with its own diagram, In / Out, key numbers and failure modes | `Kit.pane`, `Kit.paneCard` |
+
+Rules that came from Sean's review (2026-10-27):
+
+- **Edge cases are scenarios, not "Go deeper" prose.** An interrupt, a
+  retry or a parallel call replays the same figure with that branch, and
+  highlights the code line that handles it. `details.deeper` is only for a
+  derivation with math or a figure (`deeper-prose` warns otherwise).
+- **Expanded views open in the side pane** (`Kit.pane`), never a modal with a
+  blurred backdrop. The pane is new space, so use it: each part gets a small
+  diagram, what goes in and out, two or three numbers, and a "when it fails,
+  and what the design does" table (`Kit.paneCard`).
+- **No text cards beside code or figures.** A card that restates the figure
+  teaches nothing; put the point in the figure's caption or a pin on the code.
+- **Decision charts stay lean.** Hairlines and small marks; clay only on the
+  path the example takes; no boxes around every node, no big arrowheads.
 
 ## 3. Build
 
@@ -317,6 +400,8 @@ flat.
 | A surface over two inputs: a loss landscape, a potential field, a cost surface | Valleys, ridges and saddles are shapes; walking a path on them is the lesson |
 | Geometry and transforms: rotations, camera projection, vectors in 3-space, attention as geometry | The math lives in three coordinates |
 | Things that build up layer by layer or stack: a fab flow, an HBM stack, a 3D-printed part | Watching the stack grow shows order and dependency |
+| Devices laid out along three real axes: tensor × pipeline × data parallelism, a GPU pod, a mesh | Each axis is a different kind of split; seeing which neighbours talk, and how often, is the lesson |
+| A machine with moving parts: a pipeline of stages a token or packet travels through | The motion through space is the mechanism (pair it with a flat timeline) |
 
 | Draw it flat instead | Why 3D hurts |
 |---|---|
@@ -342,7 +427,14 @@ fallback.
    step without a check question (`no-check`), a guide without a map
    (`no-map`), hand-set math (`hand-math`), math without KaTeX loaded
    (`katex-missing`, an error), and Simplified characters on a Chinese page
-   (`zh-simplified`). On Plan pages it errors when a task touches a block
+   (`zh-simplified`). Teaching lints: code in a plain `<pre>` (`code-plain`),
+   a prose-only "Go deeper" block (`deeper-prose`), a guide section over 220
+   words with no figure, chart, table, image or derivation (`no-visual`; open-question
+   sections are exempt), a check whose answer is much longer than every other
+   option (`options-uneven`), and most checks putting the answer in one position
+   (`answer-position`). `alert()`, `confirm()` and `prompt()` in script code are
+   errors (`dead-api`); the same text inside a string, regex or comment only
+   warns (`dead-api-text`), so read that warning instead of ignoring it. On Plan pages it errors when a task touches a block
    that is not on the map, or depends on a task that does not exist
    (`plan-dangling`), or when the dependencies loop (`plan-cycle`); it warns
    when a task lacks its failing test or verify command
@@ -381,7 +473,8 @@ fallback.
 ## Kit reference
 
 `Kit.init()` fills `[data-icon]`, wires `[data-copy]` buttons and `.term`
-popovers. Then, as needed:
+popovers. A `[data-copy]` button aimed at a rendered codeblock copies the code
+without line numbers; a diff keeps its + and − signs. Then, as needed:
 
 | Call | Does |
 |---|---|
@@ -399,7 +492,12 @@ popovers. Then, as needed:
 | `docs({onShow, mode, gate})` | docs layout for guides: one continuous page, sidebar that follows the section in view and shows done / locked, "In this section" rail, deep links; `gate: 'auto'` locks later steps until the current check is answered (`mode: 'paged'` only for reference docs) |
 | `depth(seg, {initial, key})` | Skim/Read/Deep for guides |
 | `toc(nav, {progress})` | scroll-spy TOC for single-page layouts |
-| `lineChart(el, opts)` / `stackBar(el, opts)` | themed charts; return `{update}` |
+| `lineChart(el, opts)` / `stackBar(el, opts)` | themed charts; return `{update}`; pass `endLabels: false` when the legend carries identity and labels would clip |
+| `scenarios(fig, {scenarios, code})` | one state machine replayed under several cases (`[data-scenarios]` segmented control, prev/next/play, `.scene-note`); elements with `data-state="n"` show on that state, `data-sc="key"` overlays show for that scenario; highlights each step's `lines` in a `figure.codeblock` and pins the note under them; returns `{set, go, get}` |
+| `rail(el, {rows})` | decision rail: `rows: [{id, label, down?, outs: [{id, edge, label, tone: 'ok'\|'bad'\|'warn'}]}]`; the segment under a row is `'d-' + id`; returns `{show(path)}` |
+| `pane.open(items, i, {onSelect})` / `pane.close()` | the side pane for expanded views: `items: [{key, eyebrow, title, html, after(body)}]`; ← → step, Esc closes, a `#link` inside closes and scrolls |
+| `paneCard({fig, lede, in, out, numbers, fails, link})` | the standard deep-dive for one part of a system, as HTML for a pane item |
+| `openQuestions(root, {topic})` | `.openq` blocks (h3, `.decide-q`, textarea, `details.rubric-d`); one floating bar once every box has text: Copy all for Claude, and Grade all here via `sample`; returns `{prompt, sync}` |
 | `loop(step)` | rAF loop that pauses in hidden tabs |
 | `css('--s1')`, `onTheme(cb)`, `isDark()` | read tokens; repaint canvas/WebGL on theme change |
 | `toast(msg, {tone, action})`, `status(tone, label)` | feedback with icon + word |
@@ -423,6 +521,7 @@ for those, `templates/guide.src.html` is the reference.
 | Explorable (3D) | Optimizer Lab · https://claude.ai/artifact/3jG98BdoQ8Qd86FsVpHm33 | a 3D surface paired with a contour map, a tour whose numbers come from the sim |
 | Explorable (3D) | The Fab Pipeline · https://claude.ai/artifact/6d5gRJFjgPd5W5hPnh9cs5 | a stack built layer by layer, paired with a flat pipeline diagram |
 | Prototype | Rollout · https://claude.ai/artifact/RcsuF9U8o5RDjAetVju84H | an app shell, a simulated backend and clock, a dev panel for failure paths |
+| Guide (system design, Learn) | Designing Claude Code · https://claude.ai/artifact/SoSAv1Tom9FD9saioc1tse | **the reference for the 2026-10-27 rules** (Sean: "very much better"): a worked trace first, "Your call" before each decision, calculators with step-by-step KaTeX, loop scenarios synced to Go code, a decision rail, a three.js parallelism grid with flat grids, the side pane, open questions with one floating bar. Built before these became kit calls, so its page script hand-rolls them; new pages call the kit |
 | Plan | API Rate Limits · https://claude.ai/artifact/3TsNUAWXvkFfSoP3jB8LXi | `templates/plan.src.html` as published: Current / Proposed map, three behaviour claims with a call tree, a diff and sketches, two open decisions and the Respond reply, decision records, task graph, task ↔ block ↔ file selection, agent briefs |
 
 ## Do not repeat
@@ -443,4 +542,17 @@ These made the earlier HTML pages fail for Sean:
 - math typed as plain text or Unicode instead of LaTeX;
 - steps the reader only clicks through, with no decision and no check;
 - the summary arriving at the end instead of the top;
-- sliders and toggles that change nothing worth noticing.
+- sliders and toggles that change nothing worth noticing;
+- a system design page that opens with the finished architecture in Learn
+  mode (2026-10-27);
+- notation and definitions before any payoff, and no worked example tying the
+  steps together (the PS4 guide, 2026-10-26);
+- check questions whose answer is the longest or most careful option, with
+  silly distractors;
+- a plain `<pre>` with no syntax colour, and a prose card beside code that
+  restates it;
+- "Go deeper" blocks of prose for edge cases;
+- a heavy boxed decision tree with big arrowheads;
+- a modal with a blurred backdrop and a thin text column beside a scaled-down
+  copy of the figure;
+- per-question copy buttons, and a rail that lists "Rubric, Rubric, Rubric".

@@ -46,13 +46,13 @@ never use it for a learning guide.)
 
 ## Sections, in order
 
-The order is Sean's teaching outline (from `writing-markdown-docs`
-`references/teaching.md`), opened by a map. The markup calls each section a
+The order follows the learn genre (`writing-markdown-docs`
+`references/learn.md`): a worked example first, then the parts. The markup calls each section a
 `.doc-page`, but they all sit on one page.
 
 | # | Section | Sidebar group | Holds | Rung |
 |---|---|---|---|---|
-| 1 | **Map** (overview) | Start here | `.doc-head` (eyebrow, `h1`, two-sentence `.lede`, `.meta`), then the map figure: the whole pipeline as named blocks and wires (what it is, why it exists, what it feeds) with a separate legend, then the ladder card | 1 One line |
+| 1 | **Worked example** (overview) | Start here | `.doc-head` (eyebrow, `h1`, two-sentence `.lede`, `.meta` with the assumed background), the one-line takeaway, then one real case played end to end (a stepper over a sequence or timeline, live counters for the page's key quantity, an "Inside …" pane for its biggest object). A topic with no natural case opens with the map figure instead. | 1 One line |
 | 2 | **Problem** | Start here | the pain this exists to solve, before any API or method is named | 2 Why |
 | 3 | **Mental model** | Start here | the core abstraction and its signature diagram; later sections point back to it | 3 Mechanism |
 | 4 | **Under the hood** | Mechanism | the mechanics: where the seams and boundaries are | 3 Mechanism |
@@ -60,7 +60,8 @@ The order is Sean's teaching outline (from `writing-markdown-docs`
 | 6 | **Capstone** (required) | Mechanism | one complete worked example, from scratch, traced step by step against the mental-model diagram from section 3 | 3 Mechanism |
 | 7 | **Trade-offs and principle** | Trade-offs | the calls a senior engineer weighs, with real failure cases; then the general idea this is an instance of and where else it shows up in Sean's fields | 4, 5 |
 | 8 | **Anti-patterns** (required) | Trade-offs | what mid-level engineers get wrong, as a list, each with why it fails | 4 Trade-off |
-| 9 | **Explain it to…, notes and sources** | Use it | three spoken scripts (30 s / 2 min / 5 min) with likely questions; "Your notes" (vault paths as text); numbered sources cited inline as [1] (`data-check="none"`) | — |
+| 9 | **Test yourself** (required) | Review | the whole design or model on one screen (map with a side pane per part), then 2–3 open questions with rubrics (`Kit.openQuestions`) and one hard check | 4, 5 |
+| 10 | **Notes and sources** | Review | "Your notes" (vault paths as text); numbered sources cited inline as [1] (`data-check="none"`); "Explain it to…" scripts only when asked | — |
 
 Drop a section only when it does not apply, except the capstone and the
 anti-patterns: a guide without a capstone has not proven its mental model, and
@@ -77,8 +78,11 @@ a method, a paper) before the problem and the mental model.
    `.after-decide` blocks that open once he has chosen.
 4. The figure: a diagram, step-through, chart or mini-interactive, with a title,
    a "What to notice" caption, and a legend.
-5. `.prose.d-read`: at most four short paragraphs. `details.deeper` holds math,
-   derivations, edge cases and numbers.
+5. `.prose.d-read`: at most three short paragraphs. `details.deeper` holds only
+   a derivation (numbered KaTeX steps) or a figure; edge cases become
+   scenarios on the step's figure (`Kit.scenarios`). Put its content in one
+   wrapper: `<details class="deeper"><summary>Go deeper: …</summary><div
+   class="deeper-body prose">…</div></details>`.
 6. **One check question** (`.decide` with `data-answer` and a `.decide-why` for
    each option). `render_check.py` warns about a step without one.
 
@@ -145,5 +149,9 @@ pages present the evidence, then method, then limitations.
 - [ ] It is one continuous page; the sidebar follows the section in view and has about 8 entries.
 - [ ] Rung links and in-text links scroll to the right place (deep links work).
 - [ ] At least two figures are interactive.
-- [ ] "Explain it to…" has three scripts with copy buttons and likely questions.
+- [ ] The page opens with one worked example, and later sections reuse its numbers.
+- [ ] Each idea has a representation picked from SKILL.md section 2a; no section is mostly prose.
+- [ ] Code is in `figure.codeblock`, tied to its figure; edge cases are scenarios.
+- [ ] Check options are the same length and shape; answer positions vary.
+- [ ] "Test yourself" has open questions with rubrics and the floating bar.
 - [ ] At 390 px the sidebar opens from the menu button and nothing scrolls sideways.

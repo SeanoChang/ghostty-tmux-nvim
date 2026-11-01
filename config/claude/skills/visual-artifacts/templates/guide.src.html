@@ -92,11 +92,11 @@
       </div>
       <div class="pair after-decide">
         <div class="pair-side"><p class="pair-label">Work queue</p><p>Producers enqueue, and a fixed pool of workers dequeues. A full queue pushes back on producers.</p></div>
-        <div class="pair-side go"><p class="pair-label">Counterpart</p><pre><code>jobs := make(chan Job, 100) // the queue
+        <div class="pair-side go"><p class="pair-label">Counterpart</p><figure class="fig codeblock"><pre class="code-src" data-sketch data-file="queue.go"><code class="language-go">jobs := make(chan Job, 100) // the queue
 for w := 0; w &lt; 2; w++ {
     go func() { for j := range jobs { run(j) } }()
 }
-jobs &lt;- j // blocks when the buffer is full</code></pre></div>
+jobs &lt;- j // blocks when the buffer is full</code></pre></figure></div>
       </div>
       <div class="decide" data-answer="a">
         <p class="decide-q">In the Go version, what happens when all 100 buffer slots are full?</p>
