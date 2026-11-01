@@ -1,239 +1,227 @@
 ---
 name: writing-markdown-docs
 description:
-  Use whenever writing a standalone markdown document — research findings,
-  teaching guides, status reports, decision analyses, session handoff notes, or
-  debug postmortems. Covers which outline the document takes, where the file
-  goes, and formatting that renders correctly in a terminal markdown viewer. Use
-  this even when the user only says "write this up", "document what we found",
-  "save your notes", "summarize where we are", or "make me a doc" without naming
-  a format. Does not apply to README, CLAUDE.md, CONTRIBUTING, changelogs, or PR
-  bodies.
+  Use whenever writing a standalone markdown document — a learning doc that
+  explains a topic, a design, an implementation plan, a task card for an agent,
+  a status or incident report, a decision analysis, a handoff, a runbook, or a
+  reference. Covers which genre and outline it takes, how to keep it readable
+  (answer first, terms defined, one idea per sentence, a picture where prose
+  would be a wall), where the file goes, and a dialect that renders the same in
+  the terminal (markview) and in Obsidian. Use this even when the user only says
+  "write this up", "document what we found", "save your notes", "summarize where
+  we are", "explain X in a doc", or "make me a doc". Interactive pages,
+  simulations, 3D and prototypes go to visual-artifacts instead. Also use it
+  for every note in the Obsidian vault (Seano): writing, updating, splitting or
+  normalising notes, frontmatter, wikilinks, MOCs, callouts, Canvas or Bases,
+  after second-brain-obsidian has decided whether and where to write. Does not
+  apply to README, CLAUDE.md, CONTRIBUTING, changelogs, or PR bodies.
 ---
 
 # Writing Markdown Docs
 
-## Medium routing
+A document is read by someone who was not there. Every rule here serves that
+reader: they get the answer first, they never meet an undefined term, and they
+see a picture where prose would be a wall.
 
-Markdown is the default for any standalone document. Write in markdown unless
-the user explicitly asks for plots, charts, interactive elements, or 3D output —
-those are the only reasons to switch to the `building-html` skill instead. A
-document being long, technical, or covering a lot of ground is not one of those
-reasons: complexity alone never justifies leaving markdown. Markdown is the
-medium for understanding — it reads in a terminal, diffs cleanly, and keeps the
-reader's attention on the content instead of the presentation.
+## Non-negotiables
 
-## Destination
+1. **Answer first.** Open with a `> [!tldr]` of at most 60 words, or an opening
+   paragraph of at most three sentences. Nothing comes before it except a
+   one-line `Changed since <date>:` in a handoff. Method, sources and caveats go
+   after the answer (`lead-long`, `lead-late`).
+2. **Write to the reader.** Say "you", not "the user" or "the owner". Leave out
+   the story of how the work was done (agents, panels, rounds) unless the reader
+   asked for it (`reader-third`).
+3. **Define every term and ID once,** in the reader's words, where it first
+   appears. Prefer a name to an ID: "the retry fix", not "D128". A project's own
+   numbering pairs with a name on first use: "L0 normalize" (`undefined-id`).
+4. **One idea per sentence.** Write about 60% of the way to ASD-STE100: active
+   voice and plain words. Aim for 15 to 20 words a sentence, never over 30. An
+   aside gets a sentence of its own (`prose-long`, `paren-dense`, `dash-dense`).
+5. **Pick a representation for each idea** from the table below. A section of
+   more than about 250 words with no table, diagram, math or image is a wall
+   (`no-visual`).
+6. **Fit the genre's budget, and cut.** The budget counts what the reader reads:
+   prose and tables. Every sentence must change what the reader knows or does;
+   cut the rest. A rewrite comes out shorter than its source (`too-long`).
+7. **Teach with an example first.** A learn doc opens with one worked example
+   with real numbers, then builds the parts on it, and checks the reader after
+   each part (`example-late`, `no-check`).
+8. **Write only what you verified.** A caveat sits next to the claim it limits,
+   never in front of the answer.
 
-Where the file goes depends on what the document is about, not on convenience.
+## Markdown or an HTML page
 
-Project-scoped documents — how this codebase does something, a design for this
-repo, a root-cause analysis for a bug that lives here — go to `docs/` inside the
-repo. If the repo already has its own docs convention (a different directory, a
-subfolder scheme, a naming pattern), use that instead of imposing this skill's
-default.
+Markdown is the default for documents that live beside the work or in the vault.
+They read in a terminal and in Obsidian, diff cleanly, and stay greppable. This
+includes learning docs: the learn genre teaches in markdown with Mermaid,
+tables, step-by-step math and rendered diagrams.
 
-General documents — how something works in the abstract, methodology notes,
-research on a library or technique that isn't tied to one codebase — don't get a
-location invented for them. Propose a path and ask; a document with no clear
-home shouldn't be silently filed somewhere the user didn't choose.
+A learning request that names no medium goes to `visual-artifacts`; "a doc",
+"markdown", "notes", a file in the repo or a vault note comes here. Switch to
+`visual-artifacts` also when the idea needs interaction: a simulation, a slider,
+a step-through animation, 3D, a prototype to click, or a Plan page with linked
+tasks. Being long or technical is not, on its own, a reason to leave markdown.
 
-Filenames are kebab-case. The date belongs in frontmatter, not the filename — a
-document renamed every time its status changes is harder to link to and harder
-to grep for.
+## Vault notes
 
-## Genre routing
+A note in the Obsidian vault is markdown too. `second-brain-obsidian` decides
+whether and where it goes. Then read `references/vault.md` before writing: it
+sets the vault's frontmatter, filenames, links and lead, and says which rule
+wins when the vault and this file disagree. In short, this file wins on voice
+and structure; the vault wins on properties, names, links and wrapping. Never
+run prettier on a vault note; validate with `check_doc.py --vault`.
+
+## Genres
 
 One question decides the genre: what does the reader do with this document?
-Route by that, not by the document's length or subject matter.
 
-| Reader's purpose                     | Reference                |
-| ------------------------------------ | ------------------------ |
-| Understand something they don't yet  | `references/teaching.md` |
-| Get brought up to date               | `references/report.md`   |
-| Settle an open question              | `references/analysis.md` |
-| Resume this work with no context     | `references/handoff.md`  |
-| Understand a specific failure        | `references/rca.md`      |
-| Evaluate something before it's built | `references/design.md`   |
-| Execute a procedure                  | `references/runbook.md`  |
-| Look something up                    | `references/lookup.md`   |
+| The reader wants to              | Genre       | Reference                 | Budget |
+| -------------------------------- | ----------- | ------------------------- | ------ |
+| Understand something new         | `learn`     | `references/learn.md`     | 3,500  |
+| Decide whether to build a design | `design`    | `references/design.md`    | 2,500  |
+| Build it, task by task           | `plan`      | `references/plan.md`      | 3,000  |
+| Hand one task to an agent        | `task-card` | `references/task-card.md` | 500    |
+| Catch up, or learn what broke    | `report`    | `references/report.md`    | 450    |
+| Settle an open question          | `analysis`  | `references/analysis.md`  | 1,500  |
+| Resume this work with no context | `handoff`   | `references/handoff.md`   | 700    |
+| Run a procedure                  | `runbook`   | `references/runbook.md`   | 900    |
+| Look something up                | `lookup`    | `references/lookup.md`    | none   |
 
-Open the matching reference before writing. If a request doesn't map cleanly
-onto one row, take the closest match and add a one-line note explaining the
-choice — don't block on a clarifying question for something this low-stakes.
+Budgets count words of prose and tables. Code, diagrams and math are free, and
+so are a learn doc's checks and rubrics. Open the matching reference before
+writing. If a request fits no row, take the closest and say why in one line. A
+doc that mixes genres takes the genre of its main purpose: a design with one
+embedded choice stays a design, with the choice in its Decisions section.
 
 ## Frontmatter
 
-Every document carries this four-key schema:
-
 ```yaml
 ---
-title: descriptive title of the document
-date: 2026-08-10
-type: teaching | report | analysis | handoff | rca | design | runbook | lookup
+title: what the document answers, in plain words
+date: 2026-10-27
+type:
+  learn | design | plan | task-card | report | analysis | handoff | runbook |
+  lookup
 status: draft | current | superseded
 ---
 ```
 
-`type` is always one of the eight genre names — it's what lets a reader, or a
-script, find every RCA or every handoff note without opening each file. `status`
-follows a fixed default per genre, not an open-ended judgment call: include it
-for `handoff` (each new version overwrites the last, so `current` versus
-`superseded` is real information), `report` (next period's report supersedes
-this one), `analysis` (decisions get revisited, and a superseded analysis that
-still looks current is actively misleading), `design` (a superseded design that
-still reads as current is how someone builds the wrong thing), `runbook` (a
-stale procedure is worse than a missing one, because it will be followed), and
-`lookup` (schemas and interfaces change, and a reference with no status can't
-tell you whether it's still true). Omit it for `rca` (an incident write-up is a
-historical record — it ages, it doesn't get superseded). The default for
-`teaching` is also omit, with one named exception: a document that tracks
-something that moves, like a library version or an evolving API, includes it.
+`status` is required for every genre except `learn`. A learn doc about something
+that moves, like a library version, carries it too. The old types `teaching` and
+`rca` still pass with a `legacy-type` warning; use `learn` and `report`.
 
-## Governing rule
+## Destination
 
-Every genre reference elaborates on this rule:
+Project documents go to `docs/` in the repo, or to the repo's own docs
+convention when it has one. General documents get no invented home: propose a
+path and ask. Outside the vault, filenames are kebab-case, and the date lives in
+frontmatter, not the filename. Vault notes go where `second-brain-obsidian`
+places them, and keep the vault's own names (`NN-NN Topic — Subtitle.md`) from
+`references/vault/conventions.md`.
 
-> The abstraction or headline lands first, details are gated behind it, anything
-> the reader doesn't need gets cut — no internal noise, no API tour before the
-> mental model.
+## Pick the representation
+
+Name the shape of each idea first, then choose its form. Start with the cheapest
+form that keeps the information, and move up only when it loses something.
+
+| Shape of the idea                   | Form                                                    |
+| ----------------------------------- | ------------------------------------------------------- |
+| A linear pipeline                   | ASCII with `->`, before the table that details it       |
+| Comparison across shared dimensions | Table, rows under about 100 characters                  |
+| Branching, a loop, actors over time | Mermaid `flowchart`, `sequenceDiagram`                  |
+| Lifecycle, modes, valid transitions | Mermaid `stateDiagram-v2`                               |
+| Data model                          | Mermaid `erDiagram`                                     |
+| Layout too big for Mermaid          | A d2 diagram rendered to PNG, with a text alternative   |
+| A derivation or an estimate         | Numbered steps, one sentence and one `$$` line each     |
+| A data series                       | A matplotlib PNG, axes labelled, plus the key numbers   |
+| Code, config, commands              | A fenced block with a language tag, 30 lines at most    |
+| Hierarchy or taxonomy               | A nested list, or a Mermaid `mindmap` in the vault only |
+
+After a table or diagram whose point is not obvious from its heading, add one
+line that starts **What to notice:**. Do not restate what it shows.
+
+## Dialect: one source for markview and Obsidian
+
+Write only what renders the same in both.
+
+- **Callouts are lowercase:** `> [!tldr]`, `[!note]`, `[!warning]`,
+  `[!question]`, `[!success]`, `[!bug]`, `[!cite]`, `[!abstract]`. A trailing
+  `-` folds the callout: `> [!success]- Answer`. Put a short title on the marker
+  line, then a blank `>` line, then the body, so prettier cannot pull the body
+  into the title (`callout-case`, `callout-collapsed`).
+- **Mermaid** stays in the subset both draw: `flowchart`/`graph`,
+  `sequenceDiagram`, `stateDiagram-v2`, `erDiagram`, `gantt`. Keep node labels
+  short, and use `TD` past about four nodes. Quote labels with CJK or
+  punctuation: `A["排程器"]`. A semicolon inside a `sequenceDiagram` message
+  ends the statement; leave it out.
+- **Math:** `$…$` inline and `$$…$$` on their own lines. Use it for real math,
+  not for a variable name in prose.
+- **Images:** `![what to notice](assets/name.png)`, a relative path. Render d2
+  with `d2png file.d2` or
+  `d2 --pad 24 in.d2 out.svg && rsvg-convert -w 900 out.svg -o out.png`, never
+  ImageMagick (it drops SVG text). Under every image, add
+  `> [!abstract]- Diagram as text` with its content as a table or list, so it
+  survives search and a missing file.
+- **Links:** `[text](path)` in repos; `[[wikilinks]]` in vault notes.
+- **Never:** raw HTML, headings past H3, an untagged code fence, a colour that
+  carries meaning alone (the reader is red–green colour-blind).
 
 ## Render constraints
 
-These follow from how the document actually renders, not from a style preference
-— each carries its reason so it generalizes past the cases listed here.
+- Prose wraps at 80 columns: write naturally, then run prettier.
+- Never break inside inline code, a URL, or a `path:line` reference.
+- Table rows stay under about 100 characters. A cell that needs a sentence
+  belongs in prose.
+- Never let a hyphenated compound split across a line break: it renders with a
+  space (`hyphen-split`). Prettier cannot repair this; reword instead.
+- Checkboxes `- [ ]` render as real checkboxes; use them for next actions.
 
-- **Prose wraps at 80 columns, but you don't count them.** Write naturally, then
-  run `prettier --write` at the end. Hand-wrapped text gets rewritten on the
-  first format pass and never matches exactly, so counting columns while
-  drafting is wasted effort.
-- **Never break inside inline code, a URL, or a `path:line` reference.** These
-  are tokens the reader copies whole; splitting one across a line break makes it
-  uncopyable and unclickable in a terminal.
-- **Table rows stay under roughly 100 characters of rendered width.** Column
-  count is a proxy, width is the constraint — five narrow columns can fit where
-  two wide ones can't. A sentence-length cell isn't table content: if a cell
-  needs a full sentence, that sentence belongs in prose outside the table, not
-  in a row inside it.
-- **Every code fence carries a language tag**, such as `bash`, `yaml`, or `text`
-  for plain illustrative examples, even when the fence is never meant to be run.
-  An untagged fence renders as an undifferentiated gray block and fails
-  validation — the tag is what tells both the renderer and the reader what
-  they're looking at.
-- **Headings stop at H3.** Deeper nesting is hard to track without a rendered
-  table of contents, and the validator rejects H4 and below outright — a
-  document that wants a fourth level needs a flatter outline.
-- **No raw HTML outside backticks.** markview doesn't render HTML tags; a stray
-  tag shows up as literal text instead of doing anything.
-- **Never let a hyphenated compound split across a line break.** A soft break
-  renders with a space in the middle, so `load-bearing` becomes `load- bearing`.
-  Prettier cannot repair this — it sees two separate words and reports the file
-  as already formatted — so the `hyphen-split` warning is the only thing that
-  catches it. Reword so the compound sits away from the boundary.
+## Code changes
 
-## Mermaid, math, callouts, checkboxes
+When a document describes a change to code, show the key sections, not whole
+files and not prose alone.
 
-Four affordances beyond plain prose, each with its own discipline:
+- At most 30 lines per change, one to three sections: the hunk that changes
+  behaviour, the core of a new function, or the failing test that proves it.
+- Name the file above the fence: `path:line` for code that exists, "sketch" for
+  code that does not.
+- Diffs use a `diff` fence and keep their `@@` headers. The `+` and `-` signs
+  carry the change, so it survives any colour scheme.
+- Notes go right under the fence, keyed by line:
+  `- Line 30: after auth, so the key is known.`
+- Show each piece of code once, and point to it from elsewhere.
 
-- **Mermaid, used liberally.** Mermaid fences render inline via `snacks.image`
-  with the TokyoNight config at `~/.config/mermaid/`. Sequence diagrams for call
-  chains, `flowchart` for control flow, `erDiagram` for schemas,
-  `stateDiagram-v2` for state machines. Two constraints follow from
-  rendering-as-image: keep node labels short, because one long label scales the
-  whole diagram down until nothing is legible, and prefer `graph TD` over `LR`
-  past roughly four nodes, since vertical suits a terminal's aspect ratio.
-- **Math.** `$inline$` and `$$block$$` typeset as real images. Use for actual
-  math — loss functions, complexity bounds — not for bare variable names, or you
-  get an image where a word would do.
-- **Callouts, semantically.** markview implements the full Obsidian set, not
-  just GitHub's five. Two or three per document, or they stop being emphasis:
+## Evidence and dates
 
-  | Callout         | Used for                               |
-  | --------------- | -------------------------------------- |
-  | `> [!TLDR]`     | The front-loaded answer                |
-  | `> [!BUG]`      | Observed symptom in an RCA             |
-  | `> [!QUESTION]` | Open threads, unresolved               |
-  | `> [!WARNING]`  | Things that will bite the reader       |
-  | `> [!CITE]`     | A source worth pulling out of the list |
+Every factual claim carries evidence: a URL, `file.py:42`, or the command and
+its real output. Mark what is _verified_, _documented_ and _inferred_. Name a
+gap instead of smoothing over it: "Not measured: the resync time under load." A
+rewrite keeps the source's evidence and marks the rest "per the source". Use
+absolute dates.
 
-  Prettier reflows a lone marker line down onto the next line's text, and in
-  Obsidian syntax — which markview implements — whatever text shares the
-  marker's line becomes the callout's title. Write a callout with a real body as
-  two blockquote paragraphs, title then a blank quoted line then body, so
-  there's nothing for the reflow to pull down:
-
-  ```text
-  > [!TLDR] Short title
-  >
-  > Body paragraph, which prettier wraps normally and leaves in the body.
-  ```
-
-  A genuinely one-line callout can just be written as
-  `> [!NOTE] the whole thing` — the collapse only matters when a body was
-  intended.
-
-- **Checkboxes.** `- [ ]` renders as a real checkbox, so next-action lists are
-  tickable in-buffer.
-
-## Prose rules
-
-Where a genre reference and these general rules disagree, the reference governs
-— it knows its reader.
-
-1. Every factual claim carries evidence — a URL, `file.py:42`, or the actual
-   command and its output.
-2. Mark confidence. Separate _verified_, _documented_, and _inferred_. Write "I
-   couldn't determine X" rather than smoothing over the gap.
-3. Length follows content: delete any section you'd have to pad, and let three
-   paragraphs be a complete document when the answer is three paragraphs long.
-4. Absolute dates, never "yesterday" or "recently" — documents are read out of
-   time.
-
-## Standing rules
-
-Write only what you verified. A document that asserts a result, a state, or an
-outcome you haven't actually confirmed is worse than one that says less — the
-reader trusts it and acts on it.
-
-Update semantics differ by genre. Handoff docs are overwritten, not appended to:
-replace the file and lead with a `changed since <date>` line noting what's
-different from the version being replaced, because a handoff is a snapshot for
-the next session and stale detail actively misleads whoever reads it next. Every
-other genre is edited in place — update the existing file rather than replacing
-it, so history and unrelated sections survive the edit.
+Handoffs are overwritten, with a `Changed since <date>:` line. Every other genre
+is edited in place.
 
 ## Before you call it done
 
-Format, then validate, then resolve everything it reports, in that order,
-because each step catches what the previous one can't: fix every error, and
-resolve every warning too, unless you can state why it doesn't apply here — a
-legitimate `pre-` line ending, a hype word inside a quotation.
+Format, validate, then resolve everything it reports. Fix every error. Resolve
+every warning, unless you can say why it does not apply here.
 
 ```bash
-# If the repo has its own prettier config, run plain `prettier --write` and
-# respect it. Otherwise:
+# Use the repo's own prettier config when it has one. Otherwise:
 prettier --parser markdown --prose-wrap always --print-width 80 --write PATH
 python3 ~/.claude/skills/writing-markdown-docs/scripts/check_doc.py PATH
+# A vault note: no prettier, and the vault's own rules.
+python3 ~/.claude/skills/writing-markdown-docs/scripts/check_doc.py --vault PATH
 ```
 
-Prettier owns wrapping, so hand-wrapping prose while drafting is wasted effort
-that gets overwritten on the first format pass anyway — write naturally and let
-the tool do it. The validator then catches what prettier can't fix: table width,
-fences missing a language tag, heading depth past H3, and leftover placeholder
-tokens. All of these are easy to state as rules and hard to catch by eye, and
-unformatted or unvalidated output is the most common way these documents fail to
-render correctly.
+The validator checks two things. Rendering: wrap, table width, fence tags,
+heading depth, raw HTML, placeholders and callout form. Reader load: the lead,
+opaque IDs, third person, long sentences, dense asides, walls of prose and the
+genre budget. For learn docs it also checks the worked example, the checks,
+folded answers and option lengths. Then read the first screen as the reader
+would: does it give the answer, in their words, before anything else?
 
-### Mention vs. use
-
-Naming a word is not the same as using it. The validator strips inline-code
-spans before it scans a line, so a word inside backticks is quoted, not used,
-and won't trip a check built to catch that word in running prose.
-
-This is why the placeholder tokens `TBD`, `TODO`, `FIXME`, and `XXX` appear in
-backticks throughout this skill, and why the hype words to avoid — `robust`,
-`seamless`, `powerful`, `comprehensive`, `leverage`, `delve`, `crucial`,
-`vital`, `elevate`, `unlock`, `cutting-edge`, `game-changing`, and `effortless`
-— are backticked wherever this file lists them. Do the same in any document: to
-talk about a placeholder marker, or to name a word you're avoiding, put it in
-backticks instead of leaving it bare.
+Words inside backticks are quoted, not used, so the validator skips them. That
+is how this file can name `TODO` or `leverage` without tripping its own checks.

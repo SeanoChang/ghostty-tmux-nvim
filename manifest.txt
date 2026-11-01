@@ -43,3 +43,6 @@ merge  config/claude/commands                ~/.claude/commands
 merge  config/claude/skills                  ~/.claude/skills
 merge  config/claude/hooks                   ~/.claude/hooks
 merge  config/claude/mods                    ~/.claude/mods
+
+# ── codex ──────────────────────────────────────────────────────────────────────
+link   config/codex/AGENTS.md               ~/.codex/AGENTS.md

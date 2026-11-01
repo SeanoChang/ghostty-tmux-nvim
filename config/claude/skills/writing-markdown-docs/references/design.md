@@ -1,37 +1,40 @@
 # Design
 
-This genre applies when the reader's job is to evaluate something before it gets
-built: a proposal, an architecture document, a design for a system that does not
-exist yet. If the system already exists and the reader needs to understand how
-it works, that's a teaching document, not this one.
+Use this genre when the reader must decide whether to build something: a
+proposal, an architecture, a design for a system that does not exist yet. If the
+system already runs and the reader needs to understand it, write a learn doc
+instead.
 
 ## Outline
 
 ```text
-1. Problem and constraints    including non-goals
-2. Proposed design            one paragraph, then a component diagram
-3. Components                 each: responsibility / interface / dependencies
-4. Data flow                  the primary path, end to end
-5. Decisions and trade-offs   with the alternatives rejected and why
-6. Failure modes              what breaks, what happens, how it recovers
-7. Testing strategy
-8. Rollout or migration       only when replacing something that exists
+> [!tldr]                  the design in one breath, and the decision asked for
+1. Picture                 the component diagram, then one paragraph
+2. Problem and constraints  including non-goals
+3. Components              each: responsibility / interface / depends on
+4. Data flow               a sequence diagram; skip it when the Picture
+                           already shows the only path
+5. Decisions               a table: decision, chosen, rejected, why
+6. Failure modes           a table: what breaks, what happens, recovery
+7. Testing
+8. Rollout                 only when it replaces something that exists
 ```
 
 ## Rules
 
-- Every component answers three questions: what it does, how it is used, and
-  what it depends on. If any of the three can't be answered, the boundary is
-  wrong — that's a finding about the design, not a gap in the document.
-- Non-goals do more work than goals. They are what stops scope creep once the
-  document is approved, so state them in section 1 instead of leaving them
-  implied by omission.
-- **Section 5 is non-droppable.** A design that lists no rejected alternatives
-  presents its decision as an inevitability, and the reader has no way to tell
-  whether the alternatives were considered or never occurred to anyone.
-- **Section 6 is non-droppable.** A design that shows only the happy path hides
-  where the cost actually lives; the unhappy path is where a reviewer finds the
-  objections that matter.
-- This genre is for a system that does not exist yet. Write for a reader
-  deciding whether to build it — a reader who needs to understand something that
-  already runs wants a teaching document instead.
+- **The picture comes first.** The reader sees the whole system before any
+  component is named in prose. Use Mermaid for up to about ten boxes, a rendered
+  d2 diagram past that.
+- **Every component answers three questions:** what it does, how it is used,
+  what it depends on. If one cannot be answered, the boundary is wrong; say so.
+- **Interfaces are signatures** in the project's language. When none exist yet,
+  give input → output pairs and say so. Where one piece of logic decides the
+  design (a lock, a retry, an ordering), show it as a sketch of at most 30
+  lines.
+- **Non-goals are stated.** They stop scope creep after approval.
+- **Sections 5 and 6 are non-droppable.** A design with no rejected alternatives
+  presents its choice as inevitable. A design with no failure modes hides where
+  the cost lives.
+- **Decisions and failures are tables,** one row each. A paragraph per decision
+  is where these docs grew past 1,000 lines. A row that needs a sentence gets a
+  numbered "Why" list under the table, keyed by row.

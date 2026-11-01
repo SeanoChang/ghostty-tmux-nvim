@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Run `codex exec` under a watchdog. Kills the whole Codex process group when
+# the event log stops growing for --idle seconds or the run passes --max seconds.
+#
+# usage: codex-run --log <file> [--idle 300] [--max 1800] -- <codex exec args...>
+# exit:  Codex's own exit code, 124 when the watchdog killed it, 2 on bad usage.
+set -u
+
+idle=300 max=1800 log=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --log)  log="$2"; shift 2 ;;
+    --idle) idle="$2"; shift 2 ;;
+    --max)  max="$2"; shift 2 ;;
+    --)     shift; break ;;
+    *)      echo "codex-run: unknown option $1" >&2; exit 2 ;;
+  esac
+done
+if [ -z "$log" ] || [ $# -eq 0 ]; then
+  echo "usage: codex-run --log <file> [--idle S] [--max S] -- <codex exec args...>" >&2
+  exit 2
+fi
+
+: > "$log"
+# New session so the group id equals the pid and one kill reaches every child.
+perl -MPOSIX=setsid -e 'setsid; exec @ARGV' codex exec --json "$@" >> "$log" 2>&1 < /dev/null &
+pid=$!
+
+start=$(date +%s) last_size=0 last_change=$start reason=""
+while kill -0 "$pid" 2>/dev/null; do
+  sleep 5
+  now=$(date +%s)
+  size=$(wc -c < "$log")
+  if [ "$size" -ne "$last_size" ]; then last_size=$size; last_change=$now; fi
+  if [ $((now - last_change)) -ge "$idle" ]; then reason="no output for ${idle}s"; break; fi
+  if [ $((now - start)) -ge "$max" ]; then reason="ran past ${max}s"; break; fi
+done
+
+if [ -n "$reason" ]; then
+  # Bash prints a "Terminated" job notice when this block ends; keep it off stderr.
+  exec 3>&2
+  {
+    kill -TERM -- "-$pid"
+    sleep 5
+    kill -KILL -- "-$pid"
+    wait "$pid"
+    echo "codex-run: watchdog killed Codex: $reason. Last events:" >&3
+    tail -n 5 "$log" | cut -c1-300 >&3
+  } 2>/dev/null
+  exit 124
+fi
+
+wait "$pid"

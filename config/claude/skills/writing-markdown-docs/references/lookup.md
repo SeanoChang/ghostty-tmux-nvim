@@ -15,15 +15,17 @@ arrives knowing what they want and leaves the moment they find it.
 
 ## Rules
 
+- **Entries are a table** when they share fields, one row each. Use one `###`
+  per entry only when an entry needs code or a diagram.
+
 - Optimise for scanning, not reading. The reader is not starting at the top and
   will not finish it; every entry has to stand on its own.
 - Every entry answers the same questions in the same order. One inconsistent
   entry costs more than a missing one — it teaches the reader they can't trust
   the shape of the rest.
-- **Section 1 must say what is excluded.** A reference that silently omits
-  things is worse than one that is visibly partial: the reader stops looking the
-  moment they don't find something, rather than checking whether it was ever
-  meant to be there.
+- **Section 1 must say what is excluded.** A silent gap is worse than a visible
+  one. A reader who does not find something stops looking; they do not check
+  whether it was ever meant to be there.
 - No narrative. If the material needs a story to make sense, it's a teaching
   document, not a lookup.
 - **Section 4 is non-droppable when any entry has a surprise in it.** The

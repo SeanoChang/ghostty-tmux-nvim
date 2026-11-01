@@ -7,6 +7,7 @@ inconvenient hour.
 ## Outline
 
 ```text
+> [!tldr]                  what this does, and when to run it, in two lines
 1. When to run this        the trigger, and when NOT to
 2. Preconditions           what must be true, and how to check each
 3. Steps                   numbered; each an exact command plus expected output
@@ -28,6 +29,8 @@ inconvenient hour.
   that line is will cross it without deciding to.
 - Write for someone executing this under pressure. Prose the reader has to parse
   before acting is a defect here, even where it would be fine in other genres.
+- **Steps are numbered and short:** one command, one expected output, one
+  sentence at most. Explanation goes in a folded `> [!note]-` under the step.
 - Use absolute values, never relative ones: name the host, the environment, the
   version. "The current cluster" means something different next quarter, and by
   then this is still the document someone is following.

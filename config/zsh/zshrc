@@ -63,8 +63,9 @@ y() {
   rm -f "$tmp"
 }
 
-# list the directory on every cd
-chpwd() { eza -1 --icons --group-directories-first --git-ignore | head -20 }
+# list the directory on every cd, in a terminal only: without a tty eza reads
+# paths from stdin, which blocks agent shells whose stdin never closes
+chpwd() { [[ -t 0 && -t 1 ]] || return 0; eza -1 --icons --group-directories-first --git-ignore . | head -20 }
 
 # ── conda (lazy-loaded: the shim replaces itself on first call) ──────────────
 conda() {
@@ -141,3 +142,12 @@ claude-or() {
 
 # ── zsh syntax highlighting (must be last) ───────────────────────────────────
 source /opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+
+# bun completions
+[ -s "/Users/seanochang/.bun/_bun" ] && source "/Users/seanochang/.bun/_bun"
+
+# >>> grok installer >>>
+export PATH="$HOME/.grok/bin:$PATH"
+fpath=(~/.grok/completions/zsh $fpath)
+autoload -Uz compinit && compinit -C
+# <<< grok installer <<<
