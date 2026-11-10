@@ -91,6 +91,12 @@ option is recommended, a "Use recommendations" button sets each decision that
 has a recommendation to its recommended options, and clears his other picks
 there.
 
+Options are plain rows with a letter key: round for pick one, square for pick
+any. The key fills when he picks the row. On a window 900 px or wider, a left
+pane lists the decisions and every `## ` section in page order, marks the part
+in view, and fills a decision's number when it is answered. Give each section
+a short `## ` heading, because the pane shows two lines of it at most.
+
 Not supported: images, raw HTML (it is shown as text), math and charts. A page
 that needs those is a visual-artifacts page.
 
@@ -137,4 +143,5 @@ python3 -m pytest ~/.claude/skills/brief-artifact/tests -q -p no:cacheprovider
 `test_build.py` covers the markdown rules and the page contract.
 `test_page.py` drives the page in headless Chromium: the reply text against a
 second version on random briefs, both copy fallbacks, no sideways scroll from
-320 px, both themes, text contrast, and that the page makes no request.
+320 px, both themes, text contrast, the option keys, the section pane, and
+that the page makes no request.

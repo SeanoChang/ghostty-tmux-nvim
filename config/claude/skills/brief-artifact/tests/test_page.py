@@ -33,7 +33,9 @@ def browser():
 
 
 def open_page(browser, page_html, width=1100, height=900, scheme="light", clipboard=True):
-    context = browser.new_context(viewport={"width": width, "height": height}, color_scheme=scheme)
+    # Reduced motion makes the pane's scroll instant, so the tests need no waits.
+    context = browser.new_context(viewport={"width": width, "height": height}, color_scheme=scheme,
+                                  reduced_motion="reduce")
     if clipboard:
         context.grant_permissions(["clipboard-read", "clipboard-write"], origin=ORIGIN)
     page = context.new_page()
@@ -262,7 +264,7 @@ python3 -m pytest tests/test_merge_gate.py -q -p no:cacheprovider --some-very-lo
 """
 
 
-@pytest.mark.parametrize("width", [320, 360, 768, 1280])
+@pytest.mark.parametrize("width", [320, 360, 768, 899, 900, 1040, 1280, 1920])
 def test_the_page_never_scrolls_sideways(browser, width):
     page = open_page(browser, build.build(WIDE).html, width=width, height=800)
     sizes = page.evaluate("[document.documentElement.scrollWidth, document.documentElement.clientWidth]")
@@ -327,14 +329,106 @@ def test_every_text_colour_passes_4_5_to_1_on_every_surface_it_sits_on(name):
     assert contrast(theme["bg"], theme["ink"]) >= 7
 
 
-def test_a_selected_option_differs_by_more_than_colour(browser):
-    page = open_page(browser, build.build(DECISIONS).html)
+def rgb_hex(css):
+    r, g, b = (int(v) for v in re.findall(r"\d+", css)[:3])
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_a_selected_option_has_a_filled_key_that_does_not_depend_on_hue(browser, scheme):
+    """The reader is red-green colour-blind: selected against not selected is light against dark."""
+    page = open_page(browser, build.build(DECISIONS).html, scheme=scheme)
+    theme = build.LIGHT if scheme == "light" else build.DARK
     option = page.locator("#d1 label.option").nth(1)
-    before = option.evaluate("e => getComputedStyle(e).boxShadow")
+    key = option.locator(".key")
+    assert key.inner_text() == "B"
+    assert rgb_hex(key.evaluate("e => getComputedStyle(e).backgroundColor")) != theme["ink"]
     option.click()
     assert page.locator('#d1 input[value="B"]').is_checked()
-    after = option.evaluate("e => getComputedStyle(e).boxShadow")
-    assert before == "none" and re.search(r"inset", after)
+    filled = rgb_hex(key.evaluate("e => getComputedStyle(e).backgroundColor"))
+    letter = rgb_hex(key.evaluate("e => getComputedStyle(e).color"))
+    assert filled == theme["ink"] and contrast(filled, theme["bg"]) >= 7 and contrast(letter, filled) >= 7
+    # The other keys stay empty, and the rows have no box around them.
+    other = page.locator("#d1 label.option").nth(0)
+    assert rgb_hex(other.locator(".key").evaluate("e => getComputedStyle(e).backgroundColor")) != theme["ink"]
+    for side in ("borderLeftWidth", "borderRightWidth"):
+        assert option.evaluate(f"e => getComputedStyle(e).{side}") == "0px"
+    assert option.evaluate("e => getComputedStyle(e).boxShadow") == "none"
+    # Pick-one keys are round and pick-any keys are square.
+    assert key.evaluate("e => getComputedStyle(e).borderTopLeftRadius") == "50%"
+    assert page.locator("#d2 .key").first.evaluate("e => getComputedStyle(e).borderTopLeftRadius") == "0px"
+
+
+def test_options_work_from_the_keyboard(browser):
+    page = open_page(browser, build.build(DECISIONS).html)
+    page.focus('#d1 input[value="A"]')
+    page.keyboard.press("Space")
+    assert page.locator('#d1 input[value="A"]').is_checked()
+    page.keyboard.press("ArrowDown")
+    assert page.locator('#d1 input[value="B"]').is_checked()
+    outline = page.locator('#d1 label.option').nth(1).locator(".key").evaluate("e => getComputedStyle(e).outlineStyle")
+    assert outline == "solid"
+
+
+LONG = DECISIONS + "\n" + "\n".join(f"## Part {i}\n\n" + "Filler text. " * 60 + "\n" for i in range(4))
+
+
+def test_the_section_pane_sits_left_of_the_text_on_a_wide_window_only(browser):
+    html = build.build(LONG).html
+    wide = open_page(browser, html, width=1280, height=800)
+    nav, main = wide.locator("nav.toc").bounding_box(), wide.locator("main").bounding_box()
+    assert nav["x"] >= 16 and nav["x"] + nav["width"] <= main["x"]
+    assert main["width"] <= 732
+    # It stays in view while the page scrolls.
+    wide.evaluate("window.scrollTo(0, 2000)")
+    assert wide.evaluate("window.scrollY") == 2000
+    assert abs(wide.evaluate("document.querySelector('nav.toc').getBoundingClientRect().top")) <= 1
+    for width in (899, 600, 360):
+        narrow = open_page(browser, html, width=width, height=800)
+        assert not narrow.locator("nav.toc").is_visible()
+    assert wide.problems == []
+
+
+def test_a_pane_link_scrolls_to_its_section_and_does_not_navigate(browser):
+    page = open_page(browser, build.build(LONG).html, width=1280, height=800)
+    before = page.url
+    page.click('nav.toc a[data-target="s3"]')
+    top = page.evaluate("document.getElementById('s3').getBoundingClientRect().top")
+    assert 0 <= top <= 120, top
+    assert page.url == before  # no fragment navigation inside the viewer's frame
+    assert page.get_attribute('nav.toc a[data-target="s3"]', "aria-current") == "true"
+    assert page.locator('nav.toc a[aria-current="true"]').count() == 1
+    page.click('nav.toc a[data-target="d2"]')
+    assert page.get_attribute('nav.toc a[data-target="d2"]', "aria-current") == "true"
+    assert page.locator('nav.toc a[aria-current="true"]').count() == 1
+    # The reader's own scroll, after the click's scroll came to rest, hands the
+    # choice back to the scroll position.
+    page.wait_for_timeout(400)
+    page.mouse.move(640, 400)
+    page.mouse.wheel(0, -30000)
+    page.wait_for_function("document.querySelector('nav.toc a[data-target=\"d1\"]').getAttribute('aria-current') === 'true'")
+    assert page.problems == []
+
+
+def test_the_pane_shows_which_decisions_are_answered(browser):
+    page = open_page(browser, build.build(LONG).html, width=1280, height=800)
+    answered = "els => els.map(e => e.dataset.target)"
+    assert page.eval_on_selector_all("nav.toc a[data-answered]", answered) == []
+    page.check('#d2 input[value="B"]')
+    page.fill("#d3 textarea", "yes")
+    assert page.eval_on_selector_all("nav.toc a[data-answered]", answered) == ["d2", "d3"]
+    chip = page.locator('nav.toc a[data-target="d2"] .toc-num')
+    assert rgb_hex(chip.evaluate("e => getComputedStyle(e).backgroundColor")) == build.LIGHT["ink"]
+    page.uncheck('#d2 input[value="B"]')
+    assert page.eval_on_selector_all("nav.toc a[data-answered]", answered) == ["d3"]
+
+
+def test_a_report_with_no_decision_still_has_a_working_pane(browser):
+    report = "# Build review\n\nAll green.\n\n" + "\n".join(f"## Part {i}\n\n" + "Filler text. " * 80 + "\n" for i in range(4))
+    page = open_page(browser, build.build(report).html, width=1280, height=800)
+    page.click('nav.toc a[data-target="s4"]')
+    assert page.get_attribute('nav.toc a[data-target="s4"]', "aria-current") == "true"
+    assert page.locator("#copy").count() == 0 and page.problems == []
 
 
 @pytest.mark.parametrize("kinds", [["quote"] * 13, ["list"] * 6, ["list", "quote"] * 4 + ["quote"]])
@@ -343,3 +437,16 @@ def test_the_deepest_nesting_the_script_accepts_fits_a_320px_page(browser, kinds
     page = open_page(browser, build.build(nested(kinds)).html, width=320, height=700)
     sizes = page.evaluate("[document.documentElement.scrollWidth, document.documentElement.clientWidth]")
     assert sizes[0] <= sizes[1], (kinds, sizes)
+
+
+def test_at_the_end_of_the_page_the_last_part_in_view_is_the_current_one(browser):
+    page = open_page(browser, build.build(LONG).html, width=1280, height=800)
+    page.mouse.move(640, 400)
+    page.mouse.wheel(0, 60000)
+    page.wait_for_function("document.querySelector('nav.toc a[data-target=\"respond\"]').getAttribute('aria-current') === 'true'")
+    assert page.locator('nav.toc a[aria-current="true"]').count() == 1
+    # A click on a part that cannot reach the top keeps that part as the current one.
+    page.click('nav.toc a[data-target="s5"]')
+    assert page.get_attribute('nav.toc a[data-target="s5"]', "aria-current") == "true"
+    page.wait_for_timeout(400)
+    assert page.get_attribute('nav.toc a[data-target="s5"]', "aria-current") == "true"

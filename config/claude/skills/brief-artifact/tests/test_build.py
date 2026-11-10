@@ -355,3 +355,38 @@ def test_random_nesting_either_keeps_every_word_or_is_refused():
             assert f"word{i}x" in r.html, kinds
         assert "sentinel-after" in r.html and [d["title"] for d in r.decisions] == ["Tail question"], kinds
     assert built > 100 and refused > 100, (built, refused)
+
+
+# ------------------------------------------------------------- section pane
+
+def test_the_section_pane_lists_decisions_and_sections_in_page_order():
+    r = build.build(DECISIONS + "\n## Not tested\n\ntext\n")
+    nav = r.html.split('<nav class="toc"', 1)[1].split("</nav>", 1)[0]
+    targets = re.findall(r'data-target="([^"]+)"', nav)
+    assert targets == ["d1", "d2", "d3", "s1", "s2", "respond"]
+    assert re.findall(r'href="([^"]+)"', nav) == ["#" + t for t in targets]
+    for text in ("How should the hook treat a merge inside a larger command?", "Evidence", "Not tested", "Your response"):
+        assert text in nav
+    assert re.findall(r'<span class="toc-num">(\d)</span>', nav) == ["1", "2", "3"]
+    # Every target is an element on the page, and the pane comes before the text column.
+    for target in targets:
+        assert r.html.count(f' id="{target}"') == 1, target
+    assert '<h2 id="s1">Evidence</h2>' in r.html
+    assert r.html.index('<nav class="toc"') < r.html.index("<main")
+
+
+def test_a_report_gets_a_section_pane_and_a_one_part_page_gets_none():
+    r = build.build("# Build review\n\nAll green.\n\n## Findings\n\n- one\n\n## Not covered\n\ntext\n")
+    nav = r.html.split('<nav class="toc"', 1)[1].split("</nav>", 1)[0]
+    assert re.findall(r'data-target="([^"]+)"', nav) == ["s1", "s2"]
+    assert 'id="respond"' not in r.html and "<textarea" not in r.html
+    assert "<nav" not in build.build("# Build review\n\nAll green.\n\n## Findings\n\n- one\n").html
+    assert "<nav" not in build.build("# Two words\n\njust text\n").html
+
+
+def test_text_in_the_section_pane_is_escaped():
+    r = build.build('# Two words\n\n## ? Pick "one" <now> & go\n\n## A <b>bold</b> `code` & more\n\ntext\n')
+    nav = r.html.split('<nav class="toc"', 1)[1].split("</nav>", 1)[0]
+    assert "Pick &quot;one&quot; &lt;now&gt; &amp; go" in nav
+    assert "A &lt;b&gt;bold&lt;/b&gt; code &amp; more" in nav
+    assert "<b>" not in nav and "<code>" not in nav

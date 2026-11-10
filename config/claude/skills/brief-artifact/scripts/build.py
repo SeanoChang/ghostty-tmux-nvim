@@ -170,6 +170,7 @@ class Builder:
         self.blocks = split_blocks(tokens)
         self.warnings = []
         self.decisions = []
+        self.sections = []   # (element id, plain title, decision number or None), in page order
 
     # -- small render helpers
     def inline(self, children):
@@ -301,6 +302,7 @@ class Builder:
         })
 
         did = f"d{number}"
+        self.sections.append((did, title, number))
         hint = {"one": "pick one", "many": "pick any", "open": "your answer"}[kind]
         out = [f'<section class="decision" id="{did}" data-kind="{kind}" data-title="{esc(title)}">\n',
                f'<p class="kicker"><span class="num">{number}</span>Decision · {hint}</p>\n',
@@ -316,7 +318,8 @@ class Builder:
                 out.append(
                     f'<label class="option"><input type="{control}" name="{did}" value="{KEYS[i]}" '
                     f'data-label="{esc(label)}"{" data-rec" if rec else ""}>'
-                    f'<span class="option-body"><span class="option-head"><span class="key">{KEYS[i]}</span>'
+                    f'<span class="key" aria-hidden="true">{KEYS[i]}</span>'
+                    f'<span class="option-body"><span class="option-head">'
                     f'<span class="option-label">{esc(label)}</span>{badge}</span>{desc_html}{more_html}</span></label>\n')
             out.append("</fieldset>\n")
             out.append(self.render_blocks(body[index + 1:]))
@@ -328,6 +331,32 @@ class Builder:
                        f'<textarea name="{did}-note" rows="3"></textarea></label>\n')
         out.append("</section>\n")
         return "".join(out)
+
+    # -- the section pane
+    def section_heading(self, block):
+        """A plain `## ` heading gets an id, so the pane can scroll to it."""
+        children = block[1].children
+        title = plain_text(children)
+        if not title:
+            return self.render(block)
+        sid = f"s{sum(1 for s in self.sections if s[2] is None) + 1}"
+        self.sections.append((sid, title, None))
+        return f'<h2 id="{sid}">{self.inline(children)}</h2>\n'
+
+    def pane(self):
+        """The left pane: decisions and sections in page order. Empty for a page with one part."""
+        entries = list(self.sections)
+        if self.decisions:
+            entries.append(("respond", "Your response", None))
+        if len(entries) < 2:
+            return ""
+        items = []
+        for sid, title, number in entries:
+            chip = f'<span class="toc-num">{number}</span>' if number else ""
+            items.append(f'<li><a href="#{sid}" data-target="{sid}">{chip}'
+                         f'<span class="toc-text">{esc(title)}</span></a></li>\n')
+        return ('<nav class="toc" aria-label="Sections"><p class="kicker">On this page</p>\n<ol>\n'
+                + "".join(items) + "</ol></nav>\n")
 
     # -- the page
     def build(self):
@@ -357,6 +386,10 @@ class Builder:
         body, i = [], 0
         while i < len(rest):
             marker = self.decision_marker(rest[i])
+            if not marker and heading_level(rest[i]) == 2:
+                body.append(self.section_heading(rest[i]))
+                i += 1
+                continue
             if not marker:
                 body.append(self.callout(rest[i]) or self.render(rest[i]))
                 i += 1
@@ -375,18 +408,20 @@ class Builder:
             self.warnings.append(f"{n} decisions; ask at most {DECISION_LIMIT} at one time")
 
         kicker = f"Brief · {n} decision{'' if n == 1 else 's'}" if n else "Brief"
+        pane = self.pane()
         page = [f"<title>{esc(name)}</title>\n", f"<style>\n{css()}</style>\n",
+                '<div class="page">\n', pane,
                 f'<main class="brief" data-title="{esc(title)}">\n',
                 f'<p class="kicker">{kicker}</p>\n',
                 f"<h1>{self.inline(blocks[0][1].children)}</h1>\n", lead, *body]
         if n:
-            page.append(RESPOND)
-        page.append("</main>\n")
-        if n:
             has_rec = any(o["recommended"] for d in self.decisions for o in d["options"])
             accept = '<button type="button" id="accept">Use recommendations</button>' if has_rec else ""
-            page.append(f'<div class="bar"><div class="bar-in"><span id="status" role="status"></span>'
-                        f'{accept}<button type="button" id="copy" class="primary">Copy response</button></div></div>\n')
+            page.append(RESPOND)
+            page.append(f'<div class="bar"><span id="status" role="status"></span>'
+                        f'{accept}<button type="button" id="copy" class="primary">Copy response</button></div>\n')
+        page.append("</main>\n</div>\n")
+        if n or pane:
             page.append(f"<script>\n{SCRIPT}</script>\n")
         return Result(title, name, self.decisions, self.warnings, "".join(page), words)
 
@@ -420,8 +455,24 @@ CSS = """:root{/*LIGHT*/color-scheme:light;
 :root[data-theme="dark"]{/*DARK*/color-scheme:dark}
 *,*::before,*::after{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:400 1rem/1.65 var(--sans);-webkit-text-size-adjust:100%;text-rendering:optimizeLegibility}
-.brief{max-width:732px;margin:0 auto;padding:40px 16px 48px;overflow-wrap:break-word}
-@media (min-width:720px){.brief{padding:64px 24px 64px}}
+.page{max-width:732px;margin:0 auto;padding:0 16px}
+.brief{min-width:0;padding:40px 0 48px;overflow-wrap:break-word}
+.brief:has(>.bar){padding-bottom:0}
+.toc{display:none}
+h2,section{scroll-margin-top:24px}
+@media (min-width:720px){.page{padding:0 24px}.brief{padding-top:64px}}
+@media (min-width:900px){
+.page{max-width:none;display:grid;grid-template-columns:200px minmax(0,732px);column-gap:48px;justify-content:center}
+.toc{display:block;position:sticky;top:0;align-self:start;max-height:100vh;overflow-y:auto;padding:64px 0 24px}
+}
+.toc ol{list-style:none;margin:0;padding:0;border-left:1px solid var(--line-soft)}
+.toc li{margin:0}
+.toc a{display:flex;gap:.5rem;align-items:flex-start;margin-left:-1px;padding:.35rem 0 .35rem .875rem;border-left:1px solid transparent;color:var(--ink-2);font-size:.8125rem;line-height:1.4;text-decoration:none}
+.toc a:hover{color:var(--ink)}
+.toc a[aria-current="true"]{color:var(--ink);font-weight:600;border-left-color:var(--ink)}
+.toc-num{flex:none;display:inline-grid;place-items:center;width:1.25rem;height:1.25rem;margin-top:-.05rem;font:500 .6875rem/1 var(--mono);color:var(--ink-2);border:1px solid var(--line);border-radius:50%}
+.toc a[data-answered] .toc-num{color:var(--bg);background:var(--ink);border-color:var(--ink)}
+.toc-text{min-width:0;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere}
 .kicker{font:500 .75rem/1.5 var(--mono);letter-spacing:.03em;text-transform:uppercase;color:var(--ink-3);margin:0 0 .75rem}
 h1{font-size:clamp(1.5rem,1.1rem + 1vw,2rem);line-height:1.2;font-weight:500;letter-spacing:-.01em;margin:0 0 1rem}
 .lead{font-size:1.125rem;line-height:1.55;color:var(--ink-2);margin:0 0 2rem}
@@ -455,14 +506,16 @@ tr:last-child>td{border-bottom:0}
 .decision{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--line)}
 .decision>h2{margin-top:0}
 .num{display:inline-block;min-width:1.5em;margin-right:.6em;padding:0 .35em;text-align:center;color:var(--bg);background:var(--ink)}
-.options{border:0;margin:1.25rem 0;padding:0;display:grid;gap:8px;min-width:0}
+.options{border:0;margin:1.25rem 0;padding:0;min-width:0;border-top:1px solid var(--line-soft)}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
-.option{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px;align-items:start;padding:12px 14px;border:1px solid var(--line);background:var(--bg);cursor:pointer}
-.option:hover{background:var(--raised)}
-.option:has(input:checked){background:var(--panel);border-color:var(--ink);box-shadow:inset 3px 0 0 var(--ink)}
-.option input{width:1.1rem;height:1.1rem;margin:.3rem 0 0;accent-color:var(--ink)}
+.option{position:relative;display:grid;grid-template-columns:auto minmax(0,1fr);gap:14px;align-items:start;padding:14px 0;border-bottom:1px solid var(--line-soft);cursor:pointer}
+.option input{position:absolute;top:14px;left:0;width:1.625rem;height:1.625rem;margin:0;opacity:0;cursor:pointer}
+.key{display:inline-grid;place-items:center;width:1.625rem;height:1.625rem;font:500 .75rem/1 var(--mono);color:var(--ink-2);border:1px solid var(--line);border-radius:0}
+[data-kind="one"] .key{border-radius:50%}
+.option:hover .key{border-color:var(--ink);color:var(--ink)}
+.option input:checked+.key{color:var(--bg);background:var(--ink);border-color:var(--ink)}
+.option input:focus-visible+.key{outline:2px solid var(--accent);outline-offset:2px}
 .option-head{display:flex;flex-wrap:wrap;gap:.2rem .6rem;align-items:baseline}
-.key{font:500 .75rem/1.5 var(--mono);color:var(--ink-3)}
 .option-body{min-width:0}
 .option-label{font-weight:600}
 .option-label,.callout-name{min-width:0;overflow-wrap:anywhere}
@@ -474,9 +527,7 @@ tr:last-child>td{border-bottom:0}
 textarea{display:block;width:100%;min-height:2.6rem;resize:vertical;font:inherit;font-size:.9375rem;line-height:1.5;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:0;padding:8px 10px}
 .respond{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--ink)}
 .reply{white-space:pre-wrap;overflow-wrap:anywhere;margin:1rem 0 0}
-.bar{position:sticky;bottom:0;background:var(--bg);border-top:1px solid var(--line)}
-.bar-in{max-width:732px;margin:0 auto;padding:10px 16px;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-@media (min-width:720px){.bar-in{padding:10px 24px}}
+.bar{position:sticky;bottom:0;margin-top:3rem;padding:10px 0;background:var(--bg);border-top:1px solid var(--line);display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 #status{flex:1 1 12rem;font:500 .75rem/1.5 var(--mono);letter-spacing:.02em;color:var(--ink-2)}
 button{font:500 .75rem/1 var(--mono);letter-spacing:.03em;text-transform:uppercase;min-height:40px;padding:0 14px;color:var(--ink);background:transparent;border:1px solid var(--line);border-radius:0;cursor:pointer}
 button:hover{border-color:var(--ink)}
@@ -484,17 +535,75 @@ button.primary{color:var(--bg);background:var(--ink);border-color:var(--ink)}
 button.primary:hover{opacity:.85}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .offscreen{position:fixed;left:-9999px;top:0;opacity:0}
-@media print{.bar{display:none}}
+@media print{.bar,.toc{display:none}}
 """
 
-# The reply is plain text, built in the page from what he picked. Clipboard
-# access can be blocked in the viewer, so copy falls back twice: the old
-# execCommand path, then selecting the visible reply for a manual copy.
+# The page script has two parts. The section pane scrolls to a part and marks
+# the one in view; its links never navigate, because a fragment link could move
+# the viewer's frame. The reply is plain text, built in the page from what he
+# picked. Clipboard access can be blocked in the viewer, so copy falls back
+# twice: the old execCommand path, then selecting the visible reply.
 SCRIPT = r"""(() => {
   const all = (sel, root) => Array.from((root || document).querySelectorAll(sel));
   const one = id => document.getElementById(id);
   const title = document.querySelector('main').dataset.title;
+
+  // ---- section pane
+  const links = all('nav.toc a').filter(link => one(link.dataset.target));
+  const targets = links.map(link => one(link.dataset.target));
+  const calm = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // After a click the clicked entry stays the current one, also when its part
+  // cannot reach the top of the window. The scroll that the click started is
+  // over when no scroll event came for 160 ms. A later move of the page is the
+  // reader's own scroll, and it hands the choice back to the scroll position.
+  let wanted = -1, restY = null, restTimer = 0;
+  const rest = () => {
+    clearTimeout(restTimer);
+    restTimer = setTimeout(() => { restY = window.scrollY; }, 160);
+  };
+
+  function mark() {
+    let current = 0;
+    if (wanted >= 0) {
+      current = wanted;
+    } else {
+      targets.forEach((target, i) => { if (target.getBoundingClientRect().top <= 120) current = i; });
+      const root = document.documentElement;
+      if (root.scrollHeight > window.innerHeight && window.innerHeight + window.scrollY >= root.scrollHeight - 2) {
+        targets.forEach((target, i) => { if (target.getBoundingClientRect().top < window.innerHeight) current = Math.max(current, i); });
+      }
+    }
+    links.forEach((link, i) => {
+      if (i === current) link.setAttribute('aria-current', 'true');
+      else link.removeAttribute('aria-current');
+    });
+  }
+
+  if (links.length) {
+    links.forEach((link, i) => link.addEventListener('click', event => {
+      event.preventDefault();
+      wanted = i;
+      restY = null;
+      rest();
+      targets[i].scrollIntoView({ behavior: calm ? 'auto' : 'smooth', block: 'start' });
+      mark();
+    }));
+    let queued = false;
+    window.addEventListener('scroll', () => {
+      if (wanted >= 0 && restY === null) rest();
+      else if (wanted >= 0 && Math.abs(window.scrollY - restY) > 4) wanted = -1;
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(() => { queued = false; mark(); });
+    }, { passive: true });
+    window.addEventListener('resize', mark);
+    mark();
+  }
+
+  // ---- reply
   const sections = all('section.decision');
+  if (!sections.length) return;
   const reply = one('reply'), status = one('status'), comment = one('comment');
   const copyButton = one('copy'), acceptButton = one('accept');
   const indent = text => text.split('\n').join('\n   ');
@@ -502,11 +611,11 @@ SCRIPT = r"""(() => {
 
   function compose() {
     const lines = ['Response to brief: ' + title];
-    let answered = 0;
+    const done = [];
     sections.forEach((section, i) => {
       const picked = all('input:checked', section).map(input => input.value + '. ' + input.dataset.label);
       const note = section.querySelector('textarea').value.trim();
-      if (picked.length || note) answered += 1;
+      done.push(picked.length > 0 || note !== '');
       lines.push('', (i + 1) + '. ' + section.dataset.title);
       if (section.dataset.kind === 'open') {
         lines.push('   → ' + (note ? indent(note) : '(no answer)'));
@@ -517,7 +626,7 @@ SCRIPT = r"""(() => {
     });
     const extra = comment.value.trim();
     if (extra) lines.push('', 'Comment: ' + indent(extra));
-    return { text: lines.join('\n'), answered };
+    return { text: lines.join('\n'), done, answered: done.filter(Boolean).length };
   }
 
   function update() {
@@ -526,6 +635,10 @@ SCRIPT = r"""(() => {
     // drops the selection the last copy fallback made.
     if (reply.textContent !== state.text) reply.textContent = state.text;
     status.textContent = flash || state.answered + ' of ' + sections.length + ' answered';
+    sections.forEach((section, i) => {
+      const link = links.find(candidate => candidate.dataset.target === section.id);
+      if (link) link.toggleAttribute('data-answered', state.done[i]);
+    });
     return state;
   }
 
