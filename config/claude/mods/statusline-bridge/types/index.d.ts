@@ -1,5 +1,3 @@
-export type Part = { name: string; tokens: number }
-
 export type Limit = { percent: number; resetsIn: string }
 
 export type CacheView = {
@@ -21,7 +19,6 @@ export type Snapshot = {
   five: Limit | null
   seven: Limit | null
   costUsd: number | null
-  parts: Part[]
   cache: CacheView | null
 }
 

@@ -1,15 +1,15 @@
 // Status line for the desktop app: a compact native band above the prompt.
 //
-// One row of chips: the git branch (in a repo), context, the 5h and 7d limits,
-// and the prompt cache, each with a thin line. No folder or model: the app
-// already shows the model under the prompt. The context line spans the
-// whole window, its used part colored by category. Hovering the band reveals
-// the used context as its own line with a color legend, and the cache detail.
+// One row of chips, usage then cache: the git branch (in a repo), context, the
+// 5h and 7d limits with the time until each resets, and the prompt cache, each
+// with a thin line. No folder or model: the app already shows the model under
+// the prompt. Hovering the band reveals the cache detail. Like the terminal
+// script, it does not show what the context is made of.
 //
 // It reads the same sources as the terminal script: $.session for usage and
-// limits, the context-feed file for the parts, the cache-keepalive file for
-// refreshes. The mod API has no prompt_cache block, so the cache view is built
-// from each main turn's usage: expiry is the last turn's end plus the 1h TTL.
+// limits, the cache-keepalive file for refreshes. The mod API has no
+// prompt_cache block, so the cache view is built from each main turn's usage:
+// expiry is the last turn's end plus the 1h TTL.
 //
 // The terminal keeps its own status line, so the band is drawn only on the
 // app surfaces, and it draws whatever the hooks beneath drew after its own rows.
@@ -17,7 +17,7 @@
 import { atom, read, update } from 'claude-code'
 import type { ElementTable, EngineInterface, Register, RenderChildren } from 'claude-code'
 
-import type { CacheView, Limit, Part, Snapshot } from '../types'
+import type { CacheView, Limit, Snapshot } from '../types'
 
 const snapshot = atom({ plugin: 'statusline-bridge', key: 'snapshot' } as const, null)
 
@@ -65,19 +65,15 @@ export const register: Register = on => {
     const sep = <Text color={C.dim}>│</Text>
 
     // The band is one hover scope: the pointer anywhere over it reveals the
-    // detail rows beneath the chips, and the band grows to hold them.
+    // cache detail beneath the chips, and the band grows to hold it.
+    const contextTip = `context ${snap.contextPercent}% of ${short(snap.contextWindow)}`
     return (
       <Box key="band" flexDirection="column" paddingX={1}>
         <Box flexDirection="row" alignItems="center" gap={1} flexWrap="wrap">
           {snap.branch ? <Text color={C.magenta}>{`⎇ ${snap.branch}${snap.isDirty ? '*' : ''}`}</Text> : null}
           {snap.branch ? sep : null}
           <Text color={C.muted}>ctx</Text>
-          <Svg
-            source={windowLine(snap.parts, snap.contextTokens, snap.contextWindow)}
-            alt={`context ${snap.contextPercent}% of ${short(snap.contextWindow)}`}
-            width={WINDOW_W}
-            height={H}
-          />
+          <Svg source={meter(snap.contextPercent, C.blue, WINDOW_W, contextTip)} alt={contextTip} width={WINDOW_W} height={H} />
           <Text color={levelColor(snap.contextPercent, C.text)}>{`${snap.contextPercent}%`}</Text>
           <Text color={C.muted}>{`${short(snap.contextTokens)}/${short(snap.contextWindow)}`}</Text>
           {limitChip('5h', snap.five, kit, sep)}
@@ -85,10 +81,11 @@ export const register: Register = on => {
           {snap.cache && sep}
           {snap.cache && cacheChip(snap.cache, kit)}
         </Box>
-        <Box display="none" hover={{ display: 'flex' }} flexDirection="column" paddingTop={1} gap={1}>
-          {snap.parts.length > 0 && contextDetail(snap.parts, kit)}
-          {snap.cache && cacheDetail(snap.cache, snap.costUsd, kit)}
-        </Box>
+        {snap.cache && (
+          <Box display="none" hover={{ display: 'flex' }} flexDirection="column" paddingTop={1}>
+            {cacheDetail(snap.cache, snap.costUsd, kit)}
+          </Box>
+        )}
         {below}
       </Box>
     )
@@ -112,9 +109,7 @@ async function refresh($: EngineInterface): Promise<void> {
     ])
     const nowS = Math.floor((await $.clock.now()) / 1000)
     const git = repo ? await gitStatus($, cwd) : { branch: '', isDirty: false }
-    const feedDir = home ? `${home}/.cache/claude-statusline` : null
-    const feed = feedDir ? await readJson($, `${feedDir}/${id}.json`) : null
-    const kept = feedDir ? await readJson($, `${feedDir}/${id}.keepalive.json`) : null
+    const kept = home ? await readJson($, `${home}/.cache/claude-statusline/${id}.keepalive.json`) : null
 
     const limit = (kind: string): Limit | null => {
       const found = usage.rateLimits.find(r => r.kind === kind)
@@ -130,7 +125,6 @@ async function refresh($: EngineInterface): Promise<void> {
       five: limit('five_hour'),
       seven: limit('seven_day'),
       costUsd: usage.cost?.usd ?? null,
-      parts: partsOf(feed),
       cache: cacheView(nowS, tokens, model, kept),
     }
     await update($, snapshot, () => snap)
@@ -162,14 +156,6 @@ async function gitStatus($: EngineInterface, cwd: string): Promise<{ branch: str
     else if (/^[12u] /.test(line)) isDirty = true
   }
   return { branch: head === '(detached)' ? oid : head, isDirty }
-}
-
-export function partsOf(feed: unknown): Part[] {
-  const rows = (feed as { categories?: unknown } | null)?.categories
-  if (!Array.isArray(rows)) return []
-  return rows.filter(
-    (r): r is Part => typeof r?.name === 'string' && typeof r?.tokens === 'number' && r.tokens > 0,
-  )
 }
 
 // 1h-write price per MTok (2x base input), for the rebuild estimate.
@@ -224,12 +210,6 @@ function duration(s: number): string {
   return `${Math.ceil(s / 60)}m`
 }
 
-// A share as a whole percent; a part that is there but under 1% reads <1%.
-export function share(part: number, total: number): string {
-  const pct = (part / total) * 100
-  return part > 0 && pct < 1 ? '<1%' : `${Math.round(pct)}%`
-}
-
 export function short(n: number): string {
   if (n >= 1_000_000) return `${+(n / 1_000_000).toFixed(1)}M`
   if (n >= 10_000) return `${Math.round(n / 1_000)}k`
@@ -255,17 +235,6 @@ const C = {
   track: '#2f334d',
 }
 
-const PART: Record<string, { label: string; color: string }> = {
-  system: { label: 'system', color: C.blue },
-  tools: { label: 'tools', color: C.cyan },
-  mcp: { label: 'mcp', color: C.magenta },
-  agents: { label: 'agents', color: C.teal },
-  memory: { label: 'memory', color: C.yellow },
-  skills: { label: 'skills', color: C.green },
-  other: { label: 'other', color: C.muted },
-  messages: { label: 'chat', color: C.orange },
-}
-
 function levelColor(percent: number, base: string): string {
   return percent >= 80 ? C.red : base
 }
@@ -280,14 +249,14 @@ function esc(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
-// Thin rounded lines: a faint track, then colored runs over it. They are drawn
-// as plain images at their exact size: the interactive frame paints a white
-// 300x150 box around each one in the app. Each run keeps a <title> for readers.
+// Thin rounded lines: a faint track, then one colored run over it. They are
+// drawn as plain images at their exact size: the interactive frame paints a
+// white 300x150 box around each one in the app. The run keeps a <title> for
+// readers.
 const H = 10
 const Y = H / 2
 const STROKE = 3
 const WINDOW_W = 150
-const USED_W = 260
 const METER_W = 44
 
 function track(w: number): string {
@@ -299,50 +268,6 @@ function seg(x1: number, x2: number, color: string, tip: string): string {
     `<line class="seg" x1="${x1.toFixed(1)}" y1="${Y}" x2="${x2.toFixed(1)}" y2="${Y}" stroke="${color}" ` +
     `stroke-width="${STROKE}" stroke-linecap="round"><title>${esc(tip)}</title></line>`
   )
-}
-
-// Runs laid end to end over `w`, each at least 2px so a small part stays visible.
-function runs(parts: readonly { tokens: number; color: string; tip: string }[], scale: number, w: number): string {
-  let x = STROKE / 2
-  let out = ''
-  for (const p of parts) {
-    const len = Math.max(2, p.tokens * scale)
-    const end = Math.min(w - STROKE / 2, x + len)
-    if (end > x) out += seg(x, end, p.color, p.tip)
-    x = end + 1
-  }
-  return out
-}
-
-function partTip(p: Part, total: number, of: string): string {
-  const meta = PART[p.name] ?? PART.other!
-  return `${meta.label}: ${short(p.tokens)} (${share(p.tokens, total)} of ${of})`
-}
-
-// The whole window: used parts in their colors, free space as the track.
-export function windowLine(parts: readonly Part[], used: number, window: number, w = WINDOW_W): string {
-  if (window <= 0) return svg(w, H, track(w))
-  const inner = w - STROKE
-  const list = parts.length > 0 ? parts : [{ name: 'other', tokens: used }]
-  const body = runs(
-    list.map(p => ({ tokens: p.tokens, color: (PART[p.name] ?? PART.other!).color, tip: partTip(p, window, 'window') })),
-    inner / window,
-    w,
-  )
-  return svg(w, H, track(w) + body)
-}
-
-// The used tokens alone, so the small parts get room.
-export function usedLine(parts: readonly Part[], w = USED_W): string {
-  const total = parts.reduce((sum, p) => sum + p.tokens, 0)
-  if (total === 0) return svg(w, H, track(w))
-  const gaps = parts.length - 1
-  const body = runs(
-    parts.map(p => ({ tokens: p.tokens, color: (PART[p.name] ?? PART.other!).color, tip: partTip(p, total, 'used') })),
-    (w - STROKE - gaps) / total,
-    w,
-  )
-  return svg(w, H, track(w) + body)
 }
 
 // One value against its maximum, as a line. `isLevel` turns it red from 80%,
@@ -362,6 +287,8 @@ function limitChip(label: string, limit: Limit | null, { Text, Svg }: Kit, sep: 
     <Text color={C.muted}>{label}</Text>,
     <Svg source={meter(limit.percent, C.cyan, METER_W, tip)} alt={tip} width={METER_W} height={H} />,
     <Text color={levelColor(limit.percent, C.text)}>{`${limit.percent}%`}</Text>,
+    // The time until the limit resets. Text is never C.dim: that is too faint to read.
+    limit.resetsIn ? <Text color={C.muted}>{limit.resetsIn}</Text> : null,
   ]
 }
 
@@ -381,33 +308,6 @@ function cacheChip(c: CacheView, { Text, Svg }: Kit) {
     <Text color={C.muted}>{c.isWarm ? duration(c.leftS) : 'cold'}</Text>,
     c.keepalive ? <Text color={C.teal}>{`♻ ${c.keepalive.used}/${c.keepalive.max}`}</Text> : null,
   ]
-}
-
-function contextDetail(parts: readonly Part[], { Box, Text, Svg }: Kit) {
-  const total = parts.reduce((sum, p) => sum + p.tokens, 0)
-  const fixed = parts.filter(p => p.name !== 'messages').reduce((sum, p) => sum + p.tokens, 0)
-  const ordered = [...parts].sort((a, b) => b.tokens - a.tokens)
-  return (
-    <Box key="context" flexDirection="column">
-      <Box flexDirection="row" alignItems="center" gap={1}>
-        <Text color={C.muted}>{`used ${short(total)}`}</Text>
-        <Svg source={usedLine(parts)} alt="used context by part" width={USED_W} height={H} />
-        <Text color={C.muted}>{`fixed ${short(fixed)} · chat ${short(total - fixed)}`}</Text>
-      </Box>
-      <Box flexDirection="row" columnGap={2} flexWrap="wrap">
-        {ordered.map(p => {
-          const meta = PART[p.name] ?? PART.other!
-          return (
-            <Box key={`part-${p.name}`} flexDirection="row" gap={1}>
-              <Text color={meta.color}>{`● ${meta.label}`}</Text>
-              <Text>{share(p.tokens, total)}</Text>
-              <Text color={C.muted}>{short(p.tokens)}</Text>
-            </Box>
-          )
-        })}
-      </Box>
-    </Box>
-  )
 }
 
 function cacheDetail(c: CacheView, costUsd: number | null, { Box, Text }: Kit) {

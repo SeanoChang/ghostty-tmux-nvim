@@ -27,7 +27,7 @@ things that change how the terminal feels day to day:
 - **Fuzzy everything.** `fzf-tab` turns shell completion into a fuzzy finder
   with live previews. `zoxide` replaces `cd`. `sesh` jumps between tmux sessions
   and project folders.
-- **Claude Code is part of the setup.** Global working rules, a five-line status
+- **Claude Code is part of the setup.** Global working rules, a three-line status
   line, hooks, six skills, and three mods that feed the status line and keep
   the prompt cache warm.
 - **One command, with a safety net.** `./install.sh` links everything and moves
@@ -83,7 +83,7 @@ nvim                       # lazy.nvim bootstraps itself on first launch
 | **[tmux](https://github.com/tmux/tmux)** | Default `Ctrl-b` prefix. Floating popups for lazygit, yazi, sessions and builds. `Ctrl-hjkl` moves between tmux panes and Neovim splits alike. Sessions survive reboots |
 | **[Neovim](https://neovim.io) + [LazyVim](https://lazyvim.github.io)** | 23 LazyVim extras, including Go, Python, Java and C/C++. `Space` leader with which-key, a macOS shortcut layer, and inline image and diagram rendering |
 | **[zsh](https://www.zsh.org)** | [powerlevel10k](https://github.com/romkatv/powerlevel10k) instant prompt, [fzf-tab](https://github.com/Aloxaf/fzf-tab) fuzzy completion with previews, [zoxide](https://github.com/ajeetdsouza/zoxide), [eza](https://github.com/eza-community/eza) |
-| **[Claude Code](https://claude.com/claude-code)** | Global working rules, a five-line status line, two hooks, two slash commands, six skills, three mods, and a `claude-or` wrapper that routes the CLI through OpenRouter |
+| **[Claude Code](https://claude.com/claude-code)** | Global working rules, a three-line status line, two hooks, two slash commands, six skills, three mods, and a `claude-or` wrapper that routes the CLI through OpenRouter |
 
 ![fzf-tab: cd plus Tab opens a fuzzy list of folders, and the eza preview follows the selection](docs/images/fzf-tab.gif)
 
@@ -245,16 +245,15 @@ fixing it, show evidence before claiming success, never run commands that
 change remote infrastructure, never print secrets, route subagents to the
 cheapest model that can do the job, and write in plain, short sentences.
 
-**Status line.** `statusline-command.sh` draws five lines under the prompt:
+**Status line.** `statusline-command.sh` draws three lines under the prompt:
 
 1. Folder, git branch, model, effort and session title.
-2. Context used, then the 5-hour and 7-day rate-limit windows with reset times.
-3. Context split into the fixed prompt and the chat.
-4. The fixed prompt split by source: tools, skills, system, memory, MCP, agents.
-5. Prompt-cache state: warm or cold, time left, what a cold rebuild would cost,
+2. Usage: context used, then the 5-hour and 7-day rate-limit windows with
+   reset times.
+3. Prompt-cache state: warm or cold, time left, what a cold rebuild would cost,
    the hit rate and the session cost.
 
-Lines 3 to 5 read files that two of the mods write (see below).
+Line 3 also reads a file that the `cache-keepalive` mod writes (see below).
 
 **Mods.** Mods are Claude Code plugins built from function hooks; they can draw
 native panes and bands. `settings.json` loads them from `~/.claude/mods/` with
@@ -262,7 +261,7 @@ native panes and bands. `settings.json` loads them from `~/.claude/mods/` with
 
 | Mod | What it does |
 |---|---|
-| `context-feed` | Writes the context window's breakdown to a file the status line reads |
+| `context-feed` | Writes the context window's breakdown to a file in `~/.cache/claude-statusline/`. Nothing reads it now: the status line and the desktop band show usage and cache only |
 | `cache-keepalive` | Keeps an idle session's 1-hour prompt cache warm with a tiny request, at most three times per idle stretch |
 | `statusline-bridge` | The status line as a compact band in the desktop app |
 

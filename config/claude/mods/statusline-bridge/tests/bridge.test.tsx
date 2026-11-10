@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 
-import { meter, partsOf, share, usedLine, windowLine } from '../hooks/register'
+import { meter, until } from '../hooks/register'
 
 const NOW = Date.parse('2026-10-06T12:00:00Z')
 const USAGE = {
@@ -24,21 +24,20 @@ const FEED = JSON.stringify({
 const PROPS = { hasSurvey: false, isWorking: false, maxRows: 12, bodyColumns: 90 } as never
 
 describe('statusline-bridge', () => {
-  test('svg helpers and feed parsing', async () => {
+  test('svg meter and reset times', async () => {
     expect(meter(50, '#82aaff')).toContain('<line')
-    const parts = [{ name: 'tools', tokens: 27_000 }, { name: 'messages', tokens: 16_000 }]
-    // the window line: one run per part, each with a tooltip, over a 1M track
-    const win = windowLine(parts, 43_000, 1_000_000)
-    expect(win.match(/class="seg"/g)?.length).toBe(2)
-    expect(win).toContain('<title>tools: 27k (3% of window)</title>')
-    expect(usedLine(parts)).toContain('<title>chat: 16k (37% of used)</title>')
-    expect(share(306, 82_000)).toBe('<1%')
-    expect(share(27_000, 82_000)).toBe('33%')
+    // one colored run over the track, whatever fills the context
+    expect(meter(8, '#82aaff', 150).match(/class="seg"/g)?.length).toBe(1)
+    expect(meter(0, '#82aaff').match(/class="seg"/g)).toBeNull()
     // usage turns red from 80%; the cache line keeps its own color when full
     expect(meter(90, '#86e1fc')).toContain('#ff757f')
     expect(meter(100, '#c3e88d', 44, '', false)).not.toContain('#ff757f')
-    expect(partsOf({ categories: [{ name: 'tools', tokens: 5 }, { name: 'x', tokens: 0 }] })).toEqual([{ name: 'tools', tokens: 5 }])
-    expect(partsOf(null)).toEqual([])
+    const nowS = NOW / 1000
+    expect(until('2026-10-06T16:30:00Z', nowS)).toBe('4h30m')
+    expect(until('2026-10-12T10:00:00Z', nowS)).toBe('5d22h')
+    expect(until('2026-10-06T12:20:00Z', nowS)).toBe('20m')
+    expect(until('2026-10-06T11:00:00Z', nowS)).toBe('now')
+    expect(until(undefined, nowS)).toBe('')
   })
 
   for (const surface of ['desktop', 'terminal'] as const) {
@@ -50,7 +49,12 @@ describe('statusline-bridge', () => {
       on('session.id', () => ({ value: 's1' }))
       on('session.repo', () => ({ value: null }))
       on('env.get', () => ({ value: '/home/me' }))
-      on('fs.read', (_, e) => (String(e.path).endsWith('s1.json') ? { value: FEED } : { deny: 'missing' }) as never)
+      // A context-feed file is there, as on a machine that still runs that mod.
+      const reads: string[] = []
+      on('fs.read', (_, e) => {
+        reads.push(String(e.path))
+        return (String(e.path).endsWith('s1.json') ? { value: FEED } : { deny: 'missing' }) as never
+      })
       on('session.start', () => ({ cwd: '/work/app' }))
       on('turn.complete', () => ({ text: '' }))
       on('ui.render', () => ({ type: 'Text', props: {}, children: ['beneath'] }) as never)
@@ -74,7 +78,17 @@ describe('statusline-bridge', () => {
       expect(await ui.find({ text: '83k/1M' })).toBeDefined()
       expect(await ui.find({ text: 'beneath' })).toBeDefined()
       expect(await ui.find({ type: 'Button' })).toBeUndefined()
-      // the band is a hover scope, and the detail rows wait for hover
+      // each limit shows when it resets, as text in the readable grey, not the dim one
+      const texts = await ui.findAll({ type: 'Text' })
+      for (const reset of ['4h30m', '5d22h']) {
+        const node = texts.find(t => t.children?.length === 1 && t.children[0] === reset)
+        expect(node).toBeDefined()
+        expect(node?.props.color).toBe('#828bb8')
+      }
+      // no text anywhere in the band uses the dim color, except the │ separators
+      const dim = texts.filter(t => t.props.color === '#444a73')
+      expect(dim.every(t => t.children?.[0] === '│')).toBe(true)
+      // the band is a hover scope, and the detail row waits for hover
       const band = await ui.find({ key: 'band' })
       expect(band?.type).toBe('Box')
       type Node = { props?: Record<string, unknown>; hover?: unknown; children?: unknown[] }
@@ -87,14 +101,19 @@ describe('statusline-bridge', () => {
       walk(await ui.drawn())
       const reveal = all.find(n => n.props?.display === 'none')
       expect(reveal?.hover).toEqual({ display: 'flex' })
-      expect(await ui.find({ text: /fixed 64k · chat 16k/ })).toBeDefined()
-      expect(await ui.find({ text: /● tools/ })).toBeDefined()
       expect(await ui.find({ text: /60m left of 1h/ })).toBeDefined()
       expect(await ui.find({ text: /hit 74%/ })).toBeDefined()
+      // usage and cache only: nothing says what the context is made of
+      expect(await ui.find({ text: /fixed|chat|used / })).toBeUndefined()
+      expect(await ui.find({ text: /tools|mcp|skills|system/ })).toBeUndefined()
+      expect(reads.some(p => p.endsWith('/s1.json'))).toBe(false)
+      expect(reads.some(p => p.endsWith('/s1.keepalive.json'))).toBe(true)
       // every Svg is a plain image at its exact size: the interactive frame
       // paints a white 300x150 box in the app
       const svgs = await ui.findAll({ type: 'Svg' })
-      expect(svgs.length).toBeGreaterThan(3)
+      expect(svgs.length).toBe(4) // context, 5h, 7d, cache
+      expect(svgs.every(v => (String(v.props.source).match(/class="seg"/g) ?? []).length <= 1)).toBe(true)
+      expect(svgs.some(v => /of window|of used/.test(String(v.props.source)))).toBe(false)
       expect(svgs.every(v => v.props.isInteractive === undefined)).toBe(true)
       expect(svgs.every(v => typeof v.props.width === 'number' && v.props.height === 10)).toBe(true)
     })
