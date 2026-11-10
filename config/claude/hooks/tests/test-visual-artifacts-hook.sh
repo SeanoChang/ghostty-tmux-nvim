@@ -17,6 +17,8 @@ out=$(run "$(call '{"action":"quickstart","intent":"other","design_systems":fals
   && ok "denies quickstart for a plain page (intent other)" || no "denies quickstart for a plain page (intent other)" "got: $out"
 printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason' 2>/dev/null | grep -q 'visual-artifacts' \
   && ok "deny reason names the visual-artifacts skill" || no "deny reason names the visual-artifacts skill" "got: $out"
+printf '%s' "$out" | jq -r '.hookSpecificOutput.permissionDecisionReason' 2>/dev/null | grep -q 'brief-artifact' \
+  && ok "deny reason says a brief-artifact page is published directly" || no "deny reason says a brief-artifact page is published directly" "got: $out"
 [ "$(printf '%s' "$out" | jq -r '.hookSpecificOutput.hookEventName' 2>/dev/null)" = "PreToolUse" ] \
   && ok "output carries hookEventName PreToolUse" || no "output carries hookEventName PreToolUse" "got: $out"
 
