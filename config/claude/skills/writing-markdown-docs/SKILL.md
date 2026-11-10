@@ -1,20 +1,20 @@
 ---
 name: writing-markdown-docs
-description:
-  Use whenever writing a standalone markdown document — a learning doc that
-  explains a topic, a design, an implementation plan, a task card for an agent,
-  a status or incident report, a decision analysis, a handoff, a runbook, or a
-  reference. Covers which genre and outline it takes, how to keep it readable
-  (answer first, terms defined, one idea per sentence, a picture where prose
-  would be a wall), where the file goes, and a dialect that renders the same in
-  the terminal (markview) and in Obsidian. Use this even when the user only says
-  "write this up", "document what we found", "save your notes", "summarize where
-  we are", "explain X in a doc", or "make me a doc". Interactive pages,
-  simulations, 3D and prototypes go to visual-artifacts instead. Also use it
-  for every note in the Obsidian vault (Seano): writing, updating, splitting or
-  normalising notes, frontmatter, wikilinks, MOCs, callouts, Canvas or Bases,
-  after second-brain-obsidian has decided whether and where to write. Does not
-  apply to README, CLAUDE.md, CONTRIBUTING, changelogs, or PR bodies.
+description: >-
+  Use whenever writing a standalone markdown document or a note in the Obsidian
+  vault, even when the user only says "write this up", "document what we found",
+  "save your notes", "summarize where we are", "explain X in a doc" or "make me
+  a doc". Covers a learning doc, a design, an implementation plan, a task card
+  for an agent, a status or incident report, a decision analysis, a handoff, a
+  runbook and a reference. Covers every note in the Obsidian vault (Seano) too:
+  writing, updating, splitting or normalising notes, frontmatter, wikilinks,
+  MOCs, callouts, Canvas or Bases, after second-brain-obsidian has decided
+  whether and where to write. Sets the genre and outline, readable prose (answer
+  first, terms defined, one idea per sentence, a picture where prose would be a
+  wall), where the file goes, and one dialect that renders the same in the
+  terminal (markview) and in Obsidian. Interactive pages, simulations, 3D and
+  prototypes go to visual-artifacts instead. Does not apply to README,
+  CLAUDE.md, CONTRIBUTING, changelogs or PR bodies.
 ---
 
 # Writing Markdown Docs
