@@ -62,15 +62,28 @@ native: the harness tracks them, so they need no watchdog.)
 
 Every spec starts with the line `Mode: subagent`. It tells Codex to follow
 the subagent rules in `~/.codex/AGENTS.md` instead of the main-worker rules.
-Then the spec states:
+Then comes the eight-line brief from CLAUDE.md (Delegation), with these
+lines written for Codex:
 
-1. The goal, in one sentence.
-2. The files it may touch.
-3. The done criterion.
-4. The exact check command to run.
-5. "Make reasonable assumptions; do not ask questions." Astra stops to ask
-   when an answer could change the outcome, and `exec` has no one to answer.
-6. "Reply in one line: what changed and the check output."
+```text
+Mode: subagent
+Goal:     one sentence, the outcome
+Tier:     0 | 1 | 2
+Files:    may edit ... · must not touch ...
+Done:     the done criterion, and the exact check command to run
+          (a bug: the failing test first)
+Context:  what is decided, what is ruled out, paths to read
+Budget:   expected minutes; at 2x, stop and report
+Do not:   Make reasonable assumptions; do not ask questions. Do not start
+          agents or run a command that needs approval; report it instead.
+Return:   Reply in five short lines: Result, Changes, Evidence (the check
+          output), Not covered, Open.
+```
+
+- Keep the "do not ask questions" sentence word for word. Astra stops to ask
+  when an answer could change the outcome, and `exec` has no one to answer.
+- Send tier 2 work to Codex only when a command fully grades it. The review
+  for its tier still runs on Claude afterwards.
 
 ## Verify
 

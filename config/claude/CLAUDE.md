@@ -20,6 +20,21 @@
   Never weaken an assertion, or delete or skip a test, to get green. If a test
   looks wrong or a step is not done, tell me.
 
+## My short prompts
+
+| I type                                      | It means                                                                                     |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| "continue"                                  | Take the next open task in the plan, at its own tier and merge rule. Do not re-plan.         |
+| "going to sleep", "check tmr", "by morning" | Unattended mode, below.                                                                      |
+| "faster"                                    | Run independent tasks in parallel, and say what you cut. Never drop a tier 2 review.         |
+| "less adversary"                            | In this project: one adversary pass on tier 2, then one re-check. Save it to project memory. |
+| "all done?"                                 | Answer under three headings: Blocked on me, Changed, Found.                                  |
+
+- Unattended mode: before I leave, ask for every approval the run will need.
+  After that, never wait without a time limit on a prompt, a person, or another
+  session. Skip the blocked step, log it, and take the next task. End with
+  Blocked on me, Changed, Found.
+
 ## Verification and review
 
 - Done means demonstrated: run a real check that exercises the change (tests,
@@ -33,32 +48,83 @@
   also test against a reference or brute-force version on random inputs.
 - Mock only external boundaries (network, paid APIs, clock). Use real temp dirs
   and local services.
-- Before calling a non-trivial change done, run `verifier` on the diff. Add
-  `adversary` only after the verifier passes on edge-case-heavy code or a high
-  blast radius (auth, billing, CI, release, migrations, data deletion). Skip
-  both for trivial changes the main loop already checked.
 - "Unverified" is not a pass. Fix what blocked the check (often a command not
   in `permissions.allow` for headless runs) and rerun, or tell me.
 - A finding reaches me only after ≥1 refuter in fresh context, on the finder's
-  tier or higher. One refuter checks a review's whole finding list; release-
+  model or a higher-ranked one. One refuter checks a review's whole finding list; release-
   blocking claims get 2-of-3 refuters of their own. Refuters flag only gaps in
   correctness or stated requirements. Haiku output is data, not a finding.
-- Reviews converge: at most 3 review–fix cycles, then re-evaluate the approach.
-  After the first cycle, review only the new diff, name the bug class so every
-  instance gets fixed, and never re-report a known finding.
 - Report confirmed findings first with `file:line`, each marked as introduced or
   pre-existing, then refuted/unverified counts, then what was NOT covered. No
   agent counts, token totals, or cost.
 - When the same issue recurs, fix it at the source: a lint rule, a hook, a
   skill, or this file.
 
-## Subagents
+## Review and merge
 
-- Work in the main loop by default. Spawn only for parallel independent paths
-  (3+), reading too much for my context (10+ files), or verification that needs
-  a fresh context. Never for dependent steps, edits to the same file, or small
-  tasks. Split by context, not by role: a self-contained piece in, a compact
-  structured result out.
+- Set the tier when you write the task, from what the change touches, and write
+  it on the task. Unknown is tier 1. A repo's `REVIEW.md` can name paths that
+  are always tier 2.
+
+  | Tier | The change touches                                                                                                             | Review                                             |
+  | ---- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------- |
+  | 0    | docs, comments, config with no behaviour                                                                                       | your own check                                     |
+  | 1    | ordinary feature work, tests, UI                                                                                               | one `verifier`                                     |
+  | 2    | auth, billing, crypto, secrets, parsers, sanitizers, concurrency, numerics, migrations, data deletion, CI, release, installers | `verifier`, then `adversary` until it reports held |
+
+- Only an Important finding starts a fix round. Log Nit and Pre-existing
+  findings in `docs/known-limits.md` and move on.
+- Fix in the lead. Then resume the same reviewer with `SendMessage` on the fix
+  diff only. It never re-reports a known finding.
+- At the second bug of one class, stop patching. Name the class, re-think the
+  design for it, and fix every instance in one change.
+- At most 3 passes per reviewer on one task. If the third still fails, stop,
+  re-evaluate the approach, and list the task under "Blocked on me".
+- A review passes one commit. After a new commit, re-check before you merge.
+- Task PRs target the integration branch (`dev`). When CI is green and the
+  review passed on the head commit, post the PR comment
+  `review: pass <sha> tier=<n> important=0` (tier 2 adds ` adversary=held`).
+  Then run `gh pr merge <n> --squash --match-head-commit <sha>` as its own
+  command. The `merge-gate` hook checks each condition. Never merge into main,
+  and never pass `--admin`, `--auto` or `--delete-branch`.
+- At the end of a milestone: run the real app, open one PR from `dev` to main,
+  and stop. Its body has Delivers, Testing, Tier 2 changes (with
+  reviews-to-pass), Risk, How to revert, Known limits, and Blocked on me.
+
+## Delegation
+
+- Build dependent work in the lead session: design, code, and every fix after
+  a review. The session that wrote the plan carries it out.
+- Split by context, not by role. Delegate only a piece with its own context:
+  parallel independent paths (3+), reading too much for the lead's context
+  (10+ files), or a check that needs a fresh context. Never delegate dependent
+  steps, edits to the same file, or small tasks.
+
+  | Work                                                   | Goes to                              |
+  | ------------------------------------------------------ | ------------------------------------ |
+  | an independent component: its own files, its own check | `builder`, in a worktree             |
+  | work a command can fully grade                         | Codex first (skill `codex-exec`)     |
+  | review of a change, refuting a finding list            | `verifier`, then `adversary` by tier |
+  | logs, long output, wide search                         | `Explore`, or a Sonnet reader        |
+  | a document from handed-over material                   | `scribe`                             |
+  | work that needs this conversation's context            | `fork`                               |
+
+- A builder or Codex brief has these eight lines. Do not send a brief with a
+  line missing.
+
+  ```text
+  Goal:     one sentence, the outcome
+  Tier:     0 | 1 | 2
+  Files:    may edit ... · must not touch ...
+  Done:     the exact command and the output that proves it (a bug: the failing test first)
+  Context:  what is decided, what is ruled out, paths to read
+  Budget:   expected minutes; at 2x, stop and report
+  Do not:   ask questions, start agents, or run a command that needs approval
+  Return:   Result · Changes · Evidence · Not covered · Open
+  ```
+
+- Brief `verifier` and `adversary` with the diff, the goal, the tier, and the
+  known findings only, never the implementation history.
 - For a follow-up to a finished agent, resume it with `SendMessage` instead of
   spawning a new one; it keeps its context and skips re-reading.
 - Route by who can grade the result. Work a command can prove goes to Codex
@@ -85,11 +151,6 @@ Ranking for now: Opus 5.5 > GPT-6 Astra ≥ Sonnet 5.5.
   inherit Fable by omission.
 - Keep the stack lean: the fewest agents that cover the work. Filter bulky
   output in the main loop first (grep, head, jq); a digest is a lossy handoff.
-- Agent types: `builder` writes code · `verifier` checks a change and refutes
-  findings · `adversary` tries to break edge-case-heavy or risky changes ·
-  `scribe` writes docs · `Explore` reads and searches · `fork` only when it
-  needs my conversation context. Brief verifier and adversary with the diff
-  and goal only, never the implementation history.
 - Before a workflow over 5 agents, state agent count, model and effort per
   phase, and rough token cost. Log anything dropped (top-N caps, skipped items);
   silent truncation reads as full coverage.
