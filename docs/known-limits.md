@@ -25,10 +25,13 @@ Reviewed on 2026-11-10 at sha1 `9443fb995e1be73846dbd741a4d54f649e0e8375`.
   do not repeat it: the reason tells the agent to leave the PR open and
   report it under "Blocked on me", until `MERGE_GATE_BASE` is set.
 - **The integration branch is known by its name.** The hook accepts `dev`,
-  `develop`, `development`, `staging` and `integration`. It does not ask
-  GitHub which branch is the default, so a repo whose default branch has one
-  of these names would let an agent merge into it. A branch with any other
-  name needs `MERGE_GATE_BASE`, and then only that branch is accepted.
+  `develop`, `development` and `integration`. It does not ask GitHub which
+  branch is the default, so a repo whose default branch has one of these
+  names lets an agent merge into it. In a git-flow repo that is the intent:
+  `develop` is the default branch and the integration branch. A branch with
+  any other name needs `MERGE_GATE_BASE`, and then only that branch is
+  accepted. `staging` is not on the list, because a merge into it often
+  starts a deploy.
 - **Argument errors are reported before the lookup.** A command with a bad
   flag gets only the flag errors, not the PR conditions as well.
 - **A help request must be in plain words.** `gh pr merge --help | cat`, or
@@ -120,8 +123,8 @@ repo with no `dev` branch or no CI.
   checks the diff against the list in its own step 4. A path that a repo's
   `REVIEW.md` names as always tier 2 may not raise the tier.
 - **The milestone rule assumed `dev`.** Closed on 2026-11-10 by Sean's
-  decision: the agent uses the branch that plays that role (`develop`,
-  `development`, `staging`, `integration`) or creates `dev`, and the milestone
+  decision: the agent uses the branch the repo already integrates on,
+  whatever its name, and creates `dev` only when there is none. The milestone
   PR goes from that branch to main. For a repo with no CI, the agent opens a
   PR that adds a workflow, and Sean merges that first workflow himself.
 - **No rule covers a task that depends on a blocked, unmerged task** (older

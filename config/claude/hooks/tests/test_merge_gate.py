@@ -272,21 +272,30 @@ def test_integration_branch_name_comes_from_the_environment(gate):
     assert r["decision"] == "deny"
 
 
-@pytest.mark.parametrize("base", ["dev", "develop", "development", "staging", "integration"])
+@pytest.mark.parametrize("base", ["dev", "develop", "development", "integration"])
 def test_a_branch_with_an_integration_name_is_accepted_as_the_base(gate, base):
     r = gate(OK_CMD, pr_json=pr(baseRefName=base))
     assert r["decision"] == "allow", r
     assert f"PR into {base}," in r["reason"]  # the allow message names the real base
 
 
-@pytest.mark.parametrize("base", ["main", "master", "trunk", "release", "production", "prod", "Dev", "DEV", "dev2",
+@pytest.mark.parametrize("base", ["main", "master", "trunk", "release", "production", "prod", "staging", "stage",
+                                  "preview", "qa", "uat", "Dev", "DEV", "dev2",
                                   "develop-old", "feature/dev", "dev/x", " dev", "dev ", "", None, 0, ["dev"],
                                   {"name": "dev"}, True])
 def test_any_other_base_is_denied(gate, base):
     r = deny(gate, "base", pr_json=pr(baseRefName=base))
     assert "integration branch" in r["reason"]
-    for name in ("dev", "develop", "development", "staging", "integration", "MERGE_GATE_BASE"):
+    for name in ("`dev`", "`develop`", "`development`", "`integration`", "MERGE_GATE_BASE"):
         assert name in r["reason"], r["reason"]
+    assert "`staging`" not in r["reason"].split("Agents merge only into")[1]
+
+
+def test_a_branch_that_often_deploys_needs_the_setting(gate):
+    """`staging` is a deploy target in many repos, so its name alone is not enough."""
+    deny(gate, "base", pr_json=pr(baseRefName="staging"))
+    r = gate(OK_CMD, pr_json=pr(baseRefName="staging"), env={"MERGE_GATE_BASE": "staging"})
+    assert r["decision"] == "allow", r
 
 
 @pytest.mark.parametrize("base", ["dev", "develop", "development", "staging"])

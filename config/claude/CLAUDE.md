@@ -86,10 +86,11 @@
   does not count against this limit.
 - A review passes one commit, so commit before you ask for one. After a new
   commit, each reviewer that passed re-checks the new diff before you merge.
-- Task PRs target the integration branch: `dev`, or the branch the repo uses
-  for that (`develop`, `development`, `staging`, `integration`). When the repo
-  has none, create `dev` from the default branch and push it. When CI is green
-  and the review passed on the head commit, post the PR comment
+- Task PRs target the integration branch: the one the repo already integrates
+  on, whatever its name. Create `dev` from the default branch, and push it, only
+  when there is none. The gate knows `dev`, `develop`, `development` and
+  `integration`; another name needs `MERGE_GATE_BASE`. When CI is green and the
+  review passed on the head commit, post the PR comment
   `review: pass <sha> tier=<n> important=0` (tier 2 adds ` adversary=held`).
   Then run `gh pr merge <n> --squash --match-head-commit <sha>` as its own
   command. The `merge-gate` hook checks each condition. Never merge into main,

@@ -8,8 +8,9 @@ all of this holds for the PR's head commit:
      `--match-head-commit <full sha>`, and none of --admin, --auto,
      --disable-auto, --delete-branch.
   2. The PR is open, not a draft, and its base is the integration branch:
-     one of `dev`, `develop`, `development`, `staging` or `integration`.
-     When $MERGE_GATE_BASE is set, only that branch counts.
+     one of `dev`, `develop`, `development` or `integration`. When
+     $MERGE_GATE_BASE is set, only that branch counts. Any other name, such
+     as `staging`, needs the setting: such a branch often deploys.
   3. The sha is the PR's current head.
   4. Every CI check on that commit is green, and at least one ran and
      succeeded (skipped and neutral checks alone do not count).
@@ -89,10 +90,10 @@ REVIEW_LINE = re.compile(
 )
 GREEN = {"SUCCESS", "NEUTRAL", "SKIPPED"}
 FIELDS = "number,url,state,isDraft,baseRefName,headRefOid,statusCheckRollup,comments"
-# Branch names the hook takes as an integration branch. A repo's default branch
-# never has one of these names by convention; any other name needs
-# $MERGE_GATE_BASE, which then is the only base accepted.
-INTEGRATION_BASES = ("dev", "develop", "development", "staging", "integration")
+# Branch names the hook takes as an integration branch. Any other name needs
+# $MERGE_GATE_BASE, which then is the only base accepted. `staging` is left
+# out on purpose: in many repos a merge into it starts a deploy.
+INTEGRATION_BASES = ("dev", "develop", "development", "integration")
 
 # The command begins with plain `gh pr merge`. Only space, tab and newline may
 # come first: they are the blanks bash skips. `merge` must end the word, so
