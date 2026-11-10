@@ -119,7 +119,8 @@ repo with no `dev` branch or no CI.
 
 ## `config/claude/skills/brief-artifact`
 
-Reviewed on 2026-11-10: verifier pass and adversary held at commit `c210cd4`.
+Reviewed on 2026-11-10: verifier pass and adversary held at commit `f6a135e`
+(option cards and the section pane), and before that at `c210cd4`.
 The first verifier pass was at `65ac836`. The adversary then found two
 Important breaks, both fixed: a `data:image` link passed the parser's own link
 check, and nesting past the parser's limit of 20 dropped the rest of the file
@@ -165,6 +166,13 @@ without an error.
   removed, and the link colour and underline stay.
 - **The nesting limit counts a list as two levels and a quote as one,**
   against 14. SKILL.md gives only the pure cases (six lists, thirteen quotes).
+- **A pane entry used from the keyboard scrolls to its part but keeps the
+  focus.** The next Tab continues through the pane, not into the part. A
+  mouse or touch reader is not affected.
+- **No test needs the rule "a clicked pane entry stays current until the
+  reader scrolls".** The rule works (a reviewer probed it with short last
+  parts), but removing it leaves the suite green. This is the second rule
+  that was found with no test of its own.
 
 ### Not tested
 
