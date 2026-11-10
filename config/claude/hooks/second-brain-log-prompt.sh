@@ -1,7 +1,7 @@
 #!/bin/bash
 # UserPromptSubmit hook: append every prompt to a per-session question log.
-# Mechanical and silent by design — the judgment about what is vault-worthy
-# happens once, at the end-of-session sweep in second-brain-capture-stop.sh.
+# Mechanical and silent by design. The judgment about what is vault-worthy
+# happens later, when Sean asks for a sweep (second-brain-sweep.sh).
 # Never blocks and never writes to stdout (stdout would be injected as context).
 input=$(cat)
 sid=$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null)

@@ -1,9 +1,9 @@
 #!/bin/bash
-# Tests for the second-brain question-log + end-of-session sweep hooks.
+# Tests for the second-brain question log hook and the on-demand sweep.
 # Run: bash ~/.claude/hooks/tests/test-second-brain-hooks.sh
 HOOKS="$(cd "$(dirname "$0")/.." && pwd)"
 LOG_HOOK="$HOOKS/second-brain-log-prompt.sh"
-STOP_HOOK="$HOOKS/second-brain-capture-stop.sh"
+SWEEP="$HOOKS/second-brain-sweep.sh"
 pass=0; fail=0
 ok(){ printf '  \033[32mPASS\033[0m %s\n' "$1"; pass=$((pass+1)); }
 no(){ printf '  \033[31mFAIL\033[0m %s\n     %s\n' "$1" "$2"; fail=$((fail+1)); }
@@ -45,47 +45,52 @@ jq -e . "$SB_QUESTION_LOG_DIR/s4.jsonl" >/dev/null 2>&1 \
   && ok "emits valid JSON for prompts with quotes/backslashes" || no "emits valid JSON for prompts with quotes/backslashes" "jq rejected the line"
 teardown
 
-echo "== second-brain-capture-stop.sh =="
+echo "== second-brain-sweep.sh =="
+
+now(){ date -u +%Y-%m-%dT%H:%M:%SZ; }
+line(){ jq -cn --arg ts "$1" --arg cwd "$2" --arg prompt "$3" '{ts:$ts, cwd:$cwd, prompt:$prompt}'; }
 
 setup
 mkdir -p "$SB_QUESTION_LOG_DIR"
-echo '{"ts":"x","prompt":"look into this course gen ai policy"}' > "$SB_QUESTION_LOG_DIR/s5.jsonl"
-tp=$(mktranscript '{"role":"user"}')
-out=$(echo "{\"session_id\":\"s5\",\"transcript_path\":\"$tp\",\"stop_hook_active\":false}" | bash "$STOP_HOOK" 2>/dev/null)
-echo "$out" | jq -e '.decision=="block"' >/dev/null 2>&1 \
-  && ok "blocks when a question log exists and nothing was captured" || no "blocks when a question log exists and nothing was captured" "got: ${out:-<empty>}"
-echo "$out" | jq -r '.reason' 2>/dev/null | grep -q "gen ai policy" \
-  && ok "reason lists the logged prompts for the sweep" || no "reason lists the logged prompts for the sweep" "prompt not in reason"
+{
+  line "$(now)" "/Users/x/vaults/Seano/Learning" "explain why the row space and the null space are perpendicular"
+  line "$(now)" "/Users/x/dev/app" "run the tests again and push the branch when green"
+  line "2020-01-01T00:00:00Z" "/Users/x/dev/app" "what is a red-black tree and how does it rebalance"
+  line "$(now)" "/private/tmp/agent-demo" "what is the idempotency key for in this demo payment"
+  line "$(now)" "/Users/x/dev/app" "/model what is fast mode"
+  line "$(now)" "/Users/x/dev/app" "what is it"
+} > "$SB_QUESTION_LOG_DIR/a.jsonl"
+{
+  line "$(now)" "/Users/x/vaults/Seano/Learning" "explain why the row space and the null space are perpendicular"
+  echo 'this line is not json'
+  line "$(now)" "/Users/x/dev/purdue/ece695os" "how does the clock algorithm pick a victim page"
+} > "$SB_QUESTION_LOG_DIR/b.jsonl"
+before=$(cd "$SB_QUESTION_LOG_DIR" && cksum ./*.jsonl)
+out=$(bash "$SWEEP" 2>&1); rc=$?
+[ "$rc" = "0" ] && ok "exits 0" || no "exits 0" "rc=$rc out=$out"
+echo "$out" | grep -q "row space and the null space" && ok "lists a concept question from the last 7 days" || no "lists a concept question from the last 7 days" "$out"
+echo "$out" | grep -q "clock algorithm" && ok "reads every session log, and skips a malformed line" || no "reads every session log, and skips a malformed line" "$out"
+[ "$(echo "$out" | grep -c "row space and the null space")" = "1" ] && ok "lists a repeated question once" || no "lists a repeated question once" "$out"
+echo "$out" | grep -q "red-black" && no "omits a question older than --days" "$out" || ok "omits a question older than --days"
+echo "$out" | grep -q "idempotency" && no "omits temp-folder sessions" "$out" || ok "omits temp-folder sessions"
+echo "$out" | grep -q "fast mode" && no "omits slash commands" "$out" || ok "omits slash commands"
+echo "$out" | grep -q "run the tests again" && no "hides a prompt with no concept phrase by default" "$out" || ok "hides a prompt with no concept phrase by default"
+echo "$out" | head -1 | grep -q "2 shown of 3" && ok "first line says how many are shown and how many are held back" || no "first line says how many are shown and how many are held back" "$(echo "$out" | head -1)"
+out=$(bash "$SWEEP" --all 2>&1)
+echo "$out" | grep -q "run the tests again" && ok "--all shows prompts with no concept phrase" || no "--all shows prompts with no concept phrase" "$out"
+echo "$out" | head -1 | grep -q "3 shown of 3" && ok "--all counts every kept prompt" || no "--all counts every kept prompt" "$(echo "$out" | head -1)"
+out=$(bash "$SWEEP" --days 4000 2>&1)
+echo "$out" | grep -q "red-black" && ok "--days widens the window" || no "--days widens the window" "$out"
+after=$(cd "$SB_QUESTION_LOG_DIR" && cksum ./*.jsonl)
+[ "$before" = "$after" ] && ok "never changes the logs" || no "never changes the logs" "logs differ"
+bash "$SWEEP" --days soon >/dev/null 2>&1; [ "$?" = "2" ] && ok "refuses a --days value that is not a number" || no "refuses a --days value that is not a number" "wrong exit code"
+bash "$SWEEP" --frobnicate >/dev/null 2>&1; [ "$?" = "2" ] && ok "refuses an unknown argument" || no "refuses an unknown argument" "wrong exit code"
 teardown
 
 setup
-mkdir -p "$SB_QUESTION_LOG_DIR"
-echo '{"ts":"x","prompt":"q"}' > "$SB_QUESTION_LOG_DIR/s6.jsonl"
-tp=$(mktranscript '{"text":"ran sb gap \"unanswered thing\""}')
-out=$(echo "{\"session_id\":\"s6\",\"transcript_path\":\"$tp\",\"stop_hook_active\":false}" | bash "$STOP_HOOK" 2>/dev/null)
-[ -z "$out" ] && ok "silent when a capture decision already ran" || no "silent when a capture decision already ran" "got: $out"
-teardown
-
-setup
-mkdir -p "$SB_QUESTION_LOG_DIR"
-echo '{"ts":"x","prompt":"q"}' > "$SB_QUESTION_LOG_DIR/s7.jsonl"
-tp=$(mktranscript '{"text":"SECOND_BRAIN_CAPTURE_CHECK already asked"}')
-out=$(echo "{\"session_id\":\"s7\",\"transcript_path\":\"$tp\",\"stop_hook_active\":false}" | bash "$STOP_HOOK" 2>/dev/null)
-[ -z "$out" ] && ok "fires at most once per session (marker suppresses)" || no "fires at most once per session" "got: $out"
-teardown
-
-setup
-mkdir -p "$SB_QUESTION_LOG_DIR"
-echo '{"ts":"x","prompt":"q"}' > "$SB_QUESTION_LOG_DIR/s8.jsonl"
-tp=$(mktranscript '{"role":"user"}')
-out=$(echo "{\"session_id\":\"s8\",\"transcript_path\":\"$tp\",\"stop_hook_active\":true}" | bash "$STOP_HOOK" 2>/dev/null)
-[ -z "$out" ] && ok "silent when stop_hook_active (no hook loop)" || no "silent when stop_hook_active" "got: $out"
-teardown
-
-setup
-tp=$(mktranscript '{"role":"user"}')
-out=$(echo "{\"session_id\":\"nosuch\",\"transcript_path\":\"$tp\",\"stop_hook_active\":false}" | bash "$STOP_HOOK" 2>/dev/null)
-[ -z "$out" ] && ok "silent when the session logged no questions" || no "silent when the session logged no questions" "got: $out"
+out=$(bash "$SWEEP" 2>&1); rc=$?
+{ [ "$rc" = "0" ] && echo "$out" | grep -q "0 shown of 0"; } && ok "reports an empty window when there is no log folder" || no "reports an empty window when there is no log folder" "rc=$rc out=$out"
+[ ! -e "$SB_QUESTION_LOG_DIR" ] && ok "does not create the log folder" || no "does not create the log folder" "folder was created"
 teardown
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

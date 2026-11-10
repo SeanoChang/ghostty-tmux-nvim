@@ -264,9 +264,13 @@ native panes and bands. `settings.json` loads them from `~/.claude/mods/` with
 | `cache-keepalive` | Keeps an idle session's 1-hour prompt cache warm with a tiny request, at most three times per idle stretch |
 | `statusline-bridge` | The status line as a compact band in the desktop app |
 
-**Hooks.** Two shell hooks in `config/claude/hooks/` feed a second-brain
-workflow: one logs each prompt, and one checks at the end of a session whether
-anything is worth saving to the notes vault. A test script covers both.
+**Hooks.** Three hooks live in `config/claude/hooks/`. `merge-gate.py` checks
+each `gh pr merge` against the review rules in `CLAUDE.md`.
+`visual-artifacts-route.sh` points a request for a page at the right skill.
+`second-brain-log-prompt.sh` logs each prompt for 30 days. Nothing interrupts a
+session to ask about the notes vault: `second-brain-sweep.sh` is a read-only
+command that lists the logged questions when you ask for a sweep. Each hook has
+tests in `config/claude/hooks/tests/`.
 
 **Commands and skills.** Two slash commands live in `config/claude/commands/`:
 `/explore` and `/map`. These skills live in `config/claude/skills/`, and Claude
