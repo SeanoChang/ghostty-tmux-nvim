@@ -268,17 +268,10 @@
     return { go: s => { stop(); go(s - 1); }, get: () => i + 1, stop, start: startPlay };
   }
 
-  /** Reading depth: a .seg with data-value skim|read|deep. Sets body[data-depth] and opens/closes details.deeper. */
-  function depth(control, { initial = 'read', key } = {}) {
-    const apply = v => {
-      document.body.dataset.depth = v;
-      $$('details.deeper').forEach(d => { d.open = v === 'deep'; });
-      if (key) store.set(key, v);
-    };
-    const saved = key ? store.get(key, null) : null;
-    const s = seg(control, { onChange: apply, value: saved || initial });
-    apply(s.get());
-    return s;
+  /** Retired: the request now picks the depth. Old pages that still call this lose the tabs and keep all their content. */
+  function depth(control) {
+    if (control) control.hidden = true;
+    return { set() {}, get: () => 'read' };
   }
 
   /** Glossary: <span class="term" data-def="…">KV cache</span>. Hover, focus or tap shows a popover. */
@@ -509,18 +502,21 @@
     progress();
 
     let current = null, railItems = [];
+    const railText = e => {
+      if (e.classList.contains('fig')) return ($('.fig-title', e) || {}).textContent;
+      if (e.tagName === 'SUMMARY') return [...e.childNodes].filter(n => !(n.classList && n.classList.contains('tag'))).map(n => n.textContent).join('');
+      return e.textContent;
+    };
+    const railNodes = p => $$('h2, h3, .fig, details.deeper > summary', p).filter(e => !e.closest('.pager, .fig-head, [data-docs-summary], .is-copy, .task-spec') && (railText(e) || '').trim());
     function buildRail(p) {
       if (!rail) return;
       rail.innerHTML = '';
-      const nodes = $$('h2, h3, .fig, details.deeper > summary', p).filter(e => !e.closest('.pager, .fig-head, [data-docs-summary], .is-copy, .task-spec'));
-      railItems = nodes.map(e => {
-        let text;
-        if (e.classList.contains('fig')) text = ($('.fig-title', e) || {}).textContent;
-        else if (e.tagName === 'SUMMARY') text = [...e.childNodes].filter(n => !(n.classList && n.classList.contains('tag'))).map(n => n.textContent).join('');
-        else text = e.textContent;
-        return text && text.trim() ? { el: e, id: ensureId(e, text), text: text.trim(), sub: e.tagName !== 'H2' } : null;
-      }).filter(Boolean);
-      root.classList.toggle('no-rail', paged && railItems.length < 2); // a paged page with one anchor gets the width back
+      railItems = railNodes(p).map(e => {
+        const text = railText(e);
+        return { el: e, id: ensureId(e, text), text: text.trim(), sub: e.tagName !== 'H2' };
+      });
+      // a paged page with one anchor gets the width back; a scroll page only when no section has anchors, so its width never jumps mid-read
+      root.classList.toggle('no-rail', paged ? railItems.length < 2 : !pages.some(q => railNodes(q).length >= 2));
       if (railItems.length < 2) return;
       const head = document.createElement('div'); head.className = 'rail-title'; head.innerHTML = icon('layers', 14) + '<span>In this section</span>';
       rail.appendChild(head);
@@ -536,12 +532,18 @@
       current = p; buildRail(p);
       if (onShow) onShow(p);
     }
+    let jumped = null;
+    ['wheel', 'touchmove', 'keydown', 'pointerdown'].forEach(t => addEventListener(t, () => { jumped = null; }, { passive: true }));
     function spy() {
       const off = headerOff();
       if (!paged) {
         let sec = pages[0];
         pages.forEach(p => { if (p.getBoundingClientRect().top - off <= 1) sec = p; });
-        if (innerHeight + scrollY >= document.documentElement.scrollHeight - 2) sec = pages[pages.length - 1];
+        if (scrollY > 0 && innerHeight + scrollY >= document.documentElement.scrollHeight - 2) sec = pages[pages.length - 1];
+        if (jumped) { // a short section near the end can never reach the top line, so a jump names its target
+          const r = jumped.getBoundingClientRect();
+          if (r.bottom > 0 && r.top < innerHeight) sec = jumped; else jumped = null;
+        }
         if (sec !== current) setCurrent(sec);
       }
       if (!railItems.length) return;
@@ -563,6 +565,7 @@
 
     const reveal = el => {
       for (let d = el.closest('details'); d; d = d.parentElement && d.parentElement.closest('details')) d.open = true; // a link into "Go deeper" folds opens each one
+      jumped = el.closest('.doc-page');
       requestAnimationFrame(() => { el.scrollIntoView({ block: 'start' }); requestAnimationFrame(spy); });
     };
     function show(id, { target, scroll = true } = {}) {
@@ -581,7 +584,7 @@
       const h = decodeURIComponent(location.hash.slice(1));
       const el = h && document.getElementById(h);
       const owner = el && el.closest('.doc-page');
-      if (!el || !owner || !root.contains(owner)) { if (paged) show((current || pages[0]).id, { scroll: false }); else spy(); return; }
+      if (!el || !owner || !root.contains(owner)) { jumped = null; if (paged) show((current || pages[0]).id, { scroll: false }); else spy(); return; }
       if (el === owner) return show(owner.id);
       show(owner.id, { target: el });
     }
@@ -870,7 +873,7 @@
     });
     $$('[data-plan-claims]', root).forEach(list => {
       list.innerHTML = claims.filter(c => c.dataset.level === '1')
-        .map(c => `<li><a href="#${esc(c.id)}"><span class="claim-num">${c.dataset.n}</span> ${($('.claim-text', c) || {}).innerHTML || ''}</a></li>`).join('');
+        .map(c => `<li><a href="#${esc(c.id)}"><span class="claim-num">${c.dataset.n}</span> <span class="claim-list-text">${($('.claim-text', c) || {}).innerHTML || ''}</span></a></li>`).join('');
     });
 
     // code and call trees; a call row links to the claim or code block that shows its place
@@ -1732,8 +1735,97 @@
     return { prompt: gradingPrompt, sync, bar };
   }
 
+  /**
+   * The whole code on the left, the running line lit, and the example's state on the right.
+   *   Kit.trace(el, { code, lang, interval, steps: [{ line: 12 | '3-4,7', op, note, changes: [{ name, from, to }], state }] })
+   * op groups steps under a jump button; state is trusted HTML from the page. Compute it by running the code's logic.
+   */
+  let traceCount = 0;
+  function trace(root, { code: src, lang = '', steps = [], interval = 1300 } = {}) {
+    if (typeof src !== 'string') throw new Error('Kit.trace needs code: a string of source lines');
+    if (!steps.length) throw new Error('Kit.trace needs at least one step');
+    const total = src.replace(/\n+$/, '').split('\n').length;
+    const linesOf = (step, k) => {
+      const fail = why => { throw new Error(`Kit.trace step ${k + 1}: ${why}`); };
+      if (step.line == null) fail('it has no line');
+      const nums = [];
+      String(step.line).split(',').forEach(part => {
+        const m = part.trim().match(/^(\d+)(?:-(\d+))?$/);
+        if (!m || (m[2] && +m[2] < +m[1])) fail(`"${part.trim()}" is not a line or a range`);
+        for (let n = +m[1]; n <= +(m[2] || m[1]); n++) {
+          if (n < 1 || n > total) fail(`line ${n} is not in the code (it has ${total})`);
+          nums.push(n);
+        }
+      });
+      return nums;
+    };
+    const lines = steps.map(linesOf);
+    const ops = [...new Set(steps.map(s => s.op).filter(Boolean))];
+    const scrubId = root.id ? `${root.id}-scrub` : `trace-scrub-${++traceCount}`;
+    root.classList.add('trace');
+    root.tabIndex = root.tabIndex >= 0 ? root.tabIndex : 0;
+    root.innerHTML = `<div class="trace-bar"><button type="button" class="btn sm primary" data-play></button><button type="button" class="btn sm ghost icon" data-prev aria-label="Previous line">${icon('prev')}</button><span class="step-count"></span><button type="button" class="btn sm ghost icon" data-next aria-label="Next line">${icon('next')}</button><input type="range" class="range" id="${esc(scrubId)}" min="1" max="${steps.length}" value="1" aria-label="Step">${ops.length ? `<div class="trace-ops">${ops.map(o => `<button type="button" class="chip">${esc(o)}</button>`).join('')}</div>` : ''}</div>
+      <div class="trace-split"><figure class="fig codeblock trace-code"><pre class="code-src"><code${lang ? ` class="language-${esc(lang)}"` : ''}>${esc(src.replace(/\n+$/, ''))}</code></pre></figure><div class="trace-state" aria-live="polite"></div></div>`;
+    code($('.trace-code', root));
+    const pre = $('pre', root), state = $('.trace-state', root), count = $('.step-count', root), scrub = $('input', root);
+    const play = $('[data-play]', root), prev = $('[data-prev]', root), next = $('[data-next]', root), opBtns = $$('.trace-ops button', root);
+    const changes = list => (list && list.length ? `<dl class="trace-changes">${list.map(c => `<dt>${esc(String(c.name))}</dt><dd><span class="from">${esc(String(c.from))}</span><span class="arrow" aria-label="becomes">→</span><span class="to">${esc(String(c.to))}</span></dd>`).join('')}</dl>` : '');
+    let at = 0, timer = null;
+    const paint = () => {
+      const s = steps[at], lit = new Set(lines[at]);
+      $$('.cl', pre).forEach(l => l.classList.toggle('is-run', lit.has(+l.dataset.n)));
+      const first = $('.cl.is-run', pre);
+      if (first) { // moves the code box only, so the page stays where the reader left it
+        const r = first.getBoundingClientRect(), b = pre.getBoundingClientRect();
+        if (r.top < b.top || r.bottom > b.bottom) pre.scrollTop += r.top - b.top - (b.height - r.height) / 2;
+      }
+      state.innerHTML = `${s.note ? `<p class="trace-note">${esc(s.note)}</p>` : ''}${changes(s.changes)}${s.state || ''}`;
+      math(state); icons(state);
+      count.textContent = `${at + 1} / ${steps.length}`;
+      scrub.value = at + 1;
+      scrub.style.setProperty('--fill', `${steps.length > 1 ? (at / (steps.length - 1)) * 100 : 100}%`);
+      const had = document.activeElement; // read first: disabling the focused button drops focus, and the arrow keys with it
+      prev.disabled = at === 0; next.disabled = at === steps.length - 1;
+      if (had && had.disabled) root.focus({ preventScroll: true });
+      play.innerHTML = icon(timer ? 'pause' : 'play') + `<span>${timer ? 'Pause' : 'Play'}</span>`;
+      opBtns.forEach((b, i) => b.setAttribute('aria-pressed', String(ops[i] === s.op)));
+    };
+    const stop = () => { clearInterval(timer); timer = null; paint(); };
+    const go = k => { at = clamp(k, 0, steps.length - 1); paint(); };
+    const start = () => {
+      clearInterval(timer);
+      if (at >= steps.length - 1) at = 0;
+      timer = setInterval(() => { if (at >= steps.length - 1) stop(); else go(at + 1); }, interval);
+      paint();
+    };
+    play.addEventListener('click', () => (timer ? stop() : start()));
+    prev.addEventListener('click', () => { stop(); go(at - 1); });
+    next.addEventListener('click', () => { stop(); go(at + 1); });
+    scrub.addEventListener('input', () => { const k = +scrub.value - 1; stop(); go(k); }); // stop repaints, which resets the slider
+    opBtns.forEach((b, i) => b.addEventListener('click', () => { stop(); go(steps.findIndex(s => s.op === ops[i])); }));
+    root.addEventListener('keydown', e => {
+      if (e.target.closest('input, select, textarea')) return;
+      if (e.key === 'ArrowRight') { stop(); go(at + 1); e.preventDefault(); }
+      if (e.key === 'ArrowLeft') { stop(); go(at - 1); e.preventDefault(); }
+    });
+    paint();
+    return { go: k => { stop(); go(k - 1); }, get: () => at + 1, stop, start };
+  }
+
+  /** Where one stage sits in a whole pipeline: Kit.stageMap(el, { groups: [{ group, stages: [names] }], current: name }). */
+  function stageMap(el, { groups = [], current } = {}) {
+    const all = groups.flatMap(g => g.stages), at = all.indexOf(current);
+    const twice = all.find((s, i) => all.indexOf(s) !== i);
+    if (twice !== undefined) throw new Error(`Kit.stageMap: "${twice}" appears more than once; name each stage uniquely, or the position is ambiguous`);
+    if (at < 0) throw new Error(`Kit.stageMap: "${current}" is not a stage`);
+    let k = -1;
+    const tracks = groups.map(g => `<div class="stage-group${g.stages.includes(current) ? ' is-current' : ''}" style="flex-grow:${g.stages.length}"><span class="stage-group-name" title="${esc(g.group)}">${esc(g.group)}</span><div class="stage-ticks">${g.stages.map(s => { k++; return `<i class="stage-tick" data-state="${k < at ? 'past' : k === at ? 'current' : 'next'}" title="${esc(s)}"></i>`; }).join('')}</div></div>`).join('');
+    el.classList.add('stage-map');
+    el.innerHTML = `<p class="stage-where"><b>Stage ${at + 1} of ${all.length}</b> · ${esc(current)}</p><div class="stage-track" role="img" aria-label="Stage ${at + 1} of ${all.length}: ${esc(current)}">${tracks}</div><p class="stage-near"><span>${at ? `Before: ${esc(all[at - 1])}` : 'First stage'}</span><span>${at < all.length - 1 ? `Next: ${esc(all[at + 1])}` : 'Last stage'}</span></p>`;
+  }
+
   /** Wire up everything declarative on the page: icons, copy buttons, glossary terms, checks, math, code and call trees. */
   function init(root = document) { icons(root); copy(root); gloss(root); decide(root); math(root); $$('.fig.codeblock', root).forEach(code); $$('.fig.calls', root).forEach(calls); }
 
-  global.Kit = { $, $$, clamp, esc, ready, reducedMotion, css, isDark, onTheme, store, fmt, icon, icons, status, seg, tabs, range, hotkeys, toast, copy, clip, stepper, depth, gloss, toc, docs, plan, code, calls, decide, math, tex, mark, loop, lineChart, stackBar, niceTicks, pane, paneCard, rail, scenarios, openQuestions, init };
+  global.Kit = { $, $$, clamp, esc, ready, reducedMotion, css, isDark, onTheme, store, fmt, icon, icons, status, seg, tabs, range, hotkeys, toast, copy, clip, stepper, depth, gloss, toc, docs, plan, code, trace, stageMap, calls, decide, math, tex, mark, loop, lineChart, stackBar, niceTicks, pane, paneCard, rail, scenarios, openQuestions, init };
 })(window);

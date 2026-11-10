@@ -1,5 +1,7 @@
 # Prototype: a working product with no backend
 
+Declare `<meta name="va:format" content="prototype">`, so `render_check.py` knows the page is not a Guide or a lesson.
+
 The reader uses the product. They click through real flows on realistic data
 and come away knowing what it feels like. A prototype that looks right but
 does nothing has failed.

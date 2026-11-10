@@ -4,9 +4,6 @@
 <style data-va="claude.css"></style>
 <style>
   /* page layout only: tokens, never literal colours */
-  .map-legend { margin: 0; padding: 0 var(--sp-5) var(--sp-4); display: grid; gap: 6px; list-style: none; font-size: var(--t-sm); color: var(--ink-2); counter-reset: lg; }
-  .map-legend li { counter-increment: lg; display: grid; grid-template-columns: 22px 1fr; gap: 8px; }
-  .map-legend li::before { content: counter(lg); font: 600 var(--t-2xs)/20px var(--font-mono); width: 20px; height: 20px; border-radius: 50%; text-align: center; border: 1px solid var(--line-strong); color: var(--muted); }
   .board-tools { display: flex; gap: var(--sp-2); align-items: center; }
   .cmds { display: grid; gap: var(--sp-3); max-width: var(--wide); }
   .cmd { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-2); align-items: start; }
@@ -80,7 +77,7 @@
         <ol class="map-legend">
           <li>A client calls the API with its key.</li>
           <li>New: the gateway asks the limiter for one token for this key and route.</li>
-          <li>New: the limiter runs one Lua script in Redis. It refills the bucket and takes a token in one atomic step.</li>
+          <li>New: the limiter runs one Lua script, <code>take.lua</code>, in Redis. It refills the bucket and takes a token in one atomic step.</li>
           <li>New: the config service sends each route's budget to the limiter.</li>
           <li>Allowed requests go upstream. Today they pass the IP blocklist first; this plan removes it.</li>
           <li>The gateway counts allowed and limited requests.</li>

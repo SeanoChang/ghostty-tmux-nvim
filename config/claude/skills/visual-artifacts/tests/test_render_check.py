@@ -689,3 +689,510 @@ def test_call_text_the_scanner_blanked_still_warns():
 
 def test_prose_in_a_label_does_not_raise_the_text_warning():
     assert "dead-api-text" not in codes(GOOD + "<script>chart({ y: { label: 'TTFT of the 8k prompt (s)' } });</script>")
+
+
+# ── formats: the request picks quick, guide or learn; the page must keep to it ──────────────────────
+
+def fmt(name, body="", size=None):
+    extra = f'<meta name="va:size" content="{size}">' if size else ""
+    return GOOD + f'<meta name="va:format" content="{name}">{extra}' + body
+
+
+QUESTION = '<div class="decide" data-answer="a"><p class="decide-q">Which?</p><button data-choice="a">A</button></div>'
+FRAMES = '<figure class="fig"><div class="stepper-ctl"><button data-next></button></div>{}</figure>'
+MATH = '<span class="tex">x = 1</span>'
+
+
+@pytest.mark.parametrize("name", ["guide", "quick"])
+@pytest.mark.parametrize("body", [
+    QUESTION,
+    '<div class="decide" data-gate></div>',
+    '<div class="after-decide">x</div>',
+    '<details class="check"><summary>Q</summary>x</details>',
+    '<div class="openq"></div>',
+    '<script>Kit.openQuestions(document.body)</script>',
+    '<p>Try first: pick two edges.</p>',
+    '<h2>Test yourself</h2>',
+    '<p>Quick check: what is BC.</p>',
+])
+def test_guide_and_quick_refuse_every_kind_of_question(name, body):
+    assert "format-question" in codes(fmt(name, body), "error")
+
+
+def test_learn_keeps_its_questions():
+    html = fmt("learn", QUESTION + '<div class="openq"></div><p>Try first: pick two edges.</p>')
+    assert "format-question" not in codes(html)
+
+
+def test_a_rhetorical_question_in_guide_prose_warns_and_a_correct_guide_does_not():
+    assert "format-rhetorical" in codes(fmt("guide", '<div class="prose"><p>Why does this work?</p></div>'), "warn")
+    assert "format-rhetorical" not in codes(fmt("guide", '<div class="prose"><p>This works because rows add.</p></div>'))
+
+
+def test_words_inside_comments_are_not_questions():
+    assert "format-question" not in codes(fmt("guide", "<!-- plan: no test yourself here -->"))
+
+
+@pytest.mark.parametrize("name", ["guide", "quick", "learn", None])
+@pytest.mark.parametrize("body", [
+    '<div class="seg sm" id="depth"><button data-value="skim">Skim</button></div>',
+    "<script>Kit.depth(Kit.$('#x'))</script>",
+])
+def test_depth_tabs_are_an_error_in_every_format(name, body):
+    html = fmt(name, body) if name else GOOD + body
+    assert "depth-tabs" in codes(html, "error")
+
+
+@pytest.mark.parametrize("name", ["guide", "quick"])
+def test_guide_and_quick_refuse_collapsed_content(name):
+    assert "format-collapsed" in codes(fmt(name, "<details><summary>More</summary>x</details>"), "error")
+
+
+def test_framed_math_is_an_error_in_a_guide_and_a_warning_in_learn():
+    framed = FRAMES.format(MATH)
+    assert "math-framed" in codes(fmt("guide", framed), "error")
+    assert "math-framed" in codes(fmt("learn", framed), "warn")
+    assert "math-framed" not in codes(fmt("guide", FRAMES.format("<svg></svg>")))
+
+
+def test_a_collapsed_derivation_warns_in_learn():
+    html = fmt("learn", f'<details class="deeper"><summary>Proof</summary><ol class="derive"><li>{MATH}</li></ol></details>')
+    assert "math-collapsed" in codes(html, "warn")
+
+
+def test_any_stepper_or_scenario_player_in_a_guide_is_an_error():
+    assert "format-stepper" in codes(fmt("guide", FRAMES.format("<svg></svg>")), "error")
+    assert "format-stepper" in codes(fmt("guide", '<div class="fig"><button data-play></button></div>'), "error")
+    assert "format-stepper" in codes(fmt("guide", "<script>Kit.stepper(x)</script>"), "error")
+    assert "format-stepper" in codes(fmt("guide", "<script>Kit.scenarios(x, {})</script>"), "error")
+
+
+def test_guide_skips_the_check_question_lint_but_learn_and_unmarked_pages_keep_it():
+    sections = """<div class="docs"><main class="docs-main">
+      <section class="doc-page" id="a" data-title="One"><h1>A</h1></section>
+      <section class="doc-page" id="b" data-title="Two"><h1>B</h1><p>text</p></section></main></div>"""
+    assert "no-check" not in codes(fmt("guide", sections))
+    assert "no-check" in codes(fmt("learn", sections), "warn")
+    assert "no-check" in codes(GOOD + sections, "warn")
+
+
+def test_a_page_with_no_format_warns_but_a_plan_does_not():
+    assert "no-format" in codes(GOOD, "warn")
+    assert "no-format" not in codes(GOOD + '<div data-plan></div>')
+    assert "no-format" not in codes(fmt("guide"))
+
+
+def test_an_unknown_format_is_an_error():
+    assert "format-unknown" in codes(fmt("skim"), "error")
+
+
+def test_code_without_its_state_warns_in_a_guide():
+    code = '<figure class="fig codeblock"><pre class="code-src"><code>x</code></pre></figure>'
+    assert "code-no-state" in codes(fmt("guide", code), "warn")
+    assert "code-no-state" not in codes(fmt("guide", code + '<div class="trace"></div>'))
+    assert "code-no-state" not in codes(fmt("learn", code))
+
+
+@pytest.mark.parametrize("size,words,bad", [("concept", 150, False), ("concept", 151, True), ("landscape", 400, False), ("landscape", 401, True), (None, 151, True)])
+def test_quick_word_limit_follows_its_size(size, words, bad):
+    body = "<p>" + " ".join(["word"] * (words - 1)) + "</p>"  # GOOD already holds one word, "Hello"
+    assert ("quick-long" in codes(fmt("quick", body, size), "error")) is bad
+
+
+def test_an_unknown_quick_size_is_an_error():
+    assert "format-unknown" in codes(fmt("quick", "", "huge"), "error")
+
+
+@pytest.mark.parametrize("name", ["guide.src.html", "learn.src.html", "quick.src.html"])
+def test_the_format_templates_declare_a_format_and_have_no_depth_tabs(name):
+    html = (HERE.parent / "templates" / name).read_text(encoding="utf-8")
+    assert f'content="{name.split(".")[0]}"' in html
+    found = codes(html)
+    assert "no-format" not in found and "depth-tabs" not in found
+
+
+@pytest.mark.parametrize("name", ["learn.src.html", "quick.src.html"])
+def test_the_new_templates_have_no_static_errors(name):
+    spec = importlib.util.spec_from_file_location("assemble", HERE.parent / "scripts" / "assemble.py")
+    asm = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(asm)
+    html = asm.assemble((HERE.parent / "templates" / name).read_text(encoding="utf-8"))
+    assert [i for i in rc.check_static(html) if i.level == "error"] == []
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("size,height,bad", [("concept", 500, False), ("concept", 1200, True), ("landscape", 2000, False), ("landscape", 3000, True)])
+def test_render_enforces_the_quick_height_limit(tmp_path, size, height, bad):
+    page = tmp_path / "q.html"
+    page.write_text(fmt("quick", f'<div style="height:{height}px"></div>', size), encoding="utf-8")
+    report = rc.render(page, out_dir=tmp_path / "o", widths=(1280,), schemes=("light",), wait_ms=50)
+    assert any(i.code == "quick-tall" for i in report.issues) is bad
+
+
+@pytest.mark.slow
+def test_render_reports_math_that_failed_to_render(tmp_path):
+    page = tmp_path / "m.html"
+    page.write_text(fmt("guide", '<span class="tex tex-fallback">x = 1</span>'), encoding="utf-8")
+    report = rc.render(page, out_dir=tmp_path / "o", widths=(1280,), schemes=("light",), wait_ms=50)
+    assert any(i.code == "math-unrendered" and i.level == "error" for i in report.issues)
+
+
+# ── verifier round 1 (2026-11-03): crashes, gaps and false errors in the format lints ─────────────────
+
+@pytest.mark.parametrize("meta", ['<meta content="guide" name="va:format">', "<meta name=va:format content=guide>"])
+def test_the_format_meta_is_read_in_any_attribute_order_or_quoting(meta):
+    assert "format-collapsed" in codes(GOOD + meta + "<details><summary>x</summary></details>", "error")
+
+
+@pytest.mark.parametrize("name", ["explorable", "prototype"])
+def test_explorable_and_prototype_declare_a_format_and_skip_the_format_rules(name):
+    found = codes(fmt(name, "<details><summary>x</summary></details>" + QUESTION))
+    assert not found & {"no-format", "format-unknown", "format-question", "format-collapsed"}
+
+
+@pytest.mark.parametrize("body", ["<p>Pause and think about it.</p>", "<h2>Drills</h2>"])
+def test_unmistakable_drill_labels_are_refused_in_a_guide(body):
+    assert "format-question" in codes(fmt("guide", body), "error")
+
+
+@pytest.mark.parametrize("body", ["<p>Predict the output of this loop.</p>", "<h1>Exercise 3</h1>", "<li>Predict the next token.</li>", "<p>Before you read on, compute it.</p>", "<p>Now try this yourself: compute det A.</p>", "<p><strong>Exercise:</strong> compute det A.</p>"])
+def test_wording_that_may_be_a_drill_warns_and_does_not_block(body):
+    html = fmt("guide", body)
+    assert "format-prompt" in codes(html, "warn")
+    assert "format-question" not in codes(html)
+
+
+@pytest.mark.parametrize("body", ["<td>Predict</td>", "<td>Drill</td>", "<svg><text>Predict</text></svg>"])
+def test_a_table_word_is_not_a_drill(body):
+    assert not codes(fmt("guide", body)) & {"format-question", "format-prompt"}
+
+
+@pytest.mark.parametrize("body", ["<p>Wait before your call finishes.</p>", "<p>A quick check of the units shows metres.</p>", "<p>Predictors use the history.</p>"])
+def test_ordinary_statements_are_not_taken_for_drills(body):
+    assert "format-question" not in codes(fmt("guide", body))
+
+
+@pytest.mark.parametrize("body", ["<h2>Why does this work?</h2>", "<li>Which one?</li>", "<td>Why?</td>", "<p>為什麼？</p>", '<p>"Why?" is common.</p>'])
+def test_a_question_in_any_reader_text_warns(body):
+    assert "format-rhetorical" in codes(fmt("guide", body), "warn")
+
+
+def test_a_question_mark_in_code_or_math_is_not_a_question():
+    assert "format-rhetorical" not in codes(fmt("guide", '<p>Use <code>x ? y : z</code> and <span class="tex">a ? b</span>.</p>'))
+
+
+def test_an_ordinary_depth_id_is_fine_and_relabelled_tabs_are_not():
+    assert "depth-tabs" not in codes(fmt("guide", '<td id="depth">3</td>'))
+    tabs = '<div class="seg"><button data-value="a">Skim</button><button data-value="b">Read</button><button data-value="c">Deep</button></div>'
+    assert "depth-tabs" in codes(fmt("guide", tabs), "error")
+
+
+def test_math_in_a_div_figure_with_single_quotes_is_still_framed():
+    html = fmt("guide", "<div class='fig'><button data-next></button><span class='tex'>x</span></div>")
+    assert "math-framed" in codes(html, "error")
+
+
+def test_quick_counts_cjk_text_as_words():
+    assert "quick-long" in codes(fmt("quick", "<p>" + "字" * 3200 + "</p>"), "error")
+
+
+def rendered(tmp_path, html, widths=(1280,)):
+    page = tmp_path / "p.html"
+    page.write_text(html, encoding="utf-8")
+    return {i.code for i in rc.render(page, out_dir=tmp_path / "o", widths=widths, schemes=("light",), wait_ms=50).issues}
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("name", ["guide.src.html", "learn.src.html", "quick.src.html", "plan.src.html"])
+def test_each_format_template_passes_the_browser_check_at_every_laptop_width(tmp_path, name):
+    spec = importlib.util.spec_from_file_location("assemble", HERE.parent / "scripts" / "assemble.py")
+    asm = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(asm)
+    html = asm.assemble((HERE.parent / "templates" / name).read_text(encoding="utf-8"))
+    page = tmp_path / "t.html"
+    page.write_text(html, encoding="utf-8")
+    report = rc.render(page, out_dir=tmp_path / "o", widths=(390, 1000, 1280, 1440), schemes=("light",), wait_ms=50)
+    assert [str(i) for i in report.issues if i.level == "error"] == []
+
+
+def test_the_default_widths_include_a_small_laptop():
+    assert 1000 in rc.render.__defaults__[1]
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("name", ["guide", "quick"])
+@pytest.mark.parametrize("script,code", [
+    ("document.body.insertAdjacentHTML('beforeend','<details><summary>x</summary>y</details>')", "format-collapsed"),
+    ("document.body.insertAdjacentHTML('beforeend','<div class=decide></div>')", "format-question"),
+])
+def test_content_built_by_script_is_checked_after_render(tmp_path, name, script, code):
+    assert code in rendered(tmp_path, fmt(name, f"<script>{script}</script>"))
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("body", ['<div hidden>secret text</div>', '<div style="display:none">secret text</div>', "<dialog>secret text</dialog>"])
+def test_hidden_text_in_a_guide_or_quick_page_is_an_error(tmp_path, body):
+    assert "format-hidden" in rendered(tmp_path, fmt("guide", body))
+    assert "format-hidden" in rendered(tmp_path, fmt("quick", body))
+
+
+@pytest.mark.slow
+def test_hidden_navigation_and_a_learn_page_are_not_flagged(tmp_path):
+    assert "format-hidden" not in rendered(tmp_path, fmt("guide", '<nav hidden>menu</nav><aside class="docs-rail" style="display:none">rail</aside>'))
+    assert "format-hidden" not in rendered(tmp_path, fmt("learn", "<div hidden>answer</div>"))
+
+
+@pytest.mark.slow
+def test_an_inner_scroller_cannot_hide_a_quick_page_from_the_height_limit(tmp_path):
+    body = '<main style="max-height:500px;overflow:auto"><div style="height:3400px"></div></main>'
+    assert "quick-tall" in rendered(tmp_path, fmt("quick", body))
+
+
+# ── verifier round 2 (2026-11-03): structure is an error, a wording guess is a warning ──────────────
+
+@pytest.mark.parametrize("body", ['<td>Skim</td>', '<p>Skim the table.</p>'])
+def test_the_word_skim_in_content_is_not_a_depth_control(body):
+    assert "depth-tabs" not in codes(fmt("guide", body))
+
+
+@pytest.mark.parametrize("body", ['<a data-next-id="q2">x</a>', '<a data-play-speed="2">x</a>', "<p><code>data-play</code> and stepper-ctl are names.</p>"])
+def test_only_a_real_control_counts_as_a_frame(body):
+    assert "format-stepper" not in codes(fmt("guide", body))
+
+
+def test_a_commented_out_format_is_ignored():
+    html = GOOD + '<!-- <meta name="va:format" content="learn"> --><meta name="va:format" content="guide"><details><summary>x</summary></details>'
+    assert "format-collapsed" in codes(html, "error")
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("style", ["max-height:0;overflow:hidden", "visibility:hidden", "opacity:0", "content-visibility:hidden"])
+def test_every_way_of_collapsing_text_is_caught(tmp_path, style):
+    assert "format-hidden" in rendered(tmp_path, fmt("guide", f'<div style="{style}">secret text</div>'))
+
+
+@pytest.mark.slow
+def test_normal_hidden_parts_are_not_flagged(tmp_path):
+    body = '<button style="display:none">Menu</button><datalist id="d"><option>one</option></datalist><ruby>漢<rp>(</rp><rt>kan</rt><rp>)</rp></ruby>'
+    assert "format-hidden" not in rendered(tmp_path, fmt("guide", body))
+
+
+@pytest.mark.slow
+def test_a_clipped_quick_page_is_too_tall(tmp_path):
+    assert "quick-tall" in rendered(tmp_path, fmt("quick", '<main style="max-height:500px;overflow:hidden"><div style="height:3400px"></div></main>'))
+
+
+@pytest.mark.slow
+def test_rendered_math_does_not_inflate_the_quick_word_count(tmp_path):
+    formulas = '<span class="katex"><span class="katex-mathml">' + "a b c d e " * 40 + "</span></span>"
+    assert "quick-long" not in rendered(tmp_path, fmt("quick", "<p>Short.</p>" + formulas))
+
+
+@pytest.mark.parametrize("body", ["<p>Your call returns at once, because the queue takes the job.</p>", "<p>With <code>await</code> your call returns later.</p>", "<p>Quick check of the units: L is a plain count.</p>", "<p>Practice problems are in chapter 3 of the text.</p>"])
+def test_statements_that_open_like_a_label_do_not_block(body):
+    assert "format-question" not in codes(fmt("guide", body))
+
+
+def test_latex_source_does_not_count_toward_the_quick_word_limit():
+    body = "<p>" + " ".join(["word"] * 140) + '</p><span class="tex display">' + " & ".join(["a"] * 60) + "</span>"
+    assert "quick-long" not in codes(fmt("quick", body))
+
+
+def test_an_explorable_with_reading_sections_warns():
+    pages = '<div class="docs">' + "".join(f'<section class="doc-page" id="s{i}" data-title="S{i}"></section>' for i in range(3)) + "</div>"
+    assert "format-mismatch" in codes(fmt("explorable", pages), "warn")
+
+
+def test_no_position_lint_remains_now_the_strip_is_gone():
+    assert "no-position" not in codes(fmt("guide", "<h2>A</h2><h2>B</h2><h2>C</h2>"))
+
+
+def test_a_first_section_that_opens_with_a_trace_needs_no_separate_map():
+    html = fmt("guide", '<div class="docs"><section class="doc-page" id="a" data-title="A"><div class="trace"></div></section></div>')
+    assert "no-map" not in codes(html)
+
+
+def test_a_trace_built_by_the_kit_is_not_a_forbidden_stepper():
+    assert "format-stepper" not in codes(fmt("guide", "<script>Kit.trace(x, {})</script>"))
+
+
+@pytest.mark.slow
+def test_a_clipped_formula_warns_on_a_laptop(tmp_path):
+    wide = '<div class="latex"><span class="tex display" style="display:block;overflow-x:auto;width:200px"><span style="display:inline-block;width:900px">x</span></span></div>'
+    assert "math-clipped" in rendered(tmp_path, fmt("guide", wide))
+
+
+@pytest.mark.slow
+def test_render_reports_a_trace_whose_state_is_not_beside_its_code(tmp_path):
+    body = '<div class="trace"><div class="trace-split" style="display:block"><figure class="trace-code">x</figure><div class="trace-state">y</div></div></div>'
+    assert "trace-layout" in rendered(tmp_path, fmt("guide", body))
+
+
+# a grid or flex row makes every loose text run and every inline tag its own cell, so the sentence splits
+GRID_ROW = '<ol><li style="display:grid;grid-template-columns:22px 1fr">{}</li></ol>'
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("row", [
+    GRID_ROW.format("A person runs <code>sm team</code> to list teams."),
+    GRID_ROW.format("A person runs <code>sm team</code>"),
+    GRID_ROW.format("<a href='#x'>Open</a> the plan"),
+    '<p style="display:flex;gap:10px"><span class="claim-num">1</span> A key gets the budget <em>its</em> route sets.</p>',
+    '<div style="display:inline-flex">Run <kbd>q</kbd> to quit</div>',
+])
+def test_render_reports_a_sentence_split_by_a_grid_or_flex_row(tmp_path, row):
+    assert "split-text" in rendered(tmp_path, fmt("guide", row))
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("row", [
+    GRID_ROW.format("<span>A person runs <code>sm team</code> to list teams.</span>"),
+    '<button style="display:flex;gap:6px"><svg width="12" height="12"></svg>Copy</button>',
+    '<p style="display:flex;gap:10px"><span class="claim-num">1</span> <span>A key gets the budget <em>its</em> route sets.</span></p>',
+    '<span style="display:inline-flex;gap:6px"><b class="call-mark">+</b> new</span>',
+    '<p style="display:block">A person runs <code>sm team</code> to list teams.</p>',
+    '<pre style="display:grid">x = <code>1</code> + 2</pre>',
+    # the CSS gives the note a row of its own on purpose (.ask > label > small)
+    '<label style="display:flex;flex-wrap:wrap"><input type="radio"> Answer 503 <small style="order:2;flex-basis:100%">upstream stays safe</small></label>',
+    GRID_ROW.format("Answer 503 <small style='grid-column:1/-1'>upstream stays safe</small>"),
+])
+def test_render_leaves_whole_sentences_and_icon_labels_alone(tmp_path, row):
+    assert "split-text" not in rendered(tmp_path, fmt("guide", row))
+
+
+@pytest.mark.slow
+def test_a_page_with_no_math_never_asks_for_the_latex_face(tmp_path):
+    css = (HERE.parent / "assets" / "claude.css").read_text(encoding="utf-8")
+    page = tmp_path / "n.html"
+    page.write_text(fmt("guide", f"<style>{css}</style><p>No math here.</p>"), encoding="utf-8")
+    report = rc.render(page, out_dir=tmp_path / "o", widths=(1280,), schemes=("light",), wait_ms=50)
+    assert not [i for i in report.issues if i.code == "font-fallback" and "KaTeX" in i.message]
+
+
+# ── the lints follow what the docs teach ────
+
+DISPLAY = '<div class="tex display">\\begin{bmatrix}' + " & ".join(["1"] * 200) + '\\end{bmatrix}</div>'
+
+
+def test_math_in_a_display_div_does_not_count_as_quick_words():
+    assert "quick-long" not in codes(fmt("quick", DISPLAY + DISPLAY), "error")
+
+
+def test_a_question_mark_inside_display_math_is_not_a_rhetorical_question():
+    assert "format-rhetorical" not in codes(fmt("guide", '<div class="tex display">x ? y </div>'), "warn")
+
+
+def test_learn_warns_about_a_latex_block_in_a_collapsed_block():
+    html = fmt("learn", '<details class="deeper"><summary>Proof</summary><div class="latex"><p>x</p></div></details>')
+    assert "math-collapsed" in codes(html, "warn")
+
+
+@pytest.mark.parametrize("name", ["guide", "quick"])
+def test_guide_and_quick_refuse_the_numbered_derivation_list(name):
+    assert "math-not-latex" in codes(fmt(name, '<ol class="derive"><li>x</li></ol>'), "error")
+
+
+@pytest.mark.parametrize("body", [
+    '<div class="seg"><button data-value="read">Read</button><button data-value="deep">Deep</button></div>',
+    "<button><span>Skim</span></button>",
+])
+def test_depth_tabs_are_found_in_their_other_spellings(body):
+    assert "depth-tabs" in codes(fmt("learn", body), "error")
+
+
+def test_a_single_deep_value_is_not_a_depth_control():
+    assert "depth-tabs" not in codes(fmt("learn", '<div class="seg"><button data-value="deep">Deep water</button><button data-value="shallow">Shallow</button></div>'), "error")
+
+
+@pytest.mark.slow
+def test_render_warns_when_a_guide_writes_many_equations_outside_latex(tmp_path):
+    eq = '<span class="tex display">x = 1</span>'
+    assert "math-not-latex" in rendered(tmp_path, fmt("guide", eq * 3))
+    assert "math-not-latex" not in rendered(tmp_path, fmt("guide", eq))
+    assert "math-not-latex" not in rendered(tmp_path, fmt("guide", f'<div class="latex">{eq * 3}</div>'))
+
+
+@pytest.mark.parametrize("first", ['<div class="table-wrap"><table class="table"><tr><td>1</td></tr></table></div>', '<div class="latex"><p>x</p></div>'])
+def test_no_map_accepts_what_its_message_offers(first):
+    html = fmt("guide", f'<div class="docs"><section class="doc-page" id="a" data-title="A">{first}</section></div>')
+    assert "no-map" not in codes(html, "warn")
+
+
+def test_read_and_deep_in_separate_controls_are_not_depth_tabs():
+    body = '<div class="seg"><button data-value="read">Read</button><button data-value="write">Write</button></div><div class="seg"><button data-value="shallow">Shallow</button><button data-value="deep">Deep</button></div>'
+    assert "depth-tabs" not in codes(fmt("explorable", body), "error")
+
+
+def test_code_no_state_is_not_offered_to_a_quick_page():
+    code = '<figure class="fig codeblock"><pre class="code-src"><code>x = 1</code></pre></figure>'
+    assert "code-no-state" not in codes(fmt("quick", code), "warn")
+    assert "code-no-state" in codes(fmt("guide", code), "warn")
+
+
+def test_learn_warns_about_an_open_derive_list():
+    assert "math-not-latex" in codes(fmt("learn", '<ol class="derive"><li>x</li></ol>'), "warn")
+
+
+@pytest.mark.slow
+def test_formulas_in_figures_are_not_a_derivation(tmp_path):
+    eq = '<figure class="fig"><span class="tex display">x = 1</span></figure>'
+    assert "math-not-latex" not in rendered(tmp_path, fmt("guide", eq * 3))
+
+
+MAT = '<span class="tex display">\\begin{vmatrix}1 & 2\\\\3 & 4\\end{vmatrix}</span>'
+
+
+def test_a_matrix_redrawn_for_each_operation_gets_a_warning():
+    three = fmt("guide", f'<div class="latex"><p>a</p>{MAT}<p>b</p>{MAT}<p>c</p>{MAT}</div>')
+    assert "math-redraw" in codes(three, "warn")
+
+
+def test_matrices_at_checkpoints_do_not_get_the_redraw_warning():
+    row_op = '<span class="tex display">R_2 + 3R_1 = (0, 1)</span>'
+    apart = fmt("guide", f'<div class="latex"><p>a</p>{MAT}<p>b</p>{MAT}<p>c</p>{row_op}<p>d</p>{MAT}</div>')
+    assert "math-redraw" not in codes(apart, "warn")
+    outside = fmt("guide", f'<div class="latex">{MAT}{MAT}</div><div class="latex">{MAT}</div>')
+    assert "math-redraw" not in codes(outside, "warn")
+
+
+def test_different_matrices_in_a_row_are_not_a_redraw():
+    small = '<span class="tex display">C_{11} = \\begin{vmatrix}4 & 0\\\\0 & 5\\end{vmatrix}</span>'
+    pair = '<span class="tex display">C = \\begin{pmatrix}1 & 2 & 3\\\\4 & 5 & 6\\\\7 & 8 & 9\\end{pmatrix}, C^T = \\begin{pmatrix}1 & 4 & 7\\\\2 & 5 & 8\\\\3 & 6 & 9\\end{pmatrix}</span>'
+    big = '<span class="tex display">\\begin{pmatrix}1 & 2 & 3\\\\4 & 5 & 6\\\\7 & 8 & 9\\end{pmatrix}</span>'
+    assert "math-redraw" not in codes(fmt("guide", f'<div class="latex">{small}{pair}{big}</div>'), "warn")
+    assert "math-redraw" not in codes(fmt("guide", f'<div class="latex">{small}{big}{small}</div>'), "warn")
+
+
+def _mats(*rows_list, kind="vmatrix"):
+    return "".join(f'<span class="tex display">\\begin{{{kind}}}{rows}\\end{{{kind}}}</span>' for rows in rows_list)
+
+
+@pytest.mark.parametrize("body", [
+    _mats("a & 1\\\\b & 2", "a & 1\\\\c & 3", "e & 9\\\\c & 3"),
+    _mats("1 & 2 & 3\\\\4 & 5 & 6", "1 & 2 & 3\\\\0 & 5 & 6", "1 & 2 & 3\\\\0 & 1 & 6", kind="bmatrix"),
+    "".join(f'<span class="tex display">\\begin{{bmatrix}}x\\\\y\\end{{bmatrix}}\\to\\begin{{bmatrix}}1 & 2\\\\{i} & {i}\\end{{bmatrix}}</span>' for i in range(4)),
+    "".join(f'<span class="tex display">\\begin{{array}}{{cc|c}}1 & 2 & 3\\\\{i} & {i} & {i}\\end{{array}}</span>' for i in range(4)),
+])
+def test_row_by_row_forms_get_the_redraw_warning(body):
+    assert "math-redraw" in codes(fmt("guide", f'<div class="latex">{body}</div>'), "warn")
+
+
+@pytest.mark.parametrize("body", [
+    _mats("1 & 2\\\\3 & 4", "5 & 2\\\\6 & 4", "1 & 5\\\\3 & 6"),  # Cramer's A_x, A_y and another: no row in common
+    _mats("a & b\\\\c & d", "e & f\\\\g & h", "i & j\\\\k & l"),
+    _mats("1\\\\0\\\\0", "0\\\\1\\\\0", "0\\\\0\\\\1", kind="pmatrix"),  # separate vectors share entries by chance
+])
+def test_different_matrices_of_one_size_are_not_a_redraw(body):
+    assert "math-redraw" not in codes(fmt("guide", f'<div class="latex">{body}</div>'), "warn")
+
+
+@pytest.mark.slow
+def test_a_formula_cut_off_at_the_top_of_its_box_is_reported(tmp_path):
+    body = '<div class="latex"><div class="answer" id="a">x</div></div><style>.clipme{display:block;overflow:hidden;height:10px}</style><script>document.getElementById("a").innerHTML=\'<span class="tex display" style="height:10px;overflow:hidden;display:block" data-t><span style="display:block;height:40px">x</span></span>\';</script>'
+    assert "math-clipped" in rendered(tmp_path, fmt("guide", body))
+
+
+@pytest.mark.slow
+def test_an_answer_box_that_hides_its_result_on_a_phone_is_reported(tmp_path):
+    body = '<div class="latex"><div class="answer" id="a">x</div></div><script>document.getElementById("a").innerHTML=\'<span class="tex display" style="display:block;overflow-x:auto;width:100px"><span style="display:block;width:400px">x</span></span>\';</script>'
+    assert "math-clipped" in rendered(tmp_path, fmt("guide", body), widths=(390,))

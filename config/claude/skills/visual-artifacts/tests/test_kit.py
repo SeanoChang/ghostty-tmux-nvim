@@ -652,6 +652,41 @@ def test_overview_lists_the_level_one_claims(browser):
     assert items == [["#c-budget", "1 A key gets at most its route budget."], ["#c-429", "2 An empty bucket gives a 429 with Retry-After."]]
 
 
+# A grid or flex parent blockifies each child and turns each loose text run into its own item, so a
+# <code> inside the sentence lands in a separate cell. Inline markup must keep its computed display: inline.
+INLINE_DISPLAYS = "sel => [...document.querySelectorAll(sel)].map(e => getComputedStyle(e).display)"
+
+
+@pytest.mark.slow
+def test_overview_keeps_inline_code_inside_the_claim_sentence(browser):
+    body = REVIEW.replace('<p class="claim-text">A key gets at most its route budget.</p>',
+                          '<p class="claim-text">A key gets at most the budget <code>routes.yaml</code> sets for its route.</p>')
+    pg = review_page(browser, body, width=390)
+    assert pg.errors == []
+    assert pg.evaluate(INLINE_DISPLAYS, "[data-plan-claims] li a code") == ["inline"]
+    assert pg.evaluate("document.querySelector('[data-plan-claims] li a').textContent.replace(/\\s+/g, ' ').trim()") == \
+        "1 A key gets at most the budget routes.yaml sets for its route."
+
+
+LEGEND = """<figure class="fig plan-map"><ol class="map-legend">
+  <li>New: a coding agent runs <code>sm run --env-file .env.sm -- npm test</code> with its <code>SM_TOKEN</code>.</li>
+  <li>The server reads <b>and</b> writes Postgres.</li>
+</ol></figure>"""
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("width", [390, 1200])
+def test_map_legend_numbers_each_item_and_keeps_inline_markup_in_the_sentence(browser, width):
+    pg = load(browser, LEGEND, width=width)
+    assert pg.evaluate("[...document.querySelectorAll('.map-legend > li')].map(li => getComputedStyle(li, '::before').content)") == ['counter(lg)'] * 2
+    assert pg.evaluate(INLINE_DISPLAYS, ".map-legend code, .map-legend b") == ["inline"] * 3
+    # the number sits left of the text, not above it
+    num_right, text_left = pg.evaluate("""() => { const li = document.querySelector('.map-legend > li');
+      const r = document.createRange(); r.selectNodeContents(li.firstChild);
+      return [li.getBoundingClientRect().left + parseFloat(getComputedStyle(li, '::before').width), r.getClientRects()[0].left]; }""")
+    assert num_right <= text_left
+
+
 @pytest.mark.slow
 def test_a_link_into_nested_folds_opens_every_fold(browser):
     pg = review_page(browser)
@@ -1349,3 +1384,336 @@ def test_deeper_body_is_inset_from_the_box_with_or_without_wrapper(browser, body
     assert m["left"] >= 16 and m["right"] >= 16 and m["bottom"] >= 16, m
     assert m["gap"] >= 8, m
     assert m["dividers"] == 1, m
+
+
+# ── no depth tabs: Kit.depth stays only so old pages still assemble ─────────────────────────────────
+
+@pytest.mark.slow
+def test_retired_depth_hides_its_tabs_and_leaves_content_alone(browser):
+    pg = load(browser, '<div class="seg" id="d"><button data-value="skim">Skim</button></div><details class="deeper" id="x" open><summary>s</summary>y</details><p class="d-read" id="r">z</p>',
+              script="Kit.depth(Kit.$('#d'), { initial: 'skim' });")
+    assert pg.errors == []
+    assert pg.evaluate("Kit.$('#d').hidden") is True
+    assert pg.evaluate("document.body.dataset.depth") is None
+    assert pg.evaluate("Kit.$('#x').open") is True
+    assert pg.is_visible("#r")
+
+
+# ── no progress strip: the user removed it on 2026-11-03 ───────────────────────────────────────────
+
+THREE_PAGES = """<div class="docs"><aside class="docs-side"></aside><main class="docs-main">
+  <section class="doc-page" id="x" data-title="One"><h1>One</h1></section>
+  <section class="doc-page" id="m" data-title="Two"><h1>Two</h1></section>
+  <section class="doc-page" id="z" data-title="Three"><h1>Three</h1></section></main></div>"""
+NEW_TALL = THREE_PAGES.replace("<h1>One</h1>", '<h1>One</h1><div style="height:1800px"></div>')
+
+
+@pytest.mark.slow
+def test_docs_adds_no_progress_strip(browser):
+    pg = load(browser, THREE_PAGES, width=1280, script="Kit.docs();")
+    assert pg.errors == [] and pg.evaluate("document.querySelector('.where')") is None
+
+
+@pytest.mark.slow
+def test_a_page_that_fits_the_screen_starts_at_section_one(browser):
+    pg = load(browser, THREE_PAGES, width=1280, script="window.d = Kit.docs();")
+    assert pg.evaluate("d.current.id") == "x"
+
+
+@pytest.mark.slow
+def test_a_jump_to_a_short_section_near_the_end_names_that_section_until_back(browser):
+    pg = load(browser, NEW_TALL, width=1280, script="window.d = Kit.docs();")
+    pg.evaluate("location.hash = '#m'")
+    pg.wait_for_timeout(200)
+    assert pg.evaluate("d.current.id") == "m"
+    pg.go_back()
+    pg.wait_for_timeout(200)
+    assert pg.evaluate("d.current.id") != "m" or pg.evaluate("scrollY") > 0
+
+
+# ── trace: the full code, a line that lights up as it runs, and the example's state on the right ────
+
+LONG = "\\n".join(f"line{i}" for i in range(1, 61))
+TRACE = """window.t = Kit.trace(Kit.$('#t'), {
+  lang: 'python',
+  code: 'def union(a, b):\\n    ra, rb = find(a), find(b)\\n    parent[rb] = ra\\n    weight[ra] += weight[rb]',
+  steps: [
+    { op: 'union(A, C)', line: 2, state: '<p id="s">first</p>', note: 'find both roots' },
+    { op: 'union(A, C)', line: 3, changes: [{ name: 'parent[C]', from: 'C', to: 'A' }], state: '<p id="s">second</p>' },
+    { op: 'union(A, D)', line: '3-4', state: '<p id="s">third</p>' },
+  ],
+});"""
+LIT = "[...document.querySelectorAll('.trace-code .cl.is-run')].map(l => +l.dataset.n)"
+
+
+@pytest.mark.slow
+def test_trace_shows_the_whole_code_and_lights_only_the_running_line(browser):
+    pg = load(browser, '<div id="t"></div>', script=TRACE)
+    assert pg.errors == []
+    assert pg.evaluate("document.querySelectorAll('.trace-code .cl').length") == 4
+    assert pg.evaluate(LIT) == [2]
+    pg.click(".trace-bar [data-next]")
+    assert pg.evaluate(LIT) == [3]
+    pg.click(".trace-bar [data-next]")
+    assert pg.evaluate(LIT) == [3, 4]
+    assert pg.evaluate("document.querySelectorAll('.trace-code .cl').length") == 4
+
+
+@pytest.mark.slow
+def test_trace_state_on_the_right_follows_the_step(browser):
+    pg = load(browser, '<div id="t"></div>', script=TRACE)
+    assert pg.inner_text("#s") == "first" and "find both roots" in pg.inner_text(".trace-state")
+    pg.click(".trace-bar [data-next]")
+    assert pg.inner_text("#s") == "second"
+    text = pg.inner_text(".trace-changes")
+    assert "parent[C]" in text and "A" in text
+    assert pg.evaluate("document.querySelectorAll('.trace-state #s').length") == 1
+
+
+@pytest.mark.slow
+def test_trace_plays_to_the_end_and_can_pause(browser):
+    pg = load(browser, '<div id="t"></div>', script=TRACE.replace("lang: 'python',", "lang: 'python', interval: 40,"))
+    assert pg.inner_text(".trace-bar .step-count") == "1 / 3"
+    pg.click(".trace-bar [data-play]")
+    pg.wait_for_timeout(250)
+    assert pg.inner_text(".trace-bar .step-count") == "3 / 3"
+    assert "Play" in pg.inner_text(".trace-bar [data-play]")
+    assert pg.is_disabled(".trace-bar [data-next]")
+
+
+@pytest.mark.slow
+def test_trace_scrubs_and_jumps_to_an_operation(browser):
+    pg = load(browser, '<div id="t"></div>', script=TRACE)
+    pg.evaluate("(() => { const r = document.querySelector('.trace-bar input[type=range]'); r.value = 2; r.dispatchEvent(new Event('input')); })()")
+    assert pg.evaluate(LIT) == [3]
+    assert pg.evaluate("[...document.querySelectorAll('.trace-ops button')].map(b => b.textContent)") == ["union(A, C)", "union(A, D)"]
+    pg.click(".trace-ops button:nth-child(2)")
+    assert pg.evaluate(LIT) == [3, 4]
+    assert pg.get_attribute(".trace-ops button:nth-child(2)", "aria-pressed") == "true"
+
+
+@pytest.mark.slow
+def test_trace_puts_the_state_right_of_the_code_when_wide_and_stacks_when_narrow(browser):
+    sides = "(() => { const c = document.querySelector('.trace-code').getBoundingClientRect(), s = document.querySelector('.trace-state').getBoundingClientRect(); return { right: c.right <= s.left + 1 && c.top < s.bottom, below: c.bottom <= s.top + 1 }; })()"
+    assert load(browser, '<div id="t"></div>', width=1280, script=TRACE).evaluate(sides)["right"] is True
+    narrow = load(browser, '<div id="t"></div>', width=390, script=TRACE)
+    assert narrow.evaluate(sides)["below"] is True
+    assert narrow.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+
+
+@pytest.mark.slow
+def test_the_running_line_scrolls_into_the_code_box_and_the_page_stays_put(browser):
+    script = f"window.t = Kit.trace(Kit.$('#t'), {{ code: '{LONG}', steps: [{{ line: 1 }}, {{ line: 58 }}] }});"
+    pg = load(browser, '<div id="t"></div>', width=1280, script=script)
+    pg.click(".trace-bar [data-next]")
+    pg.wait_for_timeout(50)
+    assert pg.evaluate("scrollY") == 0
+    assert pg.evaluate("(() => { const l = document.querySelector('.cl.is-run').getBoundingClientRect(), b = document.querySelector('.trace-code pre').getBoundingClientRect(); return l.top >= b.top - 1 && l.bottom <= b.bottom + 1; })()")
+
+
+@pytest.mark.slow
+def test_the_running_line_is_marked_by_more_than_colour(browser):
+    pg = load(browser, '<div id="t"></div>', script=TRACE)
+    assert pg.evaluate("getComputedStyle(document.querySelector('.cl.is-run')).boxShadow") != "none"
+    assert pg.evaluate("getComputedStyle(document.querySelector('.cl:not(.is-run)')).boxShadow") == "none"
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("script", [
+    "Kit.trace(Kit.$('#t'), { steps: [{ line: 1 }] })",
+    "Kit.trace(Kit.$('#t'), { code: 'a', steps: [] })",
+    "Kit.trace(Kit.$('#t'), { code: 'a', steps: [{ line: 9 }] })",
+    "Kit.trace(Kit.$('#t'), { code: 'a', steps: [{ line: 0 }] })",
+    "Kit.trace(Kit.$('#t'), { code: 'a\\nb', steps: [{ line: '2-1' }] })",
+    "Kit.trace(Kit.$('#t'), { code: 'a', steps: [{ line: 'abc' }] })",
+    "Kit.trace(Kit.$('#t'), { code: 'a', steps: [{ state: 'x' }] })",
+])
+def test_trace_throws_on_bad_input(browser, script):
+    assert load(browser, '<div id="t"></div>', script=script).errors
+
+
+# ── stage map: where this stage sits in the whole pipeline, in place ───────────────────────────────
+
+STAGES = "[{ group: 'Design', stages: ['Lint', 'Sim', 'Formal'] }, { group: 'Build', stages: ['Synth', 'Route'] }]"
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("width", [390, 1280])
+def test_stage_map_says_which_of_all_stages_this_is_and_what_is_next_to_it(browser, width):
+    pg = load(browser, '<div id="m"></div>', width=width, script=f"Kit.stageMap(Kit.$('#m'), {{ groups: {STAGES}, current: 'Formal' }});")
+    assert pg.errors == []
+    text = " ".join(pg.inner_text("#m").split())
+    assert "Stage 3 of 5" in text and "Formal" in text and "Sim" in text and "Synth" in text
+    assert pg.evaluate("document.querySelectorAll('.stage-tick').length") == 5
+    assert pg.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+
+
+@pytest.mark.slow
+def test_stage_map_marks_the_current_stage_by_size_and_groups_by_name(browser):
+    pg = load(browser, '<div id="m"></div>', script=f"Kit.stageMap(Kit.$('#m'), {{ groups: {STAGES}, current: 'Formal' }});")
+    h = pg.evaluate("[...document.querySelectorAll('.stage-tick')].map(t => t.getBoundingClientRect().height)")
+    assert h[2] > h[0] and h[2] > h[3]
+    assert pg.evaluate("[...document.querySelectorAll('.stage-group-name')].map(g => g.textContent)") == ["Design", "Build"]
+
+
+@pytest.mark.slow
+def test_stage_map_handles_both_ends_and_rejects_an_unknown_stage(browser):
+    first = load(browser, '<div id="m"></div>', script=f"Kit.stageMap(Kit.$('#m'), {{ groups: {STAGES}, current: 'Lint' }});")
+    assert "Stage 1 of 5" in first.inner_text("#m") and first.errors == []
+    assert load(browser, '<div id="m"></div>', script=f"Kit.stageMap(Kit.$('#m'), {{ groups: {STAGES}, current: 'Nope' }});").errors
+
+
+# ── math: reads like a LaTeX paper ─────────────────────────────────────────────────────────────────
+
+@pytest.mark.slow
+def test_latex_math_uses_the_latex_face_and_centres_display_equations(browser):
+    pg = load(browser, '<div class="latex" id="l"><p id="p">Add the rows.</p><span class="tex display" id="e">x</span></div>')
+    assert "KaTeX_Main" in pg.evaluate("getComputedStyle(document.getElementById('p')).fontFamily")
+    assert pg.evaluate("getComputedStyle(document.getElementById('e')).textAlign") == "center"
+
+
+@pytest.mark.slow
+def test_a_wide_equation_scrolls_in_its_own_box_on_a_phone(browser):
+    wide = '<div class="latex"><span class="tex display"><span style="display:inline-block;width:900px">wide</span></span></div>'
+    assert load(browser, wide, width=390).evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+
+
+# ── the player and stage map show everything: no clipped code, no clipped group names, no empty rail ────
+
+WIDE_LINE = "if self.weight[ra] < self.weight[rb] and self.parent[ra] != self.parent[rb]:  # a long comment that runs on past the box"
+SCROLL_DOCS = """<div class="docs"><aside class="docs-side"></aside><main class="docs-main">
+  <section class="doc-page" id="a" data-group="G" data-title="A"><div class="doc-head"><h1>A</h1></div>{a}</section>
+  <section class="doc-page" id="b" data-group="G" data-title="B"><div class="doc-head"><h1>B</h1></div>{b}</section>
+</main><aside class="docs-rail"></aside></div>"""
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("width", [390, 1000, 1280, 1440])
+def test_trace_shows_every_line_in_full_with_no_sideways_scroll(browser, width):
+    script = f"Kit.trace(Kit.$('#t'), {{ code: 'x = 1\\n{WIDE_LINE}\\ny = 2', steps: [{{ line: 2 }}] }});"
+    pg = load(browser, '<div id="t"></div>', width=width, script=script)
+    pre = "document.querySelector('.trace-code pre')"
+    assert pg.evaluate(f"{pre}.scrollWidth <= {pre}.clientWidth")
+    assert WIDE_LINE in pg.evaluate("document.querySelector('.trace-code .cl.is-run').textContent")
+    # the wrapped text stays right of the line number
+    assert pg.evaluate("(() => { const l = document.querySelector('.cl.is-run'); return l.querySelector('.cl-t').getBoundingClientRect().left >= l.querySelector('.cl-n').getBoundingClientRect().right - 1; })()")
+
+
+@pytest.mark.slow
+def test_trace_on_a_phone_keeps_the_code_box_short_so_the_state_is_close(browser):
+    pg = load(browser, '<div id="t"></div>', width=390, script=f"Kit.trace(Kit.$('#t'), {{ code: '{LONG}', steps: [{{ line: 1 }}] }});")
+    assert pg.evaluate("document.querySelector('.trace-code pre').getBoundingClientRect().height <= innerHeight * 0.4 + 1")
+
+
+@pytest.mark.slow
+def test_a_scroll_page_with_no_section_anchors_gives_the_empty_rail_width_back(browser):
+    pg = load(browser, SCROLL_DOCS.format(a="<p>x</p>", b="<p>y</p>"), width=1280, script="Kit.docs();")
+    assert pg.evaluate("document.querySelector('.docs').classList.contains('no-rail')") is True
+    assert pg.evaluate("getComputedStyle(document.querySelector('.docs-rail')).display") == "none"
+
+
+@pytest.mark.slow
+def test_a_scroll_page_keeps_its_rail_steady_when_only_a_later_section_has_anchors(browser):
+    pg = load(browser, SCROLL_DOCS.format(a="<p>x</p>", b="<h2>One</h2><h2>Two</h2>"), width=1280, script="Kit.docs();")
+    assert pg.evaluate("document.querySelector('.docs').classList.contains('no-rail')") is False
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("width", [390, 1000, 1440])
+def test_stage_map_group_names_are_never_cut_off(browser, width):
+    script = """Kit.stageMap(Kit.$('#m'), { current: 'c3', groups: [
+      { group: 'Design and verify', stages: ['a1', 'a2', 'a3', 'a4', 'a5'] },
+      { group: 'Implement', stages: ['b1', 'b2', 'b3', 'b4', 'b5', 'b6', 'b7'] },
+      { group: 'Signoff and masks', stages: ['c1', 'c2', 'c3'] },
+      { group: 'Analog and packaging', stages: ['d1', 'd2'] } ] });"""
+    pg = load(browser, '<div id="m"></div>', width=width, script=script)
+    assert pg.evaluate("[...document.querySelectorAll('.stage-group-name')].every(n => getComputedStyle(n).textOverflow !== 'ellipsis' && n.scrollWidth <= n.clientWidth + 1)")
+    assert pg.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+    assert pg.evaluate("[...document.querySelectorAll('.stage-group')].every((g, i, all) => !i || g.getBoundingClientRect().left >= all[i - 1].getBoundingClientRect().right - 1 || g.getBoundingClientRect().top >= all[i - 1].getBoundingClientRect().bottom - 1)")
+
+
+@pytest.mark.slow
+def test_a_trace_figure_with_no_title_does_not_hold_the_rail_open(browser):
+    pg = load(browser, SCROLL_DOCS.format(a='<h2>One</h2><div id="t"></div>', b="<p>y</p>"), width=1440, script=f"Kit.trace(Kit.$('#t'), {{ code: 'x', steps: [{{ line: 1 }}] }}); Kit.docs();")
+    assert pg.evaluate("document.querySelector('.docs').classList.contains('no-rail')") is True
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("button,back", [("next", "ArrowLeft"), ("prev", "ArrowRight")])
+def test_trace_keeps_the_arrow_keys_live_after_a_button_disables_itself(browser, button, back):
+    script = "window.t = Kit.trace(Kit.$('#t'), { code: 'a\\nb\\nc', steps: [{ line: 1 }, { line: 2 }, { line: 3 }] });"
+    pg = load(browser, '<div id="t"></div>', script=script)
+    if button == "prev":
+        pg.focus(".trace-bar [data-next]"); pg.keyboard.press("Enter")
+    pg.focus(f".trace-bar [data-{button}]")
+    for _ in range(2):
+        if pg.evaluate(f"!document.querySelector('.trace-bar [data-{button}]').disabled"):
+            pg.keyboard.press("Enter")
+    assert pg.evaluate(f"document.querySelector('.trace-bar [data-{button}]').disabled")
+    assert pg.evaluate("document.activeElement.classList.contains('trace')")
+    pg.keyboard.press(back)
+    assert pg.evaluate(LIT) == [2]
+
+
+@pytest.mark.slow
+def test_trace_root_shows_a_focus_ring_for_keyboard_readers(browser):
+    pg = load(browser, '<button id="b">x</button><div id="t"></div>', script=TRACE)
+    pg.focus("#b"); pg.keyboard.press("Tab")
+    assert pg.evaluate("document.activeElement.classList.contains('trace')")
+    assert pg.evaluate("(() => { const c = getComputedStyle(document.activeElement); return c.boxShadow !== 'none' || c.outlineStyle !== 'none'; })()")
+
+
+@pytest.mark.slow
+def test_trace_start_twice_leaves_only_one_timer(browser):
+    script = "window.t = Kit.trace(Kit.$('#t'), { interval: 60, code: 'a\\nb\\nc', steps: [{ line: 1 }, { line: 2 }, { line: 3 }] });"
+    pg = load(browser, '<div id="t"></div>', script=script)
+    pg.evaluate("t.start(); t.start(); t.stop();")
+    pg.wait_for_timeout(250)
+    assert pg.evaluate(LIT) == [1]
+
+
+def test_stage_map_refuses_a_repeated_stage_name(browser):
+    pg = load(browser, '<div id="m"></div>')
+    err = pg.evaluate("""(() => { try { Kit.stageMap(Kit.$('#m'), { current: 'Lint', groups: [{ group: 'Build', stages: ['Lint', 'Compile'] }, { group: 'Release', stages: ['Lint'] }] }); return ''; } catch (e) { return e.message; } })()""")
+    assert "Lint" in err and "more than once" in err
+
+
+@pytest.mark.slow
+def test_long_operation_names_and_values_wrap_on_a_phone(browser):
+    op, val = "o" * 80, "v" * 90
+    script = f"Kit.trace(Kit.$('#t'), {{ code: 'x', steps: [{{ line: 1, op: '{op}', changes: [{{ name: '{val}', from: '{val}', to: '{val}' }}] }}] }});"
+    pg = load(browser, '<div id="t"></div>', width=390, script=script)
+    assert pg.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+    assert pg.evaluate("(() => { const s = document.querySelector('.trace-state'); return s.scrollWidth <= s.clientWidth; })()")
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("button,key,back", [("next", "ArrowRight", "ArrowLeft"), ("prev", "ArrowLeft", "ArrowRight")])
+def test_trace_keeps_focus_when_an_arrow_key_disables_the_focused_button(browser, button, key, back):
+    start = 1 if button == "next" else 2
+    script = f"window.t = Kit.trace(Kit.$('#t'), {{ code: 'a\\nb', steps: [{{ line: 1 }}, {{ line: 2 }}] }}); t.go({start});"
+    pg = load(browser, '<div id="t"></div>', script=script)
+    pg.focus(f".trace-bar [data-{button}]")
+    pg.keyboard.press(key)
+    assert pg.evaluate("document.activeElement.classList.contains('trace')")
+    pg.keyboard.press(back)
+    assert pg.evaluate(LIT) == [start]
+
+
+@pytest.mark.slow
+def test_trace_keeps_focus_when_playback_reaches_the_end(browser):
+    script = "window.t = Kit.trace(Kit.$('#t'), { interval: 30, code: 'a\\nb', steps: [{ line: 1 }, { line: 2 }] });"
+    pg = load(browser, '<div id="t"></div>', script=script)
+    pg.focus(".trace-bar [data-next]")
+    pg.evaluate("t.start()")
+    pg.wait_for_timeout(200)
+    assert pg.evaluate("document.activeElement.classList.contains('trace')")
+    pg.keyboard.press("ArrowLeft")
+    assert pg.evaluate(LIT) == [1]
+
+
+@pytest.mark.slow
+def test_inline_math_in_a_latex_block_matches_the_words_around_it(browser):
+    pg = load(browser, '<style>.katex { font-size: 1.21em; }</style><div class="latex"><p id="p">word <span class="katex" id="k">x</span></p></div>', width=1000)
+    ratio = pg.evaluate("parseFloat(getComputedStyle(document.getElementById('k')).fontSize) / parseFloat(getComputedStyle(document.getElementById('p')).fontSize)")
+    assert ratio < 1.1

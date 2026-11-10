@@ -16,7 +16,7 @@ Two passes over one Artifact page (the file you will publish, with no
              full-page screenshot for each run; LOOK at them.
 
 Usage:
-  render_check.py PAGE.html [--out DIR] [--widths 390,1440] [--schemes light,dark]
+  render_check.py PAGE.html [--out DIR] [--widths 390,1000,1440] [--schemes light,dark]
                   [--step "label::js"]... [--wait MS] [--static-only]
 
   --step runs JavaScript in the page after load, waits, and screenshots again,
@@ -217,19 +217,24 @@ def check_static(html: str) -> list[Issue]:
         add("warn", "hand-math", 'math is hand-set (.math / .eq); write LaTeX in .tex and render it with KaTeX')
     is_plan = bool(re.search(r"<[^>]+\sdata-plan[\s>]", markup))
     issues += _check_teaching(markup)
+    fmt = _page_format(markup)
+    # kit.js names these calls in its own comments, so the format lints read only the page's scripts
+    without_kit = re.sub(r"<script[^>]*\bdata-va\b[^>]*>.*?</script>", "", html, flags=re.I | re.S)
+    own_scripts = "\n".join(re.findall(r"<script[^>]*>(.*?)</script>", without_kit, re.I | re.S))
+    issues += _check_format(markup, own_scripts, fmt, is_plan)
     if is_plan:
         issues += _check_plan(markup) + _check_review(markup, html) + _check_task_code(markup)
     if 'class="docs' in markup:
         parts = re.split(r'(?=<section[^>]*class="[^"]*\bdoc-page\b)', markup)[1:]
-        if parts and not re.search(r'class="[^"]*\bfig\b', parts[0]):
-            add("warn", "no-map", "the first section has no figure; open the guide with a map of the whole pipeline (named blocks and wires)")
+        if parts and not re.search(r'class="[^"]*\b(fig|trace|latex|table|table-wrap)\b', parts[0]):
+            add("warn", "no-map", "the first section has no figure; open with a map of the whole, or with a worked example, a table or the answers")
         for k, part in enumerate(parts):
             head = re.match(r"<section[^>]*>", part).group(0)
             sid = (re.search(r'\bid="([^"]+)"', head) or [None, "?"])[1]
             title = (re.search(r'data-title="([^"]+)"', head) or [None, sid])[1]
             if is_plan or k == 0 or 'data-check="none"' in head or re.search(r"source|reference|notes", title, re.I):
                 continue
-            if not re.search(r'class="[^"]*\bdecide\b|<details[^>]*class="[^"]*\bcheck\b', part):
+            if fmt[0] not in ("guide", "quick") and not re.search(r'class="[^"]*\bdecide\b|<details[^>]*class="[^"]*\bcheck\b', part):
                 add("warn", "no-check", f"section #{sid} ({title}) ends without a check question; add a .decide (or mark data-check=\"none\")")
             if _words(part) > 220 and not _tags_with(part, "openq") and not re.search(r'<(svg|canvas|table|img)\b', part) and not any(
                     _tags_with(part, c) for c in ("fig", "codeblock", "pane-fig", "derive", "tex")):
@@ -368,6 +373,143 @@ def _check_teaching(markup: str) -> list[Issue]:
         top = max(positions.count(k) for k in set(positions))
         if top / len(positions) >= 0.6:
             out.append(Issue("warn", "answer-position", f"{top} of {len(positions)} check questions put the answer in the same position; vary it"))
+    return out
+
+
+FORMATS = ("quick", "guide", "learn", "explorable", "prototype")
+QUICK_LIMITS = {"concept": (150, 1), "landscape": (400, 3)}  # words, screens
+QUICK_SCREEN = 900  # px: the height render() gives a page at laptop width
+# A structural fact (a control, hidden text) is an error. A wording guess only warns: "Exercise 3" is a homework
+# label and "Predict the next token" is a statement, so wording must never block a page.
+_PROMPTS = re.compile(r">\s*(try first|try it yourself|quick check\s*:|check question|check yourself|test yourself|your call\s*:|what do you think|make a prediction|pause and think)|<h[1-6]\b[^>]*>\s*(drills?\b)", re.I)
+_MAYBE_PROMPT = re.compile(r"\bpredict (?:the|what|which|how)\b|\bexercise\s*(?:\d+|:)|\bbefore you read on\b|\btry this yourself\b|\bpractice (?:problems?|questions?)\b", re.I)
+_FRAME_CONTROL = re.compile(r"""<[a-z][^>]*(?:class=["'][^"']*\bstepper-ctl\b|\sdata-(?:next|prev|play)(?=[\s=>/]))""", re.I)
+_RENDER_CODES = {"format-question", "format-collapsed", "quick-long"}  # what a page's script can add after load
+
+
+def _meta(markup: str, name: str) -> str | None:
+    for tag in re.findall(r"<meta\b[^>]*>", re.sub(r"<!--.*?-->", "", markup, flags=re.S), re.I):
+        attrs = {k.lower(): v1 or v2 or v3 for k, v1, v2, v3 in re.findall(r"""([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""", tag)}
+        if attrs.get("name") == f"va:{name}":
+            return attrs.get("content")
+    return None
+
+
+def _page_format(markup: str) -> tuple[str | None, str | None]:
+    return _meta(markup, "format"), _meta(markup, "size")
+
+
+def _framed_figures(markup: str) -> list[str]:
+    """The inside of each figure, <figure> or .fig, that holds a frame control."""
+    bodies = []
+    for at, _ in _class_tags(markup, "fig", tag="figure|div"):
+        body = _element_body(markup, at, re.match(r"<(\w+)", markup[at:]).group(1))
+        if _FRAME_CONTROL.search(body):
+            bodies.append(body)
+    for m in re.finditer(r"<figure\b", markup, re.I):
+        body = _element_body(markup, m.start(), "figure")
+        if _FRAME_CONTROL.search(body):
+            bodies.append(body)
+    return bodies
+
+
+def _count_words(text: str) -> int:
+    """Latin words, plus two CJK characters as one word, so a Chinese page has the same limit."""
+    cjk = len(re.findall(r"[㐀-鿿豈-﫿]", text))
+    return len(re.sub(r"[㐀-鿿豈-﫿]", " ", text).split()) + cjk // 2
+
+
+def _no_math(html: str) -> str:
+    """Drop LaTeX source, in either element the docs teach (span or div)."""
+    return re.sub(r"""<(span|div)\b[^>]*class=["'][^"']*\btex\b[^"']*["'][^>]*>.*?</\1>""", " ", html, flags=re.I | re.S)
+
+
+def _reader_text(visible: str) -> str:
+    """Words written for the reader: no code, math or diagram text."""
+    return _text(_no_math(re.sub(r"<(pre|code|svg)\b.*?</\1>", " ", visible, flags=re.I | re.S)))
+
+
+def _redrawn_matrix(visible: str) -> bool:
+    """Three display equations in a row that repeat most of one matrix: the page redraws instead of calculating.
+
+    A row operation leaves other rows alone, so a redraw shares rows with the display before it. Different
+    matrices of one size (Cramer's A_x and A_y, separate minors) do not.
+    """
+    for at, _ in _class_tags(visible, "latex", tag="div"):
+        run, last = 0, None
+        for eq in re.findall(r"""class=["']tex display["'][^>]*>(.*?)</(?:span|div)>""", _element_body(visible, at, "div"), re.S):
+            bodies = re.findall(r"\\begin\{(?:[vbpV]matrix|array)\}(?:\{[^}]*\})?(.*?)\\end\{(?:[vbpV]matrix|array)\}", eq, re.S)
+            rows = [re.sub(r"\s+", "", r) for r in bodies[-1].split("\\\\")] if bodies else None
+            if not rows or "&" not in rows[0]:
+                run, last = 0, None
+                continue
+            shared = last is not None and len(last) == len(rows) and 2 * sum(x == y for x, y in zip(last, rows)) >= len(rows)
+            run, last = (run + 1 if shared else 1), rows
+            if run >= 3:
+                return True
+    return False
+
+
+def _check_format(markup: str, scripts: str, fmt: tuple[str | None, str | None], is_plan: bool) -> list[Issue]:
+    """The request picks the format, and the page keeps to it: a guide or quick page only tells; only learn asks."""
+    out: list[Issue] = []
+    name, size = fmt
+    visible = re.sub(r"<!--.*?-->|<title[^>]*>.*?</title>", "", markup, flags=re.S | re.I)
+    if (re.search(r"""data-value=["']skim["']|<button\b[^>]*>(?:\s|<[^>]+>)*Skim(?:\s|<[^>]+>)*</button>""", visible, re.I)
+            or re.search(r"""data-value=["'](read|deep)["'](?:(?!</div>|</nav>).){0,400}?data-value=["'](?!\1)(read|deep)["']""", visible, re.I | re.S)) or re.search(r"\bKit\.depth\s*\(", scripts):
+        out.append(Issue("error", "depth-tabs", "remove the Skim / Read / Deep control; the request picks the depth before the page is built"))
+    if name is None:
+        if not is_plan:
+            out.append(Issue("warn", "no-format", 'declare the format the request asked for: <meta name="va:format" content="quick|guide|learn|explorable|prototype">'))
+        return out
+    if name not in FORMATS:
+        out.append(Issue("error", "format-unknown", f"va:format is '{name}'; use one of {', '.join(FORMATS)}"))
+        return out
+    sections = sum(1 for _ in _class_tags(visible, "doc-page"))
+    if name in ("explorable", "prototype"):
+        if sections >= 3:
+            out.append(Issue("warn", "format-mismatch", f"a page with {sections} reading sections is a guide or a lesson; declare guide or learn, not {name}"))
+        return out
+    framed = [f for f in _framed_figures(visible) if _tags_with(f, "tex")]
+    if name in ("guide", "learn") and _redrawn_matrix(visible):
+        out.append(Issue("warn", "math-redraw", "a matrix is redrawn for each operation; write the operation as one line of working, and redraw only at checkpoints"))
+    if name == "learn":
+        if framed:
+            out.append(Issue("warn", "math-framed", "math sits in a stepper; write every step open in a .latex block"))
+        if _tags_with(visible, "derive"):
+            out.append(Issue("warn", "math-not-latex", "math reads like a paper in every format; replace the numbered .derive list with a .latex block"))
+        for at, _ in _class_tags(visible, "deeper", tag="details"):
+            body = _element_body(visible, at, "details")
+            if _tags_with(body, "derive") or _tags_with(body, "latex"):
+                out.append(Issue("warn", "math-collapsed", "a derivation sits in a collapsed block; write it open in a .latex block"))
+                break
+        return out
+    prompt = _PROMPTS.search(visible)
+    if (_tags_with(visible, "decide") or _tags_with(visible, "after-decide") or _tags_with(visible, "openq")
+            or re.search(r"""<details[^>]*class=["'][^"']*\bcheck\b|\bdata-gate\b""", visible) or re.search(r"\bKit\.openQuestions\s*\(", scripts) or prompt):
+        what = f"'{prompt.group(1) or prompt.group(2)}'" if prompt else "a question, gate or open question"
+        out.append(Issue("error", "format-question", f"a {name} page only tells, and it holds {what}; move drills to a learn page"))
+    if _MAYBE_PROMPT.search(_reader_text(visible)):
+        out.append(Issue("warn", "format-prompt", f"this wording may ask the reader to do something; a {name} page only tells"))
+    if re.search(r"""[?？]["'”’)]*(\s|$)""", _reader_text(visible)):
+        out.append(Issue("warn", "format-rhetorical", f"a {name} page states things; rewrite questions as statements"))
+    if "<details" in visible:
+        out.append(Issue("error", "format-collapsed", f"a {name} page keeps all of its content open; remove <details>"))
+    if _tags_with(visible, "derive"):
+        out.append(Issue("error", "math-not-latex", f"a {name} page writes math like a paper; replace the numbered .derive list with a .latex block"))
+    if framed:
+        out.append(Issue("error", "math-framed", "math sits in a stepper; write every step open in a .latex block"))
+    elif _FRAME_CONTROL.search(visible) or re.search(r"\bKit\.(?:stepper|scenarios)\s*\(", scripts):
+        out.append(Issue("error", "format-stepper", f"a {name} page shows every state open; remove the frames. Only code may play, in Kit.trace"))
+    if name == "guide" and _tags_with(visible, "codeblock") and not _tags_with(visible, "trace"):
+        out.append(Issue("warn", "code-no-state", "if this code runs an algorithm, play it beside the example's real state with Kit.trace; a config or API block can stay"))
+    if name == "quick":
+        limit = QUICK_LIMITS.get(size or "concept")
+        words = _count_words(_text(_no_math(visible)))
+        if limit is None:
+            out.append(Issue("error", "format-unknown", f"va:size is '{size}'; use one of {', '.join(QUICK_LIMITS)}"))
+        elif words > limit[0]:
+            out.append(Issue("error", "quick-long", f"a quick {size or 'concept'} page has {words} words; the limit is {limit[0]}"))
     return out
 
 
@@ -742,6 +884,49 @@ async () => {
 """
 
 
+_HIDDEN_TEXT = """() => [...document.body.querySelectorAll('*')].filter(e => {
+  if (e.closest('nav, .docs-side, .docs-rail, button, label, select, datalist, rp, script, style, template, title, noscript, svg, .katex, .code-pins, .popover, .scrim')) return false;
+  if (!e.textContent.trim() || e.parentElement.closest('[hidden]')) return false;
+  const c = getComputedStyle(e);
+  return c.display === 'none' || c.visibility === 'hidden' || +c.opacity === 0 || c.contentVisibility === 'hidden'
+    || (c.display !== 'inline' && c.overflowY !== 'visible' && e.clientHeight === 0);
+}).map(e => e.textContent.trim().slice(0, 40))"""
+_TALLEST = """() => Math.max(document.documentElement.scrollHeight, ...[...document.body.querySelectorAll('*')]
+  .filter(e => getComputedStyle(e).overflowY !== 'visible' && e.scrollHeight > e.clientHeight + 1).map(e => e.scrollHeight))"""
+_NO_MATH_DOM = """() => { const c = document.body.cloneNode(true); c.querySelectorAll('.katex, style, script').forEach(e => e.remove()); return c.innerHTML; }"""
+_CLIPPED_MATH = """() => [...document.querySelectorAll('.latex .tex.display')].filter(e => e.scrollWidth > e.clientWidth + 1 || e.scrollHeight > e.clientHeight + 1).length"""
+_CLIPPED_ANSWER = """() => [...document.querySelectorAll('.latex .answer .tex.display')].filter(e => e.scrollWidth > e.clientWidth + 1).length"""
+_TRACE_SPLIT = """() => [...document.querySelectorAll('.trace-split')].some(r => {
+  const c = r.querySelector('.trace-code'), s = r.querySelector('.trace-state');
+  if (!c || !s) return true;
+  const a = c.getBoundingClientRect(), b = s.getBoundingClientRect();
+  return !(a.top < b.bottom && b.top < a.bottom && a.right <= b.left + 1);
+})"""
+# A grid or flex container makes each loose text run and each child its own item, so a sentence written
+# straight into it ("runs <code>sm team</code> to …") splits into cells: the code lands in the number
+# column and breaks one word per line. Flag a container that holds both loose text and classless inline
+# markup. A classed child is a badge or an icon (.claim-num, .call-mark) and an svg is an icon; both are fine.
+# So is a child the CSS places on purpose (order, flex-basis, a grid line), like .ask > label > small.
+_SPLIT_TEXT = """() => {
+  const INLINE = new Set(['A', 'ABBR', 'B', 'CITE', 'CODE', 'DATA', 'DFN', 'EM', 'I', 'KBD', 'MARK', 'Q', 'S', 'SAMP', 'SMALL', 'STRONG', 'SUB', 'SUP', 'TIME', 'U', 'VAR']);
+  const placed = n => { const c = getComputedStyle(n);
+    return c.order !== '0' || c.flexBasis !== 'auto' || c.gridColumnStart !== 'auto' || c.gridColumnEnd !== 'auto' || c.gridRowStart !== 'auto'; };
+  const out = [];
+  for (const el of document.body.querySelectorAll('*')) {
+    if (el.closest('svg, pre, .katex, script, style, template')) continue;
+    if (!/(grid|flex)$/.test(getComputedStyle(el).display)) continue;
+    const kids = [...el.childNodes];
+    const text = kids.find(n => n.nodeType === 3 && n.textContent.trim());
+    const tag = text && kids.find(n => n.nodeType === 1 && INLINE.has(n.tagName) && !n.hasAttribute('class') && !placed(n));
+    if (!tag) continue;
+    const cls = el.classList.length ? '.' + [...el.classList].slice(0, 2).join('.') : '';
+    out.push(`${el.tagName.toLowerCase()}${cls} splits '${el.textContent.replace(/\\s+/g, ' ').trim().slice(0, 50)}' at its <${tag.tagName.toLowerCase()}>`);
+    if (out.length >= 3) break;
+  }
+  return out;
+}"""
+
+
 class _Quiet(http.server.SimpleHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -763,7 +948,7 @@ def _wrap(html: str, theme: str | None) -> str:
 SUPPORT = {".js", ".mjs", ".css", ".json", ".csv", ".png", ".jpg", ".jpeg", ".svg", ".webp", ".glb", ".gltf", ".bin", ".woff2", ".txt", ".wasm"}
 
 
-def render(path, out_dir=None, widths=(390, 1440), schemes=("light", "dark"), steps=(), wait_ms=900, explicit_theme=False) -> Report:
+def render(path, out_dir=None, widths=(390, 1000, 1440), schemes=("light", "dark"), steps=(), wait_ms=900, explicit_theme=False) -> Report:
     from playwright.sync_api import sync_playwright
 
     path = pathlib.Path(path).resolve()
@@ -771,6 +956,8 @@ def render(path, out_dir=None, widths=(390, 1440), schemes=("light", "dark"), st
     out.mkdir(parents=True, exist_ok=True)
     html = path.read_text(encoding="utf-8")
     report = Report()
+    lint_rendered = False
+    fmt_name, fmt_size = _page_format(re.sub(r"<(style|script)[^>]*>.*?</\1>", "", html, flags=re.I | re.S))
 
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp)
@@ -816,6 +1003,34 @@ def render(path, out_dir=None, widths=(390, 1440), schemes=("light", "dark"), st
                         probe = page.evaluate(_PROBE)
                         if probe["overflow"] > 1:
                             note("error", "h-overflow", f"page scrolls sideways by {probe['overflow']}px; widest: {', '.join(probe['off']) or 'n/a'}")
+                        if fmt_name in ("guide", "quick"):
+                            for hidden in page.evaluate(_HIDDEN_TEXT)[:3]:
+                                note("error", "format-hidden", f"a {fmt_name} page keeps its content open, and this text is hidden: '{hidden}'")
+                            if not lint_rendered:
+                                lint_rendered = True
+                                for issue in _check_format(page.evaluate(_NO_MATH_DOM), "", (fmt_name, fmt_size), False):
+                                    if issue.code in _RENDER_CODES and not any(i.code == issue.code for i in report.issues):
+                                        note(issue.level, issue.code, issue.message + " (after the page's scripts ran)")
+                        if fmt_name in ("guide", "quick") and width >= 800:
+                            clipped = page.evaluate(_CLIPPED_MATH)
+                            if clipped:
+                                note("warn", "math-clipped", f"{clipped} formulas are cut off at this width; break each long line inside an aligned block")
+                        if fmt_name in ("guide", "quick", "learn") and width < 800 and page.evaluate(_CLIPPED_ANSWER):
+                            note("warn", "math-clipped", "an answer box hides part of its result at this width; break it inside an aligned block")
+                        unrendered = page.evaluate("document.querySelectorAll('.tex-fallback').length")
+                        if unrendered:
+                            note("error", "math-unrendered", f"{unrendered} formulas show as LaTeX source; KaTeX failed to load or refused the page")
+                        if fmt_name == "guide" and page.evaluate("document.querySelectorAll('.tex.display:not(.latex .tex):not(.fig .tex)').length") >= 3:
+                            note("warn", "math-not-latex", "display equations sit outside a .latex block; write a derivation as a sentence and an equation in .latex")
+                        if fmt_name == "quick" and width >= 700:
+                            limit_px = QUICK_LIMITS.get(fmt_size or "concept", QUICK_LIMITS["concept"])[1] * QUICK_SCREEN
+                            tall = page.evaluate(_TALLEST)
+                            if tall > limit_px:
+                                note("error", "quick-tall", f"a quick {fmt_size or 'concept'} page is {tall}px tall at this width; the limit is {limit_px}px")
+                        if width >= 1000 and page.evaluate(_TRACE_SPLIT):
+                            note("error", "trace-layout", "a code player does not show its state to the right of its code at this width")
+                        for split in page.evaluate(_SPLIT_TEXT):
+                            note("error", "split-text", f"a grid or flex row {split}; wrap the sentence in one <span>, or give the row display: block and place the marker with position: absolute")
                         for fam in probe["missing"]:
                             note("warn", "font-fallback", f"'{fam}' did not load; text fell back to the next face")
                         top = out / f"{tag}-top.png"  # the first screen, taken before the full page so WebGL is still live
@@ -849,7 +1064,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("page")
     ap.add_argument("--out")
-    ap.add_argument("--widths", default="390,1440")
+    ap.add_argument("--widths", default="390,1000,1440")
     ap.add_argument("--schemes", default="light,dark")
     ap.add_argument("--step", action="append", default=[], help='"label::javascript" run after load, then screenshot')
     ap.add_argument("--wait", type=int, default=900, help="ms to wait after load and after each step")

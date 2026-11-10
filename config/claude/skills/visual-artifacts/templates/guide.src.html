@@ -1,36 +1,32 @@
 <title>Guide Template</title>
+<meta name="va:format" content="guide">
 <meta name="claude:viewport-fit-sides" content="cover">
 <link data-va="fonts">
 <style data-va="claude.css"></style>
 <style data-va="katex.css"></style>
 <style>
   /* page layout only: tokens, never literal colours */
-  .map-legend { margin: 0; padding: 0 var(--sp-5) var(--sp-4); display: grid; gap: 6px; list-style: none; font-size: var(--t-sm); color: var(--ink-2); counter-reset: lg; }
-  .map-legend li { counter-increment: lg; display: grid; grid-template-columns: 22px 1fr; gap: 8px; }
-  .map-legend li::before { content: counter(lg); font: 600 var(--t-2xs)/20px var(--font-mono); width: 20px; height: 20px; border-radius: 50%; text-align: center; border: 1px solid var(--line-strong); color: var(--muted); }
+  .q-state { font: 400 var(--t-xs)/1.5 var(--font-mono); color: var(--ink-2); font-variant-ligatures: none; }
 </style>
 
 <header class="topbar">
   <div class="wrap topbar-in">
     <button class="btn ghost icon menu-btn" data-docs-menu aria-label="Open sections"><span data-icon="layers"></span></button>
     <a class="brand" href="#map"><span class="brand-mark" data-icon="book" data-size="14"></span>Work Queues <span class="brand-sub">Guide</span></a>
-    <span class="spacer"></span>
-    <div class="seg sm" id="depth"><button data-value="skim">Skim</button><button data-value="read" aria-pressed="true">Read</button><button data-value="deep">Deep</button></div>
   </div>
 </header>
 
 <div class="docs">
   <aside class="docs-side" aria-label="Sections"></aside>
   <main class="docs-main">
-    <!-- Plan: Guide · rungs: one line (map) / why (problem) / mechanism (model) / trade-off and principle.
-         Each step: takeaway, optional decision, figure, prose, one check. Focal accent: the queue. -->
+    <!-- Plan: Guide, so it only tells: no questions, no gates, nothing collapsed.
+         Math uses .latex; code plays in Kit.trace. -->
 
     <section class="doc-page" id="map" data-group="Start here" data-title="Map">
       <div class="doc-head">
         <span class="eyebrow">Distributed systems</span>
         <h1>Work Queues</h1>
-        <p class="lede">A work queue lets producers hand off jobs and keep going. Workers take the jobs at their own pace, so a slow job never blocks the caller.</p>
-        <div class="meta"><span data-icon="clock"></span>8 min · 3 sources</div>
+        <p class="lede">A work queue lets producers hand off jobs and keep going. Workers take the jobs at their own pace, so a slow job never blocks a caller.</p>
       </div>
       <figure class="fig" id="fig-map">
         <div class="fig-head">
@@ -57,74 +53,39 @@
         </ol>
         <figcaption class="fig-cap"><strong>What to notice:</strong> the queue is the only part both sides touch. So producers and workers can run at different speeds.</figcaption>
       </figure>
-      <h2 id="ladder">The idea in five steps</h2>
-      <ol class="ladder">
-        <li><span class="rung-label">One line</span><span class="rung-text">A queue separates who asks for work from who does it.</span><a class="rung-link" href="#map">Read →</a></li>
-        <li><span class="rung-label">Why</span><span class="rung-text">A caller that waits for slow work stalls whenever the work is slow.</span><a class="rung-link" href="#problem">Read →</a></li>
-        <li><span class="rung-label">Mechanism</span><span class="rung-text">Workers pull jobs, and the queue buffers bursts.</span><a class="rung-link" href="#model">Read →</a></li>
-        <li><span class="rung-label">Trade-off</span><span class="rung-text">You gain throughput and lose an immediate answer.</span><a class="rung-link" href="#tradeoffs">Read →</a></li>
-        <li><span class="rung-label">Principle</span><span class="rung-text">It is a bounded buffer between two clocks, like a Go channel.</span><a class="rung-link" href="#tradeoffs">Read →</a></li>
-      </ol>
     </section>
 
-    <section class="doc-page" id="problem" data-group="Start here" data-title="Problem">
-      <div class="doc-head"><span class="eyebrow">Problem · Rung 2</span><h1>A slow job blocks its caller</h1></div>
-      <p class="takeaway">If each caller waits for a 2-second job, 100 requests a second keep 200 callers waiting.</p>
-      <div class="prose d-read">
-        <p>Each waiting caller holds a thread and a connection. So the load you can serve falls as the jobs get slower. Little's law gives the count: <span class="tex">L = \lambda W</span>, jobs in flight equal the arrival rate times the wait.</p>
-      </div>
-      <div class="decide" data-answer="b">
-        <p class="decide-q">Arrivals stay at 100 a second, and the job time doubles to 4 s. How many callers wait at once?</p>
-        <div class="decide-options"><button data-choice="a">200</button><button data-choice="b">400</button><button data-choice="c">100</button></div>
-        <div class="decide-why" data-for="b">Little's law: 100 a second times 4 s is 400 in flight.</div>
-        <div class="decide-why" data-for="*">The count in flight grows with the wait. So doubling the wait doubles it.</div>
+    <section class="doc-page" id="load" data-group="Mechanism" data-title="How many callers wait">
+      <div class="doc-head"><span class="eyebrow">Math</span><h1>Waiting callers grow with job time</h1></div>
+      <p class="takeaway">At 100 requests a second and 2 s per job, 200 callers wait at once.</p>
+      <div class="latex">
+        <p>Little's law says the count in the system <span class="tex">L</span> is the arrival rate <span class="tex">\lambda</span> times the time each one stays, <span class="tex">W</span>.</p>
+        <span class="tex display">L = \lambda W</span>
+        <p>Substitute the arrival rate and the job time.</p>
+        <span class="tex display">L = 100\,\text{s}^{-1} \times 2\,\text{s}</span>
+        <p>The units cancel, so <span class="tex">L</span> is a plain count.</p>
+        <div class="answer"><span class="tex display">L = 200</span></div>
       </div>
     </section>
 
-    <section class="doc-page" id="model" data-group="Start here" data-title="Mental model">
-      <div class="doc-head"><span class="eyebrow">Mental model · Rung 3</span><h1>A buffer between two clocks</h1></div>
-      <p class="takeaway">The producer runs on its clock, and the workers run on theirs. The queue absorbs the difference.</p>
-      <div class="decide" data-kind="decide" data-answer="a" data-gate>
-        <p class="decide-q">Producers enqueue 120 jobs a second. Two workers finish 50 a second each. What happens to the queue?</p>
-        <div class="decide-options"><button data-choice="a">It grows by 20 jobs a second</button><button data-choice="b">It stays the same size</button></div>
-        <div class="decide-why" data-for="a">In 120, out 100. The backlog grows by 20 a second until you add a worker.</div>
-        <div class="decide-why" data-for="b">It holds steady only when arrivals equal the service rate.</div>
-      </div>
-      <div class="pair after-decide">
-        <div class="pair-side"><p class="pair-label">Work queue</p><p>Producers enqueue, and a fixed pool of workers dequeues. A full queue pushes back on producers.</p></div>
-        <div class="pair-side go"><p class="pair-label">Counterpart</p><figure class="fig codeblock"><pre class="code-src" data-sketch data-file="queue.go"><code class="language-go">jobs := make(chan Job, 100) // the queue
-for w := 0; w &lt; 2; w++ {
-    go func() { for j := range jobs { run(j) } }()
-}
-jobs &lt;- j // blocks when the buffer is full</code></pre></figure></div>
-      </div>
-      <div class="decide" data-answer="a">
-        <p class="decide-q">In the Go version, what happens when all 100 buffer slots are full?</p>
-        <div class="decide-options"><button data-choice="a">The send blocks the producer</button><button data-choice="b">The job is dropped</button></div>
-        <div class="decide-why" data-for="a">A full buffered channel blocks the sender. That is backpressure.</div>
-        <div class="decide-why" data-for="b">Go never drops a send on a channel. The sender waits.</div>
-      </div>
+    <section class="doc-page" id="run" data-group="Mechanism" data-title="One run, line by line">
+      <div class="doc-head"><span class="eyebrow">Code</span><h1>A queue with two slots</h1></div>
+      <p class="takeaway">The queue holds jobs until a worker is free. A full queue refuses new jobs, and that refusal is backpressure.</p>
+      <div class="trace" id="queue-run"></div>
     </section>
 
     <section class="doc-page" id="tradeoffs" data-group="Trade-offs" data-title="Trade-offs and anti-patterns">
-      <div class="doc-head"><span class="eyebrow">Trade-offs · Rungs 4 and 5</span><h1>What the queue costs</h1></div>
+      <div class="doc-head"><span class="eyebrow">Trade-offs</span><h1>What the queue costs</h1></div>
       <p class="takeaway">You trade an immediate answer for throughput. You must also handle jobs that fail after you have returned.</p>
-      <h2 id="anti-patterns">Anti-patterns</h2>
-      <ul class="prose d-read">
-        <li><strong>An unbounded queue.</strong> It hides overload until memory runs out. Bound it and push back.</li>
-        <li><strong>Side effects without an idempotency key.</strong> A retried job charges the card twice.</li>
-      </ul>
-      <div class="decide" data-answer="b">
-        <p class="decide-q">A worker crashes after it charges a card but before it acknowledges the job. What prevents a second charge on retry?</p>
-        <div class="decide-options"><button data-choice="a">A bigger queue</button><button data-choice="b">An idempotency key on the charge</button></div>
-        <div class="decide-why" data-for="b">The payment service sees the same key and returns the first result.</div>
-        <div class="decide-why" data-for="a">Queue size does not change delivery. The job comes back either way.</div>
-      </div>
+      <div class="table-wrap"><table class="table"><thead><tr><th>Anti-pattern</th><th>What fails</th><th>Fix</th></tr></thead><tbody>
+        <tr><td>An unbounded queue</td><td>It hides overload until memory runs out.</td><td>Bound it and push back.</td></tr>
+        <tr><td>Side effects with no key</td><td>A retried job charges the card twice.</td><td>Send an idempotency key.</td></tr>
+      </tbody></table></div>
     </section>
 
-    <section class="doc-page" id="sources" data-group="Use it" data-title="Notes and sources" data-check="none">
-      <div class="doc-head"><span class="eyebrow">Use it</span><h1>Notes and sources</h1></div>
-      <ol class="sources"><li>Little, J. D. C. "A Proof for the Queuing Formula L = λW." Operations Research, 1961.</li><li>The Go Programming Language Specification, "Channel types".</li><li>Kleppmann, M. Designing Data-Intensive Applications. O'Reilly, 2017.</li></ol>
+    <section class="doc-page" id="sources" data-group="Trade-offs" data-title="Notes and sources" data-check="none">
+      <div class="doc-head"><h1>Notes and sources</h1></div>
+      <ol class="sources"><li>Little, J. D. C. "A Proof for the Queuing Formula L = λW." Operations Research, 1961.</li></ol>
     </section>
   </main>
   <aside class="docs-rail" aria-label="On this page"></aside>
@@ -134,6 +95,26 @@ jobs &lt;- j // blocks when the buffer is full</code></pre></figure></div>
 <script data-va="kit.js"></script>
 <script>
   Kit.init();
-  Kit.depth(Kit.$('#depth'));
+  // Compute each state by running the code's own logic, so the rows cannot drift from the code.
+  const CODE = `def enqueue(job):
+    if len(queue) == capacity:
+        raise Full
+    queue.append(job)
+
+def worker_take():
+    return queue.pop(0)`;
+  const queue = [], capacity = 2, steps = [];
+  const show = () => `<p class="q-state">queue = [${queue.join(', ')}] · ${queue.length} of ${capacity} slots</p>`;
+  const step = (op, line, note) => steps.push({ op, line, note, state: show() });
+  for (const job of ['j1', 'j2', 'j3']) {
+    const op = `enqueue(${job})`;
+    step(op, 2, `The queue holds ${queue.length} of ${capacity}, so the check is ${queue.length === capacity}.`);
+    if (queue.length === capacity) { step(op, 3, 'The producer learns about the overload at once.'); continue; }
+    queue.push(job);
+    step(op, 4, `${job} joins the queue.`);
+  }
+  const taken = queue.shift();
+  step('worker_take()', 7, `The worker takes ${taken}, which frees one slot.`);
+  Kit.trace(Kit.$('#queue-run'), { code: CODE, lang: 'python', steps });
   Kit.docs();
 </script>

@@ -1,0 +1,30 @@
+<title>Quick Template</title>
+<meta name="va:format" content="quick">
+<meta name="va:size" content="concept">
+<meta name="claude:viewport-fit-sides" content="cover">
+<link data-va="fonts">
+<style data-va="claude.css"></style>
+<style>
+  /* page layout only: tokens, never literal colours. concept: one screen, 150 words. landscape: three screens, 400 words. */
+  .quick { display: grid; gap: var(--sp-4); padding-block: var(--sp-5); }
+  .quick-stats { display: grid; gap: var(--sp-4); grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+</style>
+
+<main class="wrap quick">
+  <div class="doc-head">
+    <h1>Work Queues</h1>
+    <p class="lede">A queue separates who asks for work from who does it, so a slow job never blocks a caller.</p>
+  </div>
+  <div class="quick-stats">
+    <div class="stat"><span class="stat-label">Callers waiting, no queue</span><span class="stat-value">200</span><span class="stat-delta">100 per s × 2 s</span></div>
+    <div class="stat"><span class="stat-label">Callers waiting, queue</span><span class="stat-value">0</span><span class="stat-delta">enqueue, then return</span></div>
+    <div class="stat"><span class="stat-label">Rule to keep</span><span class="stat-value">Bound it</span><span class="stat-delta">a full queue pushes back</span></div>
+  </div>
+  <div class="table-wrap"><table class="table"><thead><tr><th>You gain</th><th>You give up</th></tr></thead><tbody>
+    <tr><td>Throughput during bursts</td><td>An immediate answer</td></tr>
+    <tr><td>Independent scaling of workers</td><td>Simple failure handling, because jobs fail after you return</td></tr>
+  </tbody></table></div>
+</main>
+
+<script data-va="kit.js"></script>
+<script>Kit.init();</script>

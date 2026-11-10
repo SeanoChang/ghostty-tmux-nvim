@@ -1,5 +1,7 @@
 # Explorable: learn by manipulating a model
 
+Declare `<meta name="va:format" content="explorable">`, so `render_check.py` knows the page is not a Guide or a lesson.
+
 Before reaching for 3D, apply "When to use 3D" in SKILL.md. Most explorables are
 2D: a simulation on a canvas, a chart, a step-through diagram.
 

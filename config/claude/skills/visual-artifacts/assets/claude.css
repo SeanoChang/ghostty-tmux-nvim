@@ -63,6 +63,7 @@
   /* type */
   --font-serif: "Source Serif 4", "Iowan Old Style", "Songti TC", "Noto Serif TC", Georgia, serif;
   --font-sans: "Albert Sans", "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --tex-face: KaTeX_Main, "Latin Modern Roman", "CMU Serif", "Times New Roman", serif; /* not --font-*: only math pages load it */
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --t-2xs: .6875rem;   /* 11 */
   --t-xs: .75rem;      /* 12 */
@@ -474,9 +475,6 @@ details.deeper > summary + :not(.deeper-body) { margin-top: 16px; }
 details.deeper > :not(summary, .deeper-body):last-child { margin-bottom: 18px; }
 details.deeper > .deeper-body.prose { font-size: var(--t-base); }
 
-/* reading depth: Skim hides running prose, leaving takeaways and figures */
-body[data-depth="skim"] .d-read, body[data-depth="skim"] details.deeper { display: none !important; }
-
 /* "explain it to…" scripts */
 .explain { display: grid; gap: var(--sp-4); }
 .explain-panel { display: grid; gap: var(--sp-3); }
@@ -511,6 +509,12 @@ details.check > div { padding: 0 0 16px; color: var(--ink-2); font: 400 var(--t-
 .step-notes > li.is-past { color: var(--ink-3); }
 .step-notes > li.is-current { color: var(--ink); background: var(--surface-2); }
 .step-notes > li.is-current::before { background: var(--accent-btn); border-color: var(--accent-btn); color: var(--on-accent); }
+
+/* map legend: one numbered sentence per edge. The li stays a block and the number sits in its padding,
+   so inline <code>, <b> and links flow inside the sentence; a grid li would give each its own cell */
+.map-legend { margin: 0; padding: 0 var(--sp-5) var(--sp-4); display: grid; gap: 6px; list-style: none; font-size: var(--t-sm); color: var(--ink-2); counter-reset: lg; }
+.map-legend > li { counter-increment: lg; position: relative; min-height: 20px; padding-left: 30px; min-width: 0; overflow-wrap: anywhere; }
+.map-legend > li::before { content: counter(lg); position: absolute; left: 0; top: 0; font: 600 var(--t-2xs)/20px var(--font-mono); width: 20px; height: 20px; border-radius: 50%; text-align: center; border: 1px solid var(--line-strong); color: var(--muted); }
 
 /* guided tour (explorable) */
 .tour { display: grid; gap: 4px; list-style: none; margin: 0; padding: 0; counter-reset: tour; }
@@ -878,7 +882,7 @@ body.has-respond-bar::after { content: ""; display: block; height: 80px; }
 .cl[data-mark="del"] { background: var(--bad-soft); }
 .cl[data-mark="del"] > .cl-sign { color: var(--bad); }
 .cl[data-mark="hunk"] { color: var(--muted); background: var(--surface-3); }
-.cl.is-hl { background: var(--accent-soft); }
+.cl.is-hl { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent-ink); } /* the bar, so a marked line never rests on colour */
 .tk-k { color: var(--bad); }  /* keyword: purple */
 .tk-s { color: var(--ok); }   /* string: blue */
 .tk-n { color: var(--warn); } /* number or literal: orange */
@@ -977,3 +981,61 @@ details.rubric-d ol { margin: var(--sp-2) 0 0; padding-left: 1.3em; display: gri
 .field > .seg { justify-self: start; }
 .derive .katex-display, .derive .katex-display > .katex { text-align: left; }
 .derive .katex-display { margin: 0.4em 0; }
+
+/* math guide: reads like a LaTeX paper. The face is a token, so pages with no math never ask for it. */
+.latex { font-family: var(--tex-face); font-size: 1.125rem; line-height: 1.5; color: var(--ink); max-width: 44em; }
+.latex p { margin: .75em 0; text-wrap: pretty; }
+.latex .tex.display { display: block; margin: .45em 0; padding: .45em 0; text-align: center; overflow-x: auto; overflow-y: hidden; font: inherit; }
+.latex .tex.display .katex-display { margin: 0; }
+.latex b, .latex strong { color: inherit; }
+.latex .katex { font-size: 1.04em; } /* KaTeX's default 1.21em reads larger than the words around it */
+.latex .statement { margin: .5em 0 1em; border: 1px solid var(--line-strong); border-radius: var(--r); background: var(--bg-sunk); padding: .55em .9em; }
+.latex .statement > b:first-child { display: block; margin: -.55em -.9em .55em; padding: .25em .9em; border-bottom: 1px solid var(--line-strong); background: var(--surface-3); border-radius: var(--r) var(--r) 0 0; }
+.latex .statement p { margin: .3em 0; }
+.latex .answer { margin: .8em 0; border: 1.5px solid var(--ink); border-radius: var(--r); padding: .5em .9em; }
+.latex .answer .tex.display { margin: 0; }
+@media (max-width: 559px) { .latex .tex.display .katex { font-size: .96em; } .latex .answer { padding: .3em .5em; } }
+.latex .slip { margin: .6em 0; border: 1px dashed var(--line-strong); border-radius: var(--r); padding: .3em .9em; }
+.doc-page:has(> .latex) > .doc-head h1 { font-family: var(--tex-face); font-weight: 700; letter-spacing: 0; }
+
+/* the final line of a Report or a table note */
+
+/* stage map: one stage's place in the whole pipeline. Size and words mark it, so colour is never alone. */
+.stage-map { display: grid; gap: var(--sp-2); }
+.stage-where { margin: 0; font: 400 var(--t-sm)/1.4 var(--font-sans); color: var(--ink); }
+.stage-track { display: flex; flex-wrap: wrap; gap: var(--sp-2) var(--sp-3); align-items: flex-end; }
+.stage-group { flex: 1 1 0; min-width: min-content; display: grid; gap: 4px; }
+.stage-group-name { font: 400 var(--t-2xs)/1.2 var(--font-sans); color: var(--muted); text-wrap: balance; }
+.stage-group.is-current .stage-group-name { color: var(--ink); font-weight: 600; }
+.stage-ticks { display: flex; gap: 2px; align-items: flex-end; height: 14px; }
+.stage-tick { flex: 1 1 0; min-width: 0; height: 5px; border-radius: 1px; background: var(--line-strong); }
+.stage-tick[data-state="past"] { background: var(--ink-3); }
+.stage-tick[data-state="current"] { height: 14px; background: var(--ink); }
+.stage-near { margin: 0; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 2px var(--sp-4); font: 400 var(--t-xs)/1.4 var(--font-sans); color: var(--ink-3); }
+
+/* code player (Kit.trace): full code left, running line lit, the example's state right; stacked when narrow */
+.trace { container-type: inline-size; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-3); min-width: 0; }
+.doc-page:has(.trace) { max-width: var(--wide); }
+.trace-bar { position: sticky; top: calc(env(safe-area-inset-top, 0px) + var(--header-h) + 6px); z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); padding: 8px 10px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); }
+.trace-bar input[type="range"] { flex: 1 1 140px; min-width: 100px; width: auto; }
+.trace-bar .step-count { font: 500 var(--t-xs)/1 var(--font-mono); color: var(--ink-2); font-variant-numeric: tabular-nums; min-width: 4.5em; text-align: center; }
+.trace-ops { flex: 1 1 100%; display: flex; flex-wrap: wrap; gap: 4px; }
+.trace-ops .chip { font-family: var(--font-mono); font-variant-ligatures: none; white-space: normal; overflow-wrap: anywhere; text-align: left; }
+.trace-split { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-3); align-items: start; }
+@container (min-width: 560px) { .trace-split { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); } }
+.trace-code { min-width: 0; max-width: none; }
+.trace-code pre { max-height: min(70vh, 640px); overflow: hidden auto; }
+.trace-code > pre.code-src > code { min-width: 0; }
+.trace-code .cl { padding-right: var(--sp-2); }
+.trace-code .cl-t { flex: 1 1 0; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+@container (max-width: 559px) { .trace-code pre { max-height: 38vh; } }
+.trace-code .cl.is-run { background: var(--accent-soft); box-shadow: inset 4px 0 0 var(--accent-ink); font-weight: 600; }
+.trace-state { display: grid; gap: var(--sp-3); align-content: start; padding: var(--sp-3) var(--sp-4); min-width: 0; min-height: 280px; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); font-size: var(--t-sm); }
+.trace-state svg { display: block; max-width: 100%; height: auto; }
+.trace-changes { display: grid; grid-template-columns: fit-content(45%) minmax(0, 1fr); overflow-wrap: anywhere; gap: 4px var(--sp-3); margin: 0; font: 400 var(--t-xs)/1.5 var(--font-mono); font-variant-ligatures: none; }
+.trace-changes dt { color: var(--ink-3); }
+.trace-changes dd { margin: 0; display: flex; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.trace-changes dd > * { min-width: 0; }
+.trace-changes .from { color: var(--muted); }
+.trace-changes .to { color: var(--ink); font-weight: 700; }
+.trace-note { margin: 0; font-size: var(--t-sm); color: var(--ink); min-height: 3em; }

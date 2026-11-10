@@ -13,12 +13,12 @@ repo, and decisions a reviewer answers on the page.
 
 ## When
 
-- **Offer it once** when a design and plan settle in the Brief pane, or when a
+- **Offer it once** when a design and plan settle in chat, or when a
   plan has three or more tasks. One line, then wait: "Want this as a Plan
   page? Map, decisions and a task graph you can share." Do not build unasked.
 - **Build it** when Sean asks for a design doc, an architecture write-up, a
   development plan or a plan page.
-- **Open decisions:** in Claude Code, decide in the Brief pane first; the plan
+- **Open decisions:** in Claude Code, decide in chat first; the plan
   page records what was decided (`.adr`). Put an open decision (`.ask`) on the
   page only when someone reviews it outside Claude Code: a shared Artifact, a
   teammate, a phone. Their Respond reply comes back to you in chat; record
@@ -352,8 +352,7 @@ The code comes as written, with no line numbers; a diff keeps its signs and
 `@@` headers. Each pin follows as a bullet with its line and tone word.
 
 When you dispatch a subagent yourself, build its prompt from the task's
-fields in the page source, in this same shape. Put `[brief <id>]` in the
-subagent's description when the Brief pane tracks the build.
+fields in the page source, in this same shape.
 
 ## Writing
 

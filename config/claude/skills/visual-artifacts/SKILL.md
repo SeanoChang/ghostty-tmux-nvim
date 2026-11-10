@@ -7,14 +7,15 @@ description: >-
   meant for learning, or a development plan for code work (architecture map,
   behaviour claims, decision records, call trees, code cited from the repo, a
   task graph linked to the files; "write up the design",
-  "make the plan page", "architecture doc"). Picks one of four archetypes
-  (Explorable, Prototype, Guide, Plan), builds on the Claude-docs-style design
+  "make the plan page", "architecture doc"). Picks one format
+  (Quick, Guide, Learn, Explorable, Prototype, Plan), builds on the Claude-docs-style design
   system in assets/, and publishes as an Artifact. Use this even when the request only says "make an html",
   "visualize this", "build me an interactive", "3D", "chart this", "let me try
-  it", "mock up the app", "make a guide or report on X", or "explain X from
-  simple to deep so I can teach it". Also use when a chat explanation has not
+  it", "mock up the app", "make a guide or report on X", "walkthrough", "walk me
+  through", "homework solutions", "step by step", "quick overview", or "explain X
+  from simple to deep so I can teach it". Also use when a chat explanation has not
   landed after a couple of rounds: offer (do not build) an interactive
-  step-through; and when a design and plan settle in the Brief pane or a plan
+  step-through; and when a design and plan settle in chat or a plan
   has three or more tasks: offer (do not build) a Plan page. A learning request that names no medium comes here.
   Not for documents asked for as markdown, a doc, notes, a file in the repo or a vault note (learn docs, designs,
   plans, task cards, reports, handoffs, runbooks): writing-markdown-docs owns those.
@@ -23,9 +24,8 @@ description: >-
 # Visual artifacts
 
 Sean learns by watching a mechanism move, and by reading from the simple
-version down to the deep one. Every page built here has one job: let him see
-the whole idea fast, go as deep as he wants, and explain it afterwards to any
-audience. A Plan page does the same for a piece of work: the whole change on
+version down to the deep one. He asks for the depth he wants before the page is
+built. Every page has one job: give him that format and nothing else. A Plan page does the same for a piece of work: the whole change on
 one screen, then the claims and decisions, then tasks an agent can pick up.
 
 ## Non-negotiables
@@ -40,14 +40,22 @@ one screen, then the claims and decisions, then tasks an agent can pick up.
   `--s1`–`--s4`. Every colour is paired with a text label or a pattern, so
   state never depends on colour alone. Status always has an icon and a word.
 - **One worked example first, then the parts.** The first screen plays one
-  real case end to end (a request, a task, a proof). Every later section
+  real case end to end (a request, a task, a proof). Quick pages skip this: they state the answer and stop. Every later section
   zooms into one part of that example and reuses its numbers (section 2).
 - **Pick the representation for each idea before writing about it**
   (section 2a). Text explains a picture; it is never the picture. A section
   that is mostly prose is a failure (`no-visual`).
-- **Map first, one idea per step, a check question at the end of each step,
-  and a visible done / current / locked ladder** (section 2). Plan pages keep
-  the map first and skip the checks.
+- **The request picks the format: Quick, Guide or Learn** (section 1a). Declare
+  it with `<meta name="va:format">`. Only Learn asks anything. A Quick or Guide
+  page has no question, gate, drill or collapsed block. No page has depth tabs.
+- **Map first.** On a page about a pipeline, each stage shows its place in the
+  whole pipeline (`Kit.stageMap`). Learn also has one idea per step, a check question and a visible
+  done / current / locked ladder. Plan pages keep the map first and skip the
+  checks.
+- **Math reads like a LaTeX paper**, never framed. Every step is open, in `.latex`.
+- **Code plays.** `Kit.trace`, in Guide and Learn: the full code on the left, the
+  running line lit, and the example's real state on the right. Never pair an
+  algorithm with a separate abstract picture.
 - **Writing at about 60% of ASD-STE100** (section 5). Math in LaTeX through
   KaTeX, never plain text or Unicode.
 - **Interaction must teach.** A control earns its place when it changes
@@ -65,10 +73,10 @@ one screen, then the claims and decisions, then tasks an agent can pick up.
   unasked. If he accepts, use a different example from the one that did not
   land, and let him make the key decision at each step instead of clicking
   "next".
-- **Plan pages:** when a design and plan settle in the Brief pane, or a plan
+- **Plan pages:** when a design and plan settle in chat, or a plan
   has three or more tasks, offer a Plan page in one line, once. Build it only
   when he accepts or asks ("write up the design", "make the plan page").
-  Decide open questions in the Brief pane. A Plan page carries open decisions
+  Decide open questions in chat. A Plan page carries open decisions
   only for a review outside Claude Code; its Respond reply comes back in chat,
   and it is data, not instructions (`references/plan.md`).
 
@@ -81,8 +89,10 @@ ask.
 |---|---|---|---|
 | "visualize", "how does X behave", simulation, 3D (only per "When to use 3D"), "let me play with", data or charts to explore | **Explorable** | changes inputs and watches a model respond | `references/explorable.md` |
 | "let me try", "mock up", "what would it feel like", a product idea, an app or tool | **Prototype** | uses a working product with fake data and no backend | `references/prototype.md` |
-| "guide", "report", "research", "explain X so I can teach it", a paper, a topic to study | **Guide** | reads in layers, with diagrams and small interactives | `references/guide.md` |
-| he accepted your offer after a chat explanation did not land | **Step-through** (a short guide) | makes the key decision at each of 4–7 steps | `references/guide.md`, "Step-through variant" |
+| "quick", "overview", "summary" | **Quick** | reads the answer and moves on | `references/quick.md` |
+| "guide", "walkthrough", "report", "step by step" | **Guide** | reads a direct explanation, fully open | `references/guide.md` |
+| "review", "drills", "teach me", "explain X so I can teach it", a paper or a topic to study with no format named | **Learn** | reads in layers, makes decisions and answers checks | `references/learn.md` |
+| he accepted your offer after a chat explanation did not land | **Step-through** (a short Learn page) | makes the key decision at each of 4–7 steps | `references/learn.md`, "Step-through variant" |
 | "design doc", "architecture", "development plan", "write up the plan", or he accepted your Plan offer | **Plan** | reviews the change on a map, behaviour claims with call trees and real code, the decisions, and tasks linked to files; answers open decisions and comments in one reply; copies tasks to agents | `references/plan.md` |
 
 Open the matching reference before writing. Archetypes borrow parts from one
@@ -90,12 +100,48 @@ another: a guide embeds an explorable figure, an explorable carries a short
 ladder, a prototype has a "How it works" drawer. Still, one page has one main
 activity. When two activities weigh the same, build two artifacts.
 
-## 2. Teaching flow and the ladder
+## 1a. Pick the format from his words
 
-**Mode.** Learn is the default. Build **Quick review** (the answer, the key
-chart and the trade-offs on one screen, then reference sections) or **Full
-review** (every part in order, with all checks) only when Sean asks for one.
-A system design problem in Learn mode never opens with the solution: each
+Sean states the format ahead of time. Do the matching effort, and build only
+that format. Never build a control that switches between formats on the page.
+
+| He says | Format | The page | Never contains | Read |
+|---|---|---|---|---|
+| quick, overview, summary, quick review, tl;dr | **Quick** | the answer, one figure or table, the key numbers. A single concept: one screen, 150 words (`va:size` `concept`). A landscape such as a vendor comparison: three screens, 400 words (`landscape`) | questions, tabs, anything collapsed | `references/quick.md` |
+| guide, walkthrough, walk me through, step by step, report, solve | **Guide** | a direct explanation from start to end, fully open | questions, predictions, gates, locks, "Test yourself", rubrics | `references/guide.md` |
+| review, drills, practice, learn, teach me, quiz me, or no format named | **Learn** | the full teaching flow in section 2 | depth tabs | `references/learn.md` |
+
+- **No format named means Learn.** State the choice in one line.
+- "Review" alone means Learn, because he wants drills. "Quick review" means Quick.
+- **Math in a Guide** reads like a typeset solution set (`.latex`): a statement box,
+  run-in `Step N:` labels, row operations as one line of working, matrices redrawn only
+  at checkpoints, then an answer box. Not one display per row operation. No side columns,
+  number circles, steppers or a separate "what to write on paper" block.
+- **Algorithms and data structures:** `Kit.trace` shows the whole code, and Play or
+  Next lights the line that runs. The right side shows the example's real values and
+  tree after that line. Give one step per executed line, and jump buttons per
+  operation (`op`). This is the one thing in a Guide that plays.
+- **Pipelines:** when a page walks through stages, each stage shows
+  `Kit.stageMap`: "Stage 4 of 16", all stages by group with this one raised, and its
+  neighbours. Never a local input → step → output diagram, which looks like a
+  three-step process and hides the real position. No progress strip at the page top:
+  Sean removed it (2026-11-03).
+
+`render_check.py` enforces these rules. `format-question`, `format-collapsed`,
+`format-stepper`, `format-hidden`, `format-unknown`, `math-framed`, `math-not-latex` (a `.derive` list in Guide or Quick; a warning in Learn, or for three or more display equations outside `.latex` and figures in a Guide), `math-unrendered`, `depth-tabs`, `trace-layout`, `split-text` (a grid or flex row holds a sentence with inline `<code>`, `<b>` or a link, so each piece lands in its own cell; wrap the sentence in one `<span>`), `quick-long` and `quick-tall` are errors: fix them,
+do not publish over them. Errors come from what the page contains. Warnings
+such as `no-format`, `format-mismatch`, `format-prompt`, `format-rhetorical`, `code-no-state`, `math-redraw` and `math-clipped` are wording or
+fit guesses: read each one, and fix it or say why it stands. A Learn page may
+still warn on `math-framed` and `math-collapsed`. These checks catch drift, not
+every possible page, so read the screenshots too.
+
+## 2. Teaching flow and the ladder (Learn format)
+
+This section applies to Learn pages. A Guide keeps the map, one running example, the
+depth bar and the writing rules. It shows the example open instead of playing it
+in a stepper, and it drops every rule that asks the reader to answer.
+
+**Mode.** A system design problem in Learn never opens with the solution: each
 decision starts with "Your call", and the full architecture comes at the end.
 
 **Pacing comes from familiarity, not from the topic.** Read the memory
@@ -165,12 +211,12 @@ The five rungs of the `explain-ladder` skill set how deep a reader goes, so
 How each archetype carries it (Plan pages are not lessons: they keep the map
 first and drop the teaching decisions, checks and ladder):
 
-- **Guide:** the map and a ladder card open the page; the sections follow the
-  teaching outline in `references/guide.md` (problem, mental model, under the
-  hood, features, capstone, trade-offs, anti-patterns). A Skim/Read/Deep
-  control hides prose or opens the deep blocks. "Explain it to…" scripts close
-  the page. It is one continuous page (Optimizer Lab is the reading model Sean
-  liked).
+- **Learn:** the map and a ladder card open the page; the sections follow the
+  teaching outline in `references/learn.md` (problem, mental model, under the
+  hood, features, capstone, trade-offs, anti-patterns). "Explain it to…" scripts
+  close the page. It is one continuous page (Optimizer Lab is the reading model
+  Sean liked).
+- **Guide:** no rungs and no ladder card. The map opens the page.
 - **Explorable:** the guided tour climbs the rungs, one tour step per idea. A
   compact ladder sits below the lab.
 - **Prototype:** the "How it works" drawer holds the ladder for the product's
@@ -180,7 +226,7 @@ Writing the rungs: one sentence each, no jargon in rungs 1–2, a number with a
 unit wherever one exists, and rung 5 names a concrete connection ("this is
 virtual memory paging, applied to the KV cache").
 
-**Audience scripts** (guides, and explorables when asked): three spoken
+**Audience scripts** (Learn pages, and any other page when asked): three spoken
 versions, each copyable. *30 s · anyone*: no jargon, one analogy. *2 min ·
 engineer*: the mechanism and one number. *5 min · expert*: trade-offs, where
 it loses, open questions. Each script ends with two likely questions and short
@@ -194,8 +240,10 @@ compared or explored, do not summarize it in text.
 
 | The idea is… | Show it as | With |
 |---|---|---|
-| a sequence of messages or events | a sequence or timeline that plays, with live counters | `Kit.stepper`, `data-from` |
-| a control flow or state machine, plus its edge cases | a state diagram with scenario switches, synced to its code | `Kit.scenarios` + `figure.codeblock` |
+| a sequence of messages or events | a sequence or timeline that plays, with live counters (Guide: every state open) | `Kit.stepper`, `data-from` |
+| an algorithm or data structure running | the full code, the running line lit on Play, the example's real state on the right | `Kit.trace` |
+| one stage of a pipeline | its place among all stages, with its neighbours | `Kit.stageMap` |
+| a control flow or state machine, plus its edge cases | a state diagram with scenario switches, synced to its code | `Kit.scenarios` + `figure.codeblock` (Learn, Explorable and Prototype only; a Guide shows every state open) |
 | a decision procedure (rules, a gate, a policy) | a lean rail: dots on one hairline, outcomes as chips, the path taken in clay | `Kit.rail` |
 | a quantity that depends on inputs | a calculator: sliders, live result, the formula with values substituted, step by step | `Kit.range`, `Kit.tex` |
 | growth, a trade-off curve, a comparison over time | a line chart (log toggle when the series differ by orders of magnitude) | `Kit.lineChart` |
@@ -203,17 +251,17 @@ compared or explored, do not summarize it in text.
 | hardware or a layout along three real axes (TP × PP × DP, a chip, a rack) | a three.js model paired with flat grids that carry the exact reading | three.js, see "When to use 3D" |
 | a hierarchy, a set of decisions, a taxonomy | a tree or mind map | D3 (`d3.hierarchy`, `d3.tree`) |
 | a network, flows between many parts | a force layout or Sankey | D3 |
-| a derivation or proof | numbered steps, one KaTeX line each, with a plain reason per line | `.derive` list, `Kit.tex` |
+| a derivation or proof | like a typeset solution: named steps, compact working, matrices at checkpoints, an answer box | `.latex`, `.statement`, `.answer`, `.slip` |
 | options against criteria | a table, with the chosen row marked | `.table` |
-| code | `figure.codeblock`, never a plain `<pre>` (`code-plain`); tie it to the figure it implements | `Kit.code`, `Kit.scenarios` |
+| code that is not a running example (an API, a config), or code beside a state machine in Learn | `figure.codeblock`, never a plain `<pre>` (`code-plain`); tie it to the figure it implements | `Kit.code`, `Kit.scenarios` |
 | a part of a system with more to say than fits | a side pane with its own diagram, In / Out, key numbers and failure modes | `Kit.pane`, `Kit.paneCard` |
 
 Rules that came from Sean's review (2026-10-27):
 
 - **Edge cases are scenarios, not "Go deeper" prose.** An interrupt, a
   retry or a parallel call replays the same figure with that branch, and
-  highlights the code line that handles it. `details.deeper` is only for a
-  derivation with math or a figure (`deeper-prose` warns otherwise).
+  highlights the code line that handles it. In Learn, `details.deeper` is only
+  for a figure (`deeper-prose` warns otherwise). Derivations stay open.
 - **Expanded views open in the side pane** (`Kit.pane`), never a modal with a
   blurred backdrop. The pane is new space, so use it: each part gets a small
   diagram, what goes in and out, two or three numbers, and a "when it fails,
@@ -228,11 +276,14 @@ Rules that came from Sean's review (2026-10-27):
 Work in the scratchpad. Write a source page with placeholders, assemble it,
 check it, then publish the assembled file.
 
-Start a guide or step-through from `templates/guide.src.html`, and a plan
-from `templates/plan.src.html`; each shows every part working together.
+Start from the template for the format: `templates/quick.src.html`,
+`templates/guide.src.html`, or `templates/learn.src.html` (also for a
+step-through). A plan starts from `templates/plan.src.html`. Each shows every
+part working together.
 
 ```html
 <title>Optimizer Lab</title>
+<meta name="va:format" content="learn">        <!-- quick | guide | learn | explorable | prototype; a plan has none -->
 <meta name="claude:viewport-fit-sides" content="cover">
 <link data-va="fonts">
 <style data-va="claude.css"></style>
@@ -264,9 +315,10 @@ re-running `assemble.py` on a published page (read back with the Artifact
 tool) refreshes it to the current design system.
 
 Before writing markup, put a plan comment at the top of the page script:
-archetype, the map (blocks and wires), the five rungs, the steps in order, the
-decision and the check question of each step, the interactions and what each
-teaches, and the one focal element that gets the accent.
+archetype, format, the map (blocks and wires), the steps in order, the
+interactions and what each teaches, and the one focal element that gets the
+accent. A Learn page also lists the five rungs, and the decision and check
+question of each step.
 
 ## 4. Design rules
 
@@ -300,7 +352,7 @@ them.
   the kind of thing.
 - **Complete at rest.** The first frame shows the idea: the lab already
   running in an interesting state, the prototype with realistic data, the
-  guide with its ladder. Nothing waits at `opacity: 0` for a scroll.
+  guide with its map. Nothing waits at `opacity: 0` for a scroll.
 - **Motion** is 150–250 ms, explains a change of state, and stops under
   `prefers-reduced-motion`.
 - **Phone width works** (390 px): rails stack under the stage, tables and
@@ -349,7 +401,8 @@ detailed caption. Load `artifact-diagramming` for inline-SVG mechanics.
   current sources. Anything stylized, simplified or not to scale carries a
   `.fig-flag` ("Simplified · not to scale") in the figure head.
 
-- **Step-through first.** A process becomes a figure with `Kit.stepper`: each
+- **Step-through first, in Learn and Explorable pages.** A Guide or Quick page
+  shows every state open instead. A process becomes a figure with `Kit.stepper`: each
   step adds one change, and its note under the drawing says what changed.
   Mark elements with `data-from="2"`, `data-until="3"` or `data-only="2,4"`.
 - **Contract.** A figure has a title (what it shows), a "What to notice"
@@ -423,8 +476,8 @@ fallback.
 
 1. `render_check.py` must report 0 errors. Fix each warning, or say why it does
    not apply. Besides the page contract, it warns about: long or chained
-   sentences (`prose-long`, `prose-chained`), hype words (`hype`), a guide
-   step without a check question (`no-check`), a guide without a map
+   sentences (`prose-long`, `prose-chained`), hype words (`hype`), a Learn
+   step without a check question (`no-check`), a sectioned page without a map
    (`no-map`), hand-set math (`hand-math`), math without KaTeX loaded
    (`katex-missing`, an error), and Simplified characters on a Chinese page
    (`zh-simplified`). Teaching lints: code in a plain `<pre>` (`code-plain`),
@@ -453,7 +506,7 @@ fallback.
    a file the file map lacks (`plan-code-file`), and a
    marked call row without a place (`plan-calls-place`). Without Playwright (for example on claude.ai), run it
    with `--static-only` and look at the page in the Artifact preview.
-2. Look at the screenshots: 1440 and 390, light and dark. `*-top.png` is the
+2. Look at the screenshots: 1440, 1000 and 390, light and dark. `*-top.png` is the
    first screen, taken while WebGL is still live; the full-page shot of a tall
    3D page may show the 2D fallback. Ask yourself four things. Does the first screen teach the idea? Is the focal thing obvious?
    Does any text clip or overlap? Does dark mode hold?
@@ -489,8 +542,10 @@ without line numbers; a diff keeps its + and − signs. Then, as needed:
 | `plan()` | Plan pages: task states from dependencies (icon + word), the task graph, Current / Proposed map, task ↔ block ↔ file selection said in words, "Brief" and "Copy all tasks" as agent-ready markdown (each Key change as a fenced block with its pins), claim numbers and the claim list, the change size, each task's Key change (copies of the claim code it names, then its own), a Code button on each file row that has code on the page (opens a copy linked to its claim or task) and Open all code; under review, numbered decisions, "N to answer", comments, struck calls and the Respond reply; returns `{select, brief, briefAll, response}` |
 | `code(fig)` (run by `init`) | `figure.codeblock`: line numbers (old and new in a diff), + and − signs, syntax colour, highlighted lines, each pin's note (number, icon, word) in a row under its line |
 | `calls(fig)` (run by `init`) | `figure.calls`: a call tree from html-plan's text notation; each mark a sign and a word, with a legend |
-| `docs({onShow, mode, gate})` | docs layout for guides: one continuous page, sidebar that follows the section in view and shows done / locked, "In this section" rail, deep links; `gate: 'auto'` locks later steps until the current check is answered (`mode: 'paged'` only for reference docs) |
-| `depth(seg, {initial, key})` | Skim/Read/Deep for guides |
+| `docs({onShow, mode, gate})` | docs layout for Guide and Learn: one continuous page, sidebar that follows the section in view and shows done / locked, "In this section" rail, deep links; `gate: 'auto'` locks later steps until the current check is answered (`mode: 'paged'` only for reference docs) |
+| `trace(el, {code, lang, interval, steps})` | code player. `el` is `<div class="trace">`. `steps: [{line: 12 or '3-4,7', op, note, changes: [{name, from, to}], state}]`; `state` is trusted HTML. Compute states by running the code's logic in the page. A wrong line throws |
+| `stageMap(el, {groups: [{group, stages}], current})` | one stage's place in a pipeline: count, every stage by group, neighbours |
+| `depth()` | retired: hides old Skim/Read/Deep tabs. Never call it in a new page |
 | `toc(nav, {progress})` | scroll-spy TOC for single-page layouts |
 | `lineChart(el, opts)` / `stackBar(el, opts)` | themed charts; return `{update}`; pass `endLabels: false` when the legend carries identity and labels would clip |
 | `scenarios(fig, {scenarios, code})` | one state machine replayed under several cases (`[data-scenarios]` segmented control, prev/next/play, `.scene-note`); elements with `data-state="n"` show on that state, `data-sc="key"` overlays show for that scenario; highlights each step's `lines` in a `figure.codeblock` and pins the note under them; returns `{set, go, get}` |
@@ -511,7 +566,7 @@ without line numbers; a diff keeps its + and − signs. Then, as needed:
 Built with this skill on 2026-10-18 (private to Sean). When unsure how a part
 should look or behave, read one with the Artifact tool (`action: "read"`).
 They predate the teaching rules in section 2 (map, decisions, checks, KaTeX):
-for those, `templates/guide.src.html` is the reference.
+for those, `templates/learn.src.html` is the reference.
 
 | Archetype | Artifact | Shows |
 |---|---|---|
@@ -540,7 +595,21 @@ These made the earlier HTML pages fail for Sean:
 - colour used without meaning, greens and reds at all, or a colour with no
   label or pattern beside it;
 - math typed as plain text or Unicode instead of LaTeX;
-- steps the reader only clicks through, with no decision and no check;
+- a Learn page whose steps the reader only clicks through, with no decision and
+  no check;
+- questions, predictions or "Test yourself" in anything he asked to be a guide
+  (MA 511 HW4, EDA Vendors, 2026-11-03);
+- math split into frames or collapsed steps (MA 511 HW4, 2026-11-03);
+- depth tabs on the page, because he picks the depth ahead of time (2026-11-03);
+- a "quick" page that is really a full lesson (2026-11-03);
+- code on its own, or beside an abstraction that is not the example's own data
+  (Weighted Union-Find, 2026-11-03);
+- a local input → step → output diagram on one stage of a long pipeline, which reads
+  as a three-step process (EDA Vendors, 2026-11-03);
+- a progress strip across the page top (2026-11-03);
+- code split into separate rows per operation: he wants the whole code, playing
+  (2026-11-03);
+- math as a web layout with cards, side columns or number circles (2026-11-03);
 - the summary arriving at the end instead of the top;
 - sliders and toggles that change nothing worth noticing;
 - a system design page that opens with the finished architecture in Learn
