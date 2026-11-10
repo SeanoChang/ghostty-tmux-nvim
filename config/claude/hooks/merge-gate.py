@@ -10,7 +10,9 @@ all of this holds for the PR's head commit:
   2. The PR is open, not a draft, and its base is the integration branch:
      one of `dev`, `develop`, `development` or `integration`. When
      $MERGE_GATE_BASE is set, only that branch counts. Any other name, such
-     as `staging`, needs the setting: such a branch often deploys.
+     as `staging`, needs the setting: such a branch often deploys. Sean sets
+     it, never the agent. `main`, `master` and `trunk` are refused whatever
+     the setting says.
   3. The sha is the PR's current head.
   4. Every CI check on that commit is green, and at least one ran and
      succeeded (skipped and neutral checks alone do not count).
@@ -94,6 +96,10 @@ FIELDS = "number,url,state,isDraft,baseRefName,headRefOid,statusCheckRollup,comm
 # $MERGE_GATE_BASE, which then is the only base accepted. `staging` is left
 # out on purpose: in many repos a merge into it starts a deploy.
 INTEGRATION_BASES = ("dev", "develop", "development", "integration")
+# Never a base for an agent merge, in any letter case, even when
+# $MERGE_GATE_BASE names it: an agent that set the variable itself must not be
+# able to open the gate to the release branch.
+RELEASE_BASES = ("main", "master", "trunk")
 
 # The command begins with plain `gh pr merge`. Only space, tab and newline may
 # come first: they are the blanks bash skips. `merge` must end the word, so
@@ -518,15 +524,18 @@ def pr_problems(pr, sha, bases):
     if pr.get("isDraft") is not False:
         problems.append("The PR is a draft. Mark it ready first.")
     base = pr.get("baseRefName")
-    if not isinstance(base, str) or base not in bases:
+    release = isinstance(base, str) and base.casefold() in RELEASE_BASES
+    if release or not isinstance(base, str) or base not in bases:
         if bases == INTEGRATION_BASES:
             allowed = ", ".join(f"`{b}`" for b in bases) + ", or the one branch named in $MERGE_GATE_BASE"
         else:
             allowed = f"`{bases[0]}` (set in $MERGE_GATE_BASE)"
+        never = ("Agents never merge into `main`, `master` or `trunk`, whatever $MERGE_GATE_BASE says. "
+                 if release else "")
         problems.append(
-            f"The base is `{base}`. Agents merge only into the integration branch: {allowed}. "
+            f"The base is `{base}`. Agents merge only into the integration branch: {allowed}. {never}"
             "For any other base, leave the PR open and report it under \"Blocked on me\": "
-            "Sean merges it."
+            "Sean merges it. Do not set $MERGE_GATE_BASE yourself: only Sean sets it."
         )
     if not isinstance(head, str) or head != sha:
         problems.append(

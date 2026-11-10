@@ -86,22 +86,30 @@
   does not count against this limit.
 - A review passes one commit, so commit before you ask for one. After a new
   commit, each reviewer that passed re-checks the new diff before you merge.
-- Task PRs target the integration branch: the one the repo already integrates
-  on, whatever its name. Create `dev` from the default branch, and push it, only
-  when there is none. The gate knows `dev`, `develop`, `development` and
-  `integration`; another name needs `MERGE_GATE_BASE`. When CI is green and the
-  review passed on the head commit, post the PR comment
+- Task PRs go to the integration branch: a long-lived branch that takes PRs
+  before the release branch does. Pick it in this order:
+  1. The first of `dev`, `develop`, `development`, `integration` on the remote.
+  2. None of them, but the repo integrates on another branch: target that
+     branch and list the PR under "Blocked on me". Only I set
+     `MERGE_GATE_BASE`; never set it or change the hook's settings yourself.
+  3. No integration branch at all: create `dev` from the default branch and
+     push it. When you cannot tell 2 from 3, do not create `dev`: list the
+     task under "Blocked on me".
+
+  `main`, `master` and `trunk` are release branches, never integration branches.
+- When CI is green and the review passed on the head commit, post the PR comment
   `review: pass <sha> tier=<n> important=0` (tier 2 adds ` adversary=held`).
   Then run `gh pr merge <n> --squash --match-head-commit <sha>` as its own
-  command. The `merge-gate` hook checks each condition. Never merge into main,
-  and never pass `--admin`, `--auto` or `--delete-branch`.
+  command. The `merge-gate` hook checks each condition. Never merge into a
+  release branch, and never pass `--admin`, `--auto` or `--delete-branch`.
 - A repo with no CI cannot pass the gate. Propose one: open a tier 2 PR that
   adds a workflow running the repo's own checks, and list it under "Blocked on
   me"; I merge the first workflow. Until then, keep other work on its branches,
   and never go around the gate with `gh api` or a direct push.
 - At the end of a milestone: run the real app, open one PR from the integration
-  branch to main, and stop. Its body has Delivers, Testing, Tier 2 changes (with
-  reviews-to-pass), Risk, How to revert, Known limits, and Blocked on me.
+  branch to the release branch, and stop. Its body has Delivers, Testing, Tier 2
+  changes (with reviews-to-pass), Risk, How to revert, Known limits, and Blocked
+  on me.
 
 ## Delegation
 

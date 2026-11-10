@@ -21,9 +21,15 @@ Reviewed on 2026-11-10 at sha1 `9443fb995e1be73846dbd741a4d54f649e0e8375`.
 - **A repo with no CI can never pass.** A check that has not registered yet
   is not visible to the hook. The rules tell the agent to propose a workflow
   in a PR; Sean merges the first one.
-- **A branch with another name gets only the hook's deny reason.** The rules
-  do not repeat it: the reason tells the agent to leave the PR open and
-  report it under "Blocked on me", until `MERGE_GATE_BASE` is set.
+- **`main`, `master` and `trunk` are refused under any setting.** The hook
+  denies these bases, in any letter case, even when `MERGE_GATE_BASE` names
+  one. An agent that set the variable itself cannot open the gate to the
+  release branch. A release branch with another name (`production`,
+  `release`) is refused only because no setting names it.
+- **A base name from the `gh` answer is shown in the deny reason as it is.**
+  A branch named with odd characters (a no-break space, a backtick) can make
+  the reason read like other text. The decision is still a deny, and only
+  someone who can create a branch in the repo can choose the name.
 - **The integration branch is known by its name.** The hook accepts `dev`,
   `develop`, `development` and `integration`. It does not ask GitHub which
   branch is the default, so a repo whose default branch has one of these
@@ -123,10 +129,22 @@ repo with no `dev` branch or no CI.
   checks the diff against the list in its own step 4. A path that a repo's
   `REVIEW.md` names as always tier 2 may not raise the tier.
 - **The milestone rule assumed `dev`.** Closed on 2026-11-10 by Sean's
-  decision: the agent uses the branch the repo already integrates on,
-  whatever its name, and creates `dev` only when there is none. The milestone
-  PR goes from that branch to main. For a repo with no CI, the agent opens a
-  PR that adds a workflow, and Sean merges that first workflow himself.
+  decision: the agent uses the repo's own integration branch and creates
+  `dev` only when there is none. The rule lists the cases in order, and only
+  Sean sets `MERGE_GATE_BASE` for a branch the gate does not know. The
+  milestone PR goes from that branch to the release branch. For a repo with
+  no CI, the agent opens a PR that adds a workflow, and Sean merges that first
+  workflow himself.
+- **The agent judges whether a repo "integrates on another branch".** When it
+  cannot tell, the rule says not to create `dev` and to list the task under
+  "Blocked on me". With `dev` and `develop` both present, the rule takes
+  `dev`, which can be the stale one.
+- **Three cases in the no-CI rule are left to one sensible reading:** a PR
+  that adds the first workflow can turn its own check green, and only "I
+  merge the first workflow" stops the agent from merging it; a repo whose CI
+  does not run on PRs into the integration branch reports "no checks" without
+  being a repo with no CI; and a change to that trigger is not named as "the
+  first workflow".
 - **No rule covers a task that depends on a blocked, unmerged task** (older
   than this change): build on its branch, or skip it.
 

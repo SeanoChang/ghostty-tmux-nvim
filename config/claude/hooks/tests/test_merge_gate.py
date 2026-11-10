@@ -306,6 +306,27 @@ def test_a_base_set_in_the_environment_is_the_only_one_accepted(gate, base):
     assert r["decision"] == "allow", r
 
 
+@pytest.mark.parametrize("base", ["main", "master", "trunk", "Main", "MASTER", "Trunk"])
+def test_a_release_branch_is_refused_whatever_the_setting_says(gate, base):
+    """An agent that sets MERGE_GATE_BASE itself must not be able to open the gate to the release branch."""
+    for env in ({}, {"MERGE_GATE_BASE": base}, {"MERGE_GATE_BASE": base.lower()}, {"MERGE_GATE_BASE": "dev"}):
+        r = deny(gate, "base", pr_json=pr(baseRefName=base), env=env)
+        assert "never" in r["reason"] and "`main`, `master`" in r["reason"] and "`trunk`" in r["reason"], r["reason"]
+        assert r["calls"] and all(call[:3] != ["pr", "merge", "12"] for call in r["calls"])
+
+
+def test_a_release_name_inside_a_longer_name_is_an_ordinary_branch(gate):
+    for base in ("main-next", "trunk-next", "mastering", "not-main"):
+        r = gate(OK_CMD, pr_json=pr(baseRefName=base), env={"MERGE_GATE_BASE": base})
+        assert r["decision"] == "allow", (base, r)
+
+
+def test_every_base_deny_says_that_only_sean_sets_the_base(gate):
+    for base, env in (("next", {}), ("staging", {}), ("dev", {"MERGE_GATE_BASE": "integration"}), ("main", {})):
+        r = deny(gate, "base", pr_json=pr(baseRefName=base), env=env)
+        assert "Do not set $MERGE_GATE_BASE yourself" in r["reason"] and "Blocked on me" in r["reason"], r["reason"]
+
+
 def test_an_empty_base_setting_means_the_default_names(gate):
     assert gate(OK_CMD, pr_json=pr(baseRefName="develop"), env={"MERGE_GATE_BASE": ""})["decision"] == "allow"
     deny(gate, "base", pr_json=pr(baseRefName="main"), env={"MERGE_GATE_BASE": ""})
