@@ -20,6 +20,11 @@ Reviewed on 2026-11-10 at sha1 `9443fb995e1be73846dbd741a4d54f649e0e8375`.
   The review comment is written by the same account by design.
 - **A repo with no CI can never pass.** A check that has not registered yet
   is not visible to the hook.
+- **The integration branch is known by its name.** The hook accepts `dev`,
+  `develop`, `development`, `staging` and `integration`. It does not ask
+  GitHub which branch is the default, so a repo whose default branch has one
+  of these names would let an agent merge into it. A branch with any other
+  name needs `MERGE_GATE_BASE`, and then only that branch is accepted.
 - **Argument errors are reported before the lookup.** A command with a bad
   flag gets only the flag errors, not the PR conditions as well.
 - **A help request must be in plain words.** `gh pr merge --help | cat`, or
@@ -110,10 +115,11 @@ repo with no `dev` branch or no CI.
 - **"Tier too low" reads the tier 2 list, not `REVIEW.md`.** The verifier
   checks the diff against the list in its own step 4. A path that a repo's
   `REVIEW.md` names as always tier 2 may not raise the tier.
-- **The milestone rule still assumes `dev`.** "Open one PR from `dev` to main"
-  has no reading in a repo with no `dev` branch. This is the second gap of one
-  class: the rules assume `dev` and CI. It waits for Sean's decision on what
-  such a repo should do.
+- **The milestone rule assumed `dev`.** Closed on 2026-11-10 by Sean's
+  decision: the agent uses the branch that plays that role (`develop`,
+  `development`, `staging`, `integration`) or creates `dev`, and the milestone
+  PR goes from that branch to main. A repo with no CI still stops at "Blocked
+  on me".
 - **No rule covers a task that depends on a blocked, unmerged task** (older
   than this change): build on its branch, or skip it.
 

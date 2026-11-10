@@ -7,8 +7,9 @@ all of this holds for the PR's head commit:
   1. The command is plain `gh pr merge` alone, with a merge method and
      `--match-head-commit <full sha>`, and none of --admin, --auto,
      --disable-auto, --delete-branch.
-  2. The PR is open, not a draft, and its base is the integration branch
-     (`dev`, or $MERGE_GATE_BASE).
+  2. The PR is open, not a draft, and its base is the integration branch:
+     one of `dev`, `develop`, `development`, `staging` or `integration`.
+     When $MERGE_GATE_BASE is set, only that branch counts.
   3. The sha is the PR's current head.
   4. Every CI check on that commit is green, and at least one ran and
      succeeded (skipped and neutral checks alone do not count).
@@ -88,6 +89,10 @@ REVIEW_LINE = re.compile(
 )
 GREEN = {"SUCCESS", "NEUTRAL", "SKIPPED"}
 FIELDS = "number,url,state,isDraft,baseRefName,headRefOid,statusCheckRollup,comments"
+# Branch names the hook takes as an integration branch. A repo's default branch
+# never has one of these names by convention; any other name needs
+# $MERGE_GATE_BASE, which then is the only base accepted.
+INTEGRATION_BASES = ("dev", "develop", "development", "staging", "integration")
 
 # The command begins with plain `gh pr merge`. Only space, tab and newline may
 # come first: they are the blanks bash skips. `merge` must end the word, so
@@ -504,16 +509,21 @@ def review_problem(comments, head):
     )
 
 
-def pr_problems(pr, sha, base):
+def pr_problems(pr, sha, bases):
     problems = []
     head = pr.get("headRefOid")
     if pr.get("state") != "OPEN":
         problems.append(f"The PR is not open (state {pr.get('state')}).")
     if pr.get("isDraft") is not False:
         problems.append("The PR is a draft. Mark it ready first.")
-    if pr.get("baseRefName") != base:
+    base = pr.get("baseRefName")
+    if not isinstance(base, str) or base not in bases:
+        if bases == INTEGRATION_BASES:
+            allowed = ", ".join(f"`{b}`" for b in bases) + ", or the one branch named in $MERGE_GATE_BASE"
+        else:
+            allowed = f"`{bases[0]}` (set in $MERGE_GATE_BASE)"
         problems.append(
-            f"The base is `{pr.get('baseRefName')}`. Agents merge only into `{base}`. "
+            f"The base is `{base}`. Agents merge only into the integration branch: {allowed}. "
             "For any other base, leave the PR open and report it under \"Blocked on me\": "
             "Sean merges it."
         )
@@ -560,11 +570,12 @@ def decide(payload):
         errors = check_args(opts, errors)
         if errors:
             return deny(errors)
-        base = os.environ.get("MERGE_GATE_BASE") or "dev"
+        override = os.environ.get("MERGE_GATE_BASE")
+        bases = (override,) if override else INTEGRATION_BASES
         cwd = payload.get("cwd")
         cwd = cwd if isinstance(cwd, str) and os.path.isdir(cwd) else None
         pr = fetch_pr(opts, cwd, lookup_timeout())
-        problems = pr_problems(pr, opts["values"]["--match-head-commit"], base)
+        problems = pr_problems(pr, opts["values"]["--match-head-commit"], bases)
         if problems:
             return deny(problems)
         updated = dict(tool_input)
@@ -572,7 +583,7 @@ def decide(payload):
         return {
             "hookEventName": "PreToolUse",
             "permissionDecision": "allow",
-            "permissionDecisionReason": f"merge gate: PR into {base}, CI green, review passed on head",
+            "permissionDecisionReason": f"merge gate: PR into {pr['baseRefName']}, CI green, review passed on head",
             "updatedInput": updated,
         }
     except GateError as exc:

@@ -272,6 +272,36 @@ def test_integration_branch_name_comes_from_the_environment(gate):
     assert r["decision"] == "deny"
 
 
+@pytest.mark.parametrize("base", ["dev", "develop", "development", "staging", "integration"])
+def test_a_branch_with_an_integration_name_is_accepted_as_the_base(gate, base):
+    r = gate(OK_CMD, pr_json=pr(baseRefName=base))
+    assert r["decision"] == "allow", r
+    assert f"PR into {base}," in r["reason"]  # the allow message names the real base
+
+
+@pytest.mark.parametrize("base", ["main", "master", "trunk", "release", "production", "prod", "Dev", "DEV", "dev2",
+                                  "develop-old", "feature/dev", "dev/x", " dev", "dev ", "", None, 0, ["dev"],
+                                  {"name": "dev"}, True])
+def test_any_other_base_is_denied(gate, base):
+    r = deny(gate, "base", pr_json=pr(baseRefName=base))
+    assert "integration branch" in r["reason"]
+    for name in ("dev", "develop", "development", "staging", "integration", "MERGE_GATE_BASE"):
+        assert name in r["reason"], r["reason"]
+
+
+@pytest.mark.parametrize("base", ["dev", "develop", "development", "staging"])
+def test_a_base_set_in_the_environment_is_the_only_one_accepted(gate, base):
+    r = deny(gate, "base", pr_json=pr(baseRefName=base), env={"MERGE_GATE_BASE": "integration"})
+    assert "`integration`" in r["reason"]
+    r = gate(OK_CMD, pr_json=pr(baseRefName="trunk-next"), env={"MERGE_GATE_BASE": "trunk-next"})
+    assert r["decision"] == "allow", r
+
+
+def test_an_empty_base_setting_means_the_default_names(gate):
+    assert gate(OK_CMD, pr_json=pr(baseRefName="develop"), env={"MERGE_GATE_BASE": ""})["decision"] == "allow"
+    deny(gate, "base", pr_json=pr(baseRefName="main"), env={"MERGE_GATE_BASE": ""})
+
+
 def test_tier2_with_adversary_held(gate):
     r = gate(OK_CMD, pr_json=pr(comments=[review(tier=2, extra=" adversary=held")]))
     assert r["decision"] == "allow", r

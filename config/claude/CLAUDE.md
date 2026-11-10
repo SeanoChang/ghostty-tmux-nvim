@@ -86,17 +86,20 @@
   does not count against this limit.
 - A review passes one commit, so commit before you ask for one. After a new
   commit, each reviewer that passed re-checks the new diff before you merge.
-- Task PRs target the integration branch (`dev`). When CI is green and the
-  review passed on the head commit, post the PR comment
+- Task PRs target the integration branch: `dev`, or the branch the repo uses
+  for that (`develop`, `development`, `staging`, `integration`). When the repo
+  has none, create `dev` from the default branch and push it. When CI is green
+  and the review passed on the head commit, post the PR comment
   `review: pass <sha> tier=<n> important=0` (tier 2 adds ` adversary=held`).
   Then run `gh pr merge <n> --squash --match-head-commit <sha>` as its own
   command. The `merge-gate` hook checks each condition. Never merge into main,
   and never pass `--admin`, `--auto` or `--delete-branch`.
-- A repo with no `dev` branch or no CI cannot meet the merge rule. Do not
-  merge there, and do not go around the gate with `gh api` or a direct push.
-  Leave the work on its branch and list it under "Blocked on me".
-- At the end of a milestone: run the real app, open one PR from `dev` to main,
-  and stop. Its body has Delivers, Testing, Tier 2 changes (with
+- A repo with no CI cannot meet the merge rule. Do not merge there, and do
+  not go around the gate with `gh api` or a direct push. Leave the work on its
+  branch and list it under "Blocked on me". The same holds for an integration
+  branch with another name, until I set `MERGE_GATE_BASE` for that repo.
+- At the end of a milestone: run the real app, open one PR from the integration
+  branch to main, and stop. Its body has Delivers, Testing, Tier 2 changes (with
   reviews-to-pass), Risk, How to revert, Known limits, and Blocked on me.
 
 ## Delegation
