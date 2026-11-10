@@ -73,14 +73,17 @@
   | 2    | auth, billing, crypto, secrets, parsers, sanitizers, concurrency, numerics, migrations, data deletion, CI, release, installers | `verifier`, then `adversary` until it reports held |
 
 - Only an Important finding starts a fix round. Log Nit and Pre-existing
-  findings in `docs/known-limits.md` and move on.
+  findings in `docs/known-limits.md` and move on. The adversary reports held
+  when it finds no Important break.
 - Fix in the lead. Then resume the same reviewer with `SendMessage` on the fix
   diff only. It never re-reports a known finding.
 - At the second bug of one class, stop patching. Name the class, re-think the
   design for it, and fix every instance in one change.
-- At most 3 passes per reviewer on one task. If the third still fails, stop,
-  re-evaluate the approach, and list the task under "Blocked on me".
-- A review passes one commit. After a new commit, re-check before you merge.
+- A reviewer may fail one task at most 3 times. At the third failure, stop,
+  re-evaluate the approach, and list the task under "Blocked on me". A pass
+  does not count against this limit.
+- A review passes one commit, so commit before you ask for one. After a new
+  commit, each reviewer that passed re-checks the new diff before you merge.
 - Task PRs target the integration branch (`dev`). When CI is green and the
   review passed on the head commit, post the PR comment
   `review: pass <sha> tier=<n> important=0` (tier 2 adds ` adversary=held`).

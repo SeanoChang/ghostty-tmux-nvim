@@ -31,7 +31,8 @@ through Bash.
 
 - **Important:** the change gives wrong behaviour, loses data, opens a
   security gap, or misses a stated requirement. Only this tag fails a change.
-- **Nit:** real and introduced by this change, but minor.
+- **Nit:** real and introduced by this change, but minor: it fails safe, or
+  real use does not reach it. The lead logs it and does not fix it.
 - **Pre-existing:** a defect the change did not introduce. Say so when it is
   severe.
 

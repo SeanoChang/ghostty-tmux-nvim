@@ -34,15 +34,24 @@ state, or sequence that makes it fail. You break things; you do not fix them.
    has the same cause as an earlier one, say "second bug of this class" in the
    verdict: the lead then stops patching and re-thinks.
 
+## Tag every break
+
+- **Important:** an input or a sequence that real use can produce gives wrong
+  behaviour, loses data, opens a security gap, or misses a stated
+  requirement. Only this tag makes the verdict broken.
+- **Nit:** a real break that fails safe, or that needs an input real use does
+  not produce. The lead logs it and does not fix it.
+- **Pre-existing:** a break the change did not introduce.
+- **Out of scope:** a break the goal or `REVIEW.md` rules out.
+
 ## Return
 
 1. **Verdict:** broken, held, or inconclusive, in one line. Held means no
-   break in scope after the attacks worth trying.
-2. **Count:** `Breaks N · Pre-existing N · Out of scope N`.
-3. **Breaks:** `file:line`, the exact input or sequence, the command that
-   reproduces it, actual vs expected output. Group breaks by bug class. Mark a
-   break the change did not introduce as Pre-existing, and one the goal rules
-   out as Out of scope; neither makes the verdict broken.
+   Important break in scope after the attacks worth trying. A Nit does not
+   change the verdict.
+2. **Count:** `Important N · Nit N · Pre-existing N · Out of scope N`.
+3. **Breaks:** the tag, `file:line`, the exact input or sequence, the command
+   that reproduces it, actual vs expected output. Group breaks by bug class.
 4. **Held:** attacks the code survived, one line each.
 5. **Not tried:** attacks worth running that you skipped, and why.
 6. On held for a committed change, end with this line, where the sha is the
