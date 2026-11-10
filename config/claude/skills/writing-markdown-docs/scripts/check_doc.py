@@ -455,9 +455,44 @@ def _plain(text):
     return re.sub(r"[*_]{1,3}", "", text)
 
 
+_QUOTE = r"\s*(?:>\s*)*"
+LIST_ITEM = re.compile(_QUOTE + r"(?:[-*+]|\d+[.)])\s")
+CALLOUT_TITLE = re.compile(r"\s*(?:>\s*)+\[![A-Za-z]+\][-+]?")
+IMAGE_LINE = re.compile(_QUOTE + r"!(?:\[\[[^\]]*\]\]|\[[^\]]*\]\([^)]*\))\s*")
+
+
+def _units(text):
+    """Cut prose where a sentence ends without a full stop: before a list item,
+    after a callout title, after a label line that ends in a colon, and around
+    an image line. An image line is not prose and is dropped."""
+    unit = []
+    for line in text.split("\n"):
+        image = IMAGE_LINE.fullmatch(line)
+        title = CALLOUT_TITLE.match(line)
+        if unit and (image or title or LIST_ITEM.match(line)):
+            yield "\n".join(unit)
+            unit = []
+        if image:
+            continue
+        unit.append(line)
+        if title or line.rstrip().endswith(":"):
+            yield "\n".join(unit)
+            unit = []
+    if unit:
+        yield "\n".join(unit)
+
+
 def _sentences(text):
-    flat = " ".join(_plain(text).split())
-    return [x for x in re.split(r"(?<=[.!?])\s+", flat) if x.strip()]
+    out = []
+    for unit in _units(text):
+        flat = " ".join(_plain(unit).split())
+        out.extend(x for x in re.split(r"(?<=[.!?])\s+", flat) if x.strip())
+    return out
+
+
+def _words(sentence):
+    """Words as read: a bare dash, middot or bullet is a separator, not a word."""
+    return [w for w in sentence.split() if re.search(r"\w", w)]
 
 
 def _wc(text):
@@ -506,7 +541,7 @@ def _check_reader_load(lines, fm_end, dtype, vault=False):
         if THIRD_PERSON.search(QUOTED.sub(" ", INLINE_CODE.sub(" ", "\n".join(b)))):
             out.append(Finding("reader-third", at, "writes about the reader as 'the user' or 'the owner'; write to them, and leave out how the work was done", "warning"))
             break
-    long_ones = [(at, len(x.split())) for k, at, b in prose if k != "callout" or True for x in _sentences("\n".join(b)) if len(x.split()) > 30]
+    long_ones = [(at, len(_words(x))) for k, at, b in prose for x in _sentences("\n".join(b)) if len(_words(x)) > 30]
     for at, n_words in long_ones[:5]:
         out.append(Finding("prose-long", at, f"a {n_words}-word sentence; split it, one idea per sentence", "warning"))
     total = _wc(text)

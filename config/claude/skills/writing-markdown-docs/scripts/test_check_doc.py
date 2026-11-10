@@ -648,3 +648,82 @@ def test_row_after_a_separator_is_data_not_a_collapse():
 def test_collapsed_table_in_a_callout_or_indent_is_caught():
     for row in ("> | a | b || --- | --- || 1 | 2 |", "  | a | b || --- | --- || 1 | 2 |"):
         assert "broken-table" in codes(GOOD + "\n" + row + "\n"), row
+
+
+# ── sentence boundaries that are not full stops ───────────────────────────────
+# A label line, an image line, a callout title and a list item each end a
+# sentence, although none ends in a full stop. Found on 2026-11-10: 30 flagged
+# sentences were read by hand and about 20 were two of these joined together.
+
+def test_a_label_line_does_not_join_the_list_under_it():
+    body = "Rules:\n" + "".join(f"- {words(8)}\n" for _ in range(5))
+    assert "prose-long" not in codes(doc(body))
+
+
+def test_list_items_under_a_paragraph_are_separate_sentences():
+    body = words(10) + "\n" + "".join(f"- {words(9)}\n" for _ in range(4))
+    assert "prose-long" not in codes(doc(body))
+
+
+def test_an_image_line_does_not_join_its_caption():
+    body = "![[23-08-fig-8-07.png]]\n" + words(28) + ".\n"
+    assert "prose-long" not in codes(doc(body))
+    body = "![what to notice](assets/a.png)\n" + words(28) + ".\n"
+    assert "prose-long" not in codes(doc(body))
+
+
+def test_a_callout_title_does_not_join_its_body():
+    body = "> [!tip] " + words(6) + "\n>\n> " + words(27) + ".\n"
+    assert "prose-long" not in codes(doc(body))
+
+
+def test_separators_and_bare_marks_are_not_words():
+    body = " · ".join(words(3) for _ in range(9)) + ".\n"     # 27 words, 8 middots
+    assert "prose-long" not in codes(doc(body))
+
+
+def test_a_long_list_item_is_still_flagged():
+    assert "prose-long" in codes(doc("- " + words(35) + ".\n"))
+
+
+def test_a_long_sentence_after_a_label_is_still_flagged():
+    assert "prose-long" in codes(doc("Rules:\n" + words(35) + ".\n"))
+
+
+def test_a_long_callout_body_is_still_flagged():
+    assert "prose-long" in codes(doc("> [!note] Title\n>\n> " + words(35) + ".\n"))
+
+
+def test_new_sentence_split_only_refines_the_old_one():
+    """Against the old splitter on random documents: the new one may cut a
+    sentence at a label, list, image or callout-title line, and it never makes a
+    longer sentence or loses a word other than an image line."""
+    import random
+    import re
+    from check_doc import IMAGE_LINE, _plain, _sentences
+
+    def old(text):
+        flat = " ".join(_plain(text).split())
+        return [x for x in re.split(r"(?<=[.!?])\s+", flat) if x.strip()]
+
+    def wordy(s):
+        return [w for w in s.split() if re.search(r"\w", w)]
+
+    rng = random.Random(20261110)
+    starts = ["", "", "- ", "1. ", "> ", "> [!note] ", "> - "]
+    ends = ["", "", ".", ":", "?", " ·", ";"]
+    for _ in range(400):
+        lines = []
+        for _ in range(rng.randint(1, 9)):
+            if rng.random() < 0.1:
+                lines.append(rng.choice(["![[fig-1.png]]", "![alt text](a/b.png)", "> ![[x.png]]"]))
+                continue
+            n = rng.randint(1, 14)
+            lines.append(rng.choice(starts) + " ".join(rng.choice(["alpha", "beta", "·", "x1", "—", "gamma"]) for _ in range(n)) + rng.choice(ends))
+        text = "\n".join(lines)
+        new_words = [w for s in _sentences(text) for w in wordy(s)]
+        kept = "\n".join(ln for ln in lines if not IMAGE_LINE.fullmatch(ln))
+        old_words = [w for s in old(kept) for w in wordy(s)]
+        assert new_words == old_words, text
+        longest_old = max((len(wordy(s)) for s in old(text)), default=0)
+        assert all(len(wordy(s)) <= longest_old for s in _sentences(text)), text
