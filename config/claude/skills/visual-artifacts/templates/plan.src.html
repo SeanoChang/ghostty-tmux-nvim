@@ -491,7 +491,7 @@ func Observe(route string, d ratelimit.Decision) {
           <div class="task-head"><span class="task-num">5</span><h3 class="task-title">429 response and headers</h3></div>
           <p class="task-goal">Send Retry-After on 429 and RateLimit-Remaining on every response.</p>
           <dl class="task-spec">
-            <dt>Tier</dt><dd>0</dd>
+            <dt>Tier</dt><dd>1</dd>
             <dt>Files</dt><dd data-part="files"><ul><li><code>gateway/middleware/ratelimit.go</code></li></ul></dd>
             <dt>Test first</dt><dd data-part="test"><code>TestRetryAfterRoundsUp</code>: a refill in 1.2 s gives <code>Retry-After: 2</code>.</dd>
             <dt>Verify</dt><dd data-part="verify"><code>go test ./gateway/middleware/ -run Retry</code></dd>
@@ -503,7 +503,7 @@ func Observe(route string, d ratelimit.Decision) {
           <div class="task-head"><span class="task-num">6</span><h3 class="task-title">Remove the IP blocklist</h3></div>
           <p class="task-goal">Delete the old middleware after per-key limits run in production for a week.</p>
           <dl class="task-spec">
-            <dt>Tier</dt><dd>1</dd>
+            <dt>Tier</dt><dd>2</dd>
             <dt>Files</dt><dd data-part="files"><ul><li><code>gateway/middleware/ipblock.go</code></li><li><code>gateway/router.go</code></li></ul></dd>
             <dt>Test first</dt><dd data-part="test"><code>TestRouterHasNoIPBlock</code>: the middleware chain no longer lists ipblock.</dd>
             <dt>Verify</dt><dd data-part="verify"><code>go test ./gateway/... &amp;&amp; go vet ./gateway/...</code></dd>
