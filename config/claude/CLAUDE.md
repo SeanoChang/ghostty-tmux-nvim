@@ -94,10 +94,10 @@
   Then run `gh pr merge <n> --squash --match-head-commit <sha>` as its own
   command. The `merge-gate` hook checks each condition. Never merge into main,
   and never pass `--admin`, `--auto` or `--delete-branch`.
-- A repo with no CI cannot meet the merge rule. Do not merge there, and do
-  not go around the gate with `gh api` or a direct push. Leave the work on its
-  branch and list it under "Blocked on me". The same holds for an integration
-  branch with another name, until I set `MERGE_GATE_BASE` for that repo.
+- A repo with no CI cannot pass the gate. Propose one: open a tier 2 PR that
+  adds a workflow running the repo's own checks, and list it under "Blocked on
+  me"; I merge the first workflow. Until then, keep other work on its branches,
+  and never go around the gate with `gh api` or a direct push.
 - At the end of a milestone: run the real app, open one PR from the integration
   branch to main, and stop. Its body has Delivers, Testing, Tier 2 changes (with
   reviews-to-pass), Risk, How to revert, Known limits, and Blocked on me.

@@ -19,7 +19,11 @@ Reviewed on 2026-11-10 at sha1 `9443fb995e1be73846dbd741a4d54f649e0e8375`.
   integration branch, a script, and a forged review comment all go past it.
   The review comment is written by the same account by design.
 - **A repo with no CI can never pass.** A check that has not registered yet
-  is not visible to the hook.
+  is not visible to the hook. The rules tell the agent to propose a workflow
+  in a PR; Sean merges the first one.
+- **A branch with another name gets only the hook's deny reason.** The rules
+  do not repeat it: the reason tells the agent to leave the PR open and
+  report it under "Blocked on me", until `MERGE_GATE_BASE` is set.
 - **The integration branch is known by its name.** The hook accepts `dev`,
   `develop`, `development`, `staging` and `integration`. It does not ask
   GitHub which branch is the default, so a repo whose default branch has one
@@ -118,8 +122,8 @@ repo with no `dev` branch or no CI.
 - **The milestone rule assumed `dev`.** Closed on 2026-11-10 by Sean's
   decision: the agent uses the branch that plays that role (`develop`,
   `development`, `staging`, `integration`) or creates `dev`, and the milestone
-  PR goes from that branch to main. A repo with no CI still stops at "Blocked
-  on me".
+  PR goes from that branch to main. For a repo with no CI, the agent opens a
+  PR that adds a workflow, and Sean merges that first workflow himself.
 - **No rule covers a task that depends on a blocked, unmerged task** (older
   than this change): build on its branch, or skip it.
 
