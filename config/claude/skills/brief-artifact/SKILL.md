@@ -91,8 +91,8 @@ option is recommended, a "Use recommendations" button sets each decision that
 has a recommendation to its recommended options, and clears his other picks
 there.
 
-Options are plain rows with a letter key: round for pick one, square for pick
-any. The key fills when he picks the row. On a window 900 px or wider, a left
+Options are cards with a letter key: round for pick one, square for pick any.
+A picked card gets an ink outline and a filled key. On a window 900 px or wider, a left
 pane lists the decisions and every `## ` section in page order, marks the part
 in view, and fills a decision's number when it is answered. Give each section
 a short `## ` heading, because the pane shows two lines of it at most.

@@ -421,8 +421,7 @@ class Builder:
             page.append(f'<div class="bar"><span id="status" role="status"></span>'
                         f'{accept}<button type="button" id="copy" class="primary">Copy response</button></div>\n')
         page.append("</main>\n</div>\n")
-        if n or pane:
-            page.append(f"<script>\n{SCRIPT}</script>\n")
+        page.append(f"<script>\n{SCRIPT}</script>\n")
         return Result(title, name, self.decisions, self.warnings, "".join(page), words)
 
 
@@ -506,15 +505,19 @@ tr:last-child>td{border-bottom:0}
 .decision{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--line)}
 .decision>h2{margin-top:0}
 .num{display:inline-block;min-width:1.5em;margin-right:.6em;padding:0 .35em;text-align:center;color:var(--bg);background:var(--ink)}
-.options{border:0;margin:1.25rem 0;padding:0;min-width:0;border-top:1px solid var(--line-soft)}
+.options{border:0;margin:1.25rem 0;padding:0;min-width:0;display:grid;gap:10px}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
-.option{position:relative;display:grid;grid-template-columns:auto minmax(0,1fr);gap:14px;align-items:start;padding:14px 0;border-bottom:1px solid var(--line-soft);cursor:pointer}
-.option input{position:absolute;top:14px;left:0;width:1.625rem;height:1.625rem;margin:0;opacity:0;cursor:pointer}
-.key{display:inline-grid;place-items:center;width:1.625rem;height:1.625rem;font:500 .75rem/1 var(--mono);color:var(--ink-2);border:1px solid var(--line);border-radius:0}
+.option{position:relative;display:grid;grid-template-columns:auto minmax(0,1fr);gap:14px;align-items:start;padding:16px 18px;border:1px solid var(--line-soft);background:var(--raised);cursor:pointer;transition:border-color .12s ease,box-shadow .12s ease}
+.option:hover{border-color:var(--ink-3)}
+.option:has(input:checked){border-color:var(--ink);box-shadow:0 0 0 1px var(--ink)}
+.option input{position:absolute;top:16px;left:18px;width:1.625rem;height:1.625rem;margin:0;opacity:0;cursor:pointer}
+.key{display:inline-grid;place-items:center;width:1.625rem;height:1.625rem;font:500 .75rem/1 var(--mono);color:var(--ink-2);background:var(--bg);border:1px solid var(--line);border-radius:0;transition:background-color .12s ease,color .12s ease}
 [data-kind="one"] .key{border-radius:50%}
 .option:hover .key{border-color:var(--ink);color:var(--ink)}
 .option input:checked+.key{color:var(--bg);background:var(--ink);border-color:var(--ink)}
 .option input:focus-visible+.key{outline:2px solid var(--accent);outline-offset:2px}
+@media (max-width:480px){.option{gap:12px;padding:14px}.option input{top:14px;left:14px}}
+@media (prefers-reduced-motion:reduce){.option,.key{transition:none}}
 .option-head{display:flex;flex-wrap:wrap;gap:.2rem .6rem;align-items:baseline}
 .option-body{min-width:0}
 .option-label{font-weight:600}
@@ -538,9 +541,10 @@ button.primary:hover{opacity:.85}
 @media print{.bar,.toc{display:none}}
 """
 
-# The page script has two parts. The section pane scrolls to a part and marks
-# the one in view; its links never navigate, because a fragment link could move
-# the viewer's frame. The reply is plain text, built in the page from what he
+# The page script has two parts. The first handles every link to a place on
+# the page, so that none of them navigates (a fragment link can move the
+# viewer's frame), and it marks the part in view in the section pane. The
+# second is the reply: plain text, built in the page from what he
 # picked. Clipboard access can be blocked in the viewer, so copy falls back
 # twice: the old execCommand path, then selecting the visible reply.
 SCRIPT = r"""(() => {
@@ -580,15 +584,28 @@ SCRIPT = r"""(() => {
     });
   }
 
-  if (links.length) {
-    links.forEach((link, i) => link.addEventListener('click', event => {
-      event.preventDefault();
-      wanted = i;
+  // Every link to a place on this page is handled here, in the pane and in the
+  // text. The browser's own fragment navigation must not run: in a srcdoc
+  // frame it loads the viewer's page into the frame, and the answers are lost.
+  document.addEventListener('click', event => {
+    const link = event.target instanceof Element ? event.target.closest('a[href^="#"]') : null;
+    if (!link) return;
+    event.preventDefault();
+    let id = link.getAttribute('href').slice(1);
+    try { id = decodeURIComponent(id); } catch (error) { /* keep the raw text */ }
+    const target = id ? one(id) : null;
+    if (!target) return;
+    const entry = targets.indexOf(target);
+    if (entry >= 0) {
+      wanted = entry;
       restY = null;
       rest();
-      targets[i].scrollIntoView({ behavior: calm ? 'auto' : 'smooth', block: 'start' });
-      mark();
-    }));
+    }
+    target.scrollIntoView({ behavior: calm ? 'auto' : 'smooth', block: 'start' });
+    if (entry >= 0) mark();
+  });
+
+  if (links.length) {
     let queued = false;
     window.addEventListener('scroll', () => {
       if (wanted >= 0 && restY === null) rest();

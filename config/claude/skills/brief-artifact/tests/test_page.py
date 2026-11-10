@@ -348,12 +348,22 @@ def test_a_selected_option_has_a_filled_key_that_does_not_depend_on_hue(browser,
     filled = rgb_hex(key.evaluate("e => getComputedStyle(e).backgroundColor"))
     letter = rgb_hex(key.evaluate("e => getComputedStyle(e).color"))
     assert filled == theme["ink"] and contrast(filled, theme["bg"]) >= 7 and contrast(letter, filled) >= 7
-    # The other keys stay empty, and the rows have no box around them.
+    # The other keys stay empty. Every option is a card with a border on all four
+    # sides, and the picked card has an ink border and an ink ring around it.
     other = page.locator("#d1 label.option").nth(0)
     assert rgb_hex(other.locator(".key").evaluate("e => getComputedStyle(e).backgroundColor")) != theme["ink"]
-    for side in ("borderLeftWidth", "borderRightWidth"):
-        assert option.evaluate(f"e => getComputedStyle(e).{side}") == "0px"
-    assert option.evaluate("e => getComputedStyle(e).boxShadow") == "none"
+    for card in (option, other):
+        for side in ("Top", "Right", "Bottom", "Left"):
+            assert card.evaluate(f"e => getComputedStyle(e).border{side}Width") == "1px"
+    solid_ink = rgb(theme["ink"])  # the full colour, with no transparency
+    assert option.evaluate("e => getComputedStyle(e).borderTopColor") == solid_ink
+    ring = option.evaluate("e => getComputedStyle(e).boxShadow")
+    assert ring.startswith(solid_ink) and "inset" not in ring
+    assert other.evaluate("e => getComputedStyle(e).boxShadow") == "none"
+    assert other.evaluate("e => getComputedStyle(e).borderTopColor") != solid_ink
+    # Cards do not touch: there is a gap between them.
+    first, second = other.bounding_box(), option.bounding_box()
+    assert second["y"] - (first["y"] + first["height"]) >= 8
     # Pick-one keys are round and pick-any keys are square.
     assert key.evaluate("e => getComputedStyle(e).borderTopLeftRadius") == "50%"
     assert page.locator("#d2 .key").first.evaluate("e => getComputedStyle(e).borderTopLeftRadius") == "0px"
@@ -450,3 +460,46 @@ def test_at_the_end_of_the_page_the_last_part_in_view_is_the_current_one(browser
     assert page.get_attribute('nav.toc a[data-target="s5"]', "aria-current") == "true"
     page.wait_for_timeout(400)
     assert page.get_attribute('nav.toc a[data-target="s5"]', "aria-current") == "true"
+
+
+def test_a_fragment_link_in_the_text_scrolls_and_never_moves_the_viewer_frame(browser):
+    """In a srcdoc frame a plain `#id` link loads the parent page into the frame, and the answers are lost."""
+    import html as html_lib
+    source = LONG.replace("The hook failed review three times on one bug class.",
+                          "See [the second decision](#d2), [part three](#s3) and [nothing](#nowhere).")
+    doc = wrap(build.build(source).html)
+    viewer = ('<!doctype html><html><body><h1>VIEWER</h1>'
+              f'<iframe id="frame" style="width:1280px;height:800px;border:0" srcdoc="{html_lib.escape(doc)}"></iframe>'
+              '</body></html>')
+    context = browser.new_context(viewport={"width": 1300, "height": 900}, reduced_motion="reduce")
+    page = context.new_page()
+    errors = []
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.route(ORIGIN + "/**", lambda route: route.fulfill(body=viewer, content_type="text/html; charset=utf-8"))
+    page.goto(ORIGIN + "/viewer")
+    frame = page.frame_locator("#frame")
+    frame.locator('#d1 input[value="A"]').check()
+    for target in ("d2", "s3", "nowhere"):
+        frame.locator(f'main a[href="#{target}"]').click()
+        page.wait_for_timeout(100)
+        # The frame still shows the brief, with the answer in place.
+        assert frame.locator("main.brief").count() == 1 and frame.locator("h1", has_text="VIEWER").count() == 0
+        assert frame.locator('#d1 input[value="A"]').is_checked()
+        assert page.frames[1].url == "about:srcdoc"
+        if target != "nowhere":
+            top = frame.locator(f"#{target}").evaluate("e => e.getBoundingClientRect().top")
+            assert 0 <= top <= 120, (target, top)
+            assert frame.locator(f'nav.toc a[data-target="{target}"]').get_attribute("aria-current") == "true"
+    assert errors == []
+    # A report with one part has no pane, and its fragment links must behave the same way.
+    one = wrap(build.build("# Two words\n\n[top](#) and [gone](#nowhere)\n").html)
+    page.route(ORIGIN + "/**", lambda route: route.fulfill(
+        body=viewer.split('srcdoc="')[0] + f'srcdoc="{html_lib.escape(one)}"></iframe></body></html>',
+        content_type="text/html; charset=utf-8"))
+    page.goto(ORIGIN + "/viewer2")
+    frame = page.frame_locator("#frame")
+    for href in ("#", "#nowhere"):
+        frame.locator(f'main a[href="{href}"]').click()
+        page.wait_for_timeout(100)
+        assert frame.locator("main.brief").count() == 1 and page.frames[1].url == "about:srcdoc"
+    assert errors == []
