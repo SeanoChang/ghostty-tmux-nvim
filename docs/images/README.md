@@ -9,8 +9,6 @@ Every image in the top-level `README.md`:
 | `fzf-tab.gif` | `cd ` + Tab: a fuzzy list of folders, with the eza preview following the selection |
 | `tmux-popups.gif` | `prefix+g` floats lazygit over a layout; `prefix+s` opens the session picker and switches session |
 | `nvim-markdown.png` | markview.nvim rendering headings, inline code, code blocks and a table of contents |
-| `agents-pane.png` | Claude Code with the agent-tree pane (fish theme) and the five-line status line |
-| `brief-pane.png` | Claude Code with the Brief pane showing a plan with open decisions |
 
 ## How they were made
 

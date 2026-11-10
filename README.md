@@ -28,8 +28,8 @@ things that change how the terminal feels day to day:
   with live previews. `zoxide` replaces `cd`. `sesh` jumps between tmux sessions
   and project folders.
 - **Claude Code is part of the setup.** Global working rules, a five-line status
-  line, hooks, six skills, and five mods that add native panes: a live tree
-  of subagents, and a plan pane beside the chat.
+  line, hooks, six skills, and three mods that feed the status line and keep
+  the prompt cache warm.
 - **One command, with a safety net.** `./install.sh` links everything and moves
   anything in the way into a timestamped backup folder. It never deletes, and
   `--dry-run` prints the whole plan first.
@@ -83,7 +83,7 @@ nvim                       # lazy.nvim bootstraps itself on first launch
 | **[tmux](https://github.com/tmux/tmux)** | Default `Ctrl-b` prefix. Floating popups for lazygit, yazi, sessions and builds. `Ctrl-hjkl` moves between tmux panes and Neovim splits alike. Sessions survive reboots |
 | **[Neovim](https://neovim.io) + [LazyVim](https://lazyvim.github.io)** | 23 LazyVim extras, including Go, Python, Java and C/C++. `Space` leader with which-key, a macOS shortcut layer, and inline image and diagram rendering |
 | **[zsh](https://www.zsh.org)** | [powerlevel10k](https://github.com/romkatv/powerlevel10k) instant prompt, [fzf-tab](https://github.com/Aloxaf/fzf-tab) fuzzy completion with previews, [zoxide](https://github.com/ajeetdsouza/zoxide), [eza](https://github.com/eza-community/eza) |
-| **[Claude Code](https://claude.com/claude-code)** | Global working rules, a five-line status line, two hooks, two slash commands, six skills, five mods, and a `claude-or` wrapper that routes the CLI through OpenRouter |
+| **[Claude Code](https://claude.com/claude-code)** | Global working rules, a five-line status line, two hooks, two slash commands, six skills, three mods, and a `claude-or` wrapper that routes the CLI through OpenRouter |
 
 ![fzf-tab: cd plus Tab opens a fuzzy list of folders, and the eza preview follows the selection](docs/images/fzf-tab.gif)
 
@@ -262,15 +262,9 @@ native panes and bands. `settings.json` loads them from `~/.claude/mods/` with
 
 | Mod | What it does |
 |---|---|
-| `agent-tree` | A side pane (`/agent-tree`) with every subagent and workflow as a live tree, plus Board, Timeline and Trace views, run reports and a history. Four themes: minimal, kitty, fish and dog |
-| `brief` | Plans, designs and walkthroughs as a scrollable pane beside the chat, with option cards, questions, build status and evidence |
 | `context-feed` | Writes the context window's breakdown to a file the status line reads |
 | `cache-keepalive` | Keeps an idle session's 1-hour prompt cache warm with a tiny request, at most three times per idle stretch |
 | `statusline-bridge` | The status line as a compact band in the desktop app |
-
-![The Agents pane in the fish theme: a running cluster of three subagents unfolded as a tree, beside the chat and the five-line status line](docs/images/agents-pane.png)
-
-![The Brief pane beside the chat: a cancel-and-replace plan with its gist, five open decisions, numbered claims and a schema sketch](docs/images/brief-pane.png)
 
 **Hooks.** Two shell hooks in `config/claude/hooks/` feed a second-brain
 workflow: one logs each prompt, and one checks at the end of a session whether
