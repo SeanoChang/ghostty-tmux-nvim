@@ -242,8 +242,28 @@ was made. None blocks the change.
 - **A sweep that runs while a session writes a large prompt** can meet a line
   that is half written. The line is counted as unreadable in the first line of
   the output. Not run as a test; inferred from how the logger writes.
+- **A log file removed during a sweep stops it with exit 2.** The logger's
+  30-day clean-up can do this. A second run works.
+- **A read error prints two lines on stderr:** the tool's own message, then
+  the sweep's.
+- **A timestamp with a fraction, in the same second as the cutoff,** sorts as
+  older and drops out of the window. The logger writes whole seconds.
+- **A file with CR-only line ends is one unreadable line.** It is counted, not
+  lost. The logger cannot write such a file.
 
 ### The validator (`writing-markdown-docs/scripts/check_doc.py`)
+
+- **The splitter joins when it is in doubt.** A wrong cut hides a long
+  sentence; a wrong join shows a warning. It forgets the open lists after a
+  line that falls back to the left with no list marker, and at a change of
+  quote depth, so a numbered item after such a line joins the text above it.
+  Against markdown-it-py on 400,000 hostile random blocks it loses no long
+  sentence and joins in 4% of blocks; the splitter before this change joined
+  in 30%.
+- **A bare marker line (`+` or `1.` alone) above another marker line** makes
+  `_plain` eat the line break and read the second marker as a word, which can
+  end a sentence early. Pre-existing in `_plain`; the comparison with the
+  parser leaves this shape out.
 
 - **A label line and the prose on the next line are one sentence.** Markdown
   renders them as one paragraph, and a cut after a colon hid long sentences

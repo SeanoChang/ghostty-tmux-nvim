@@ -31,13 +31,19 @@ done
 case "$days" in
   '' | *[!0-9]*) echo "second-brain-sweep: --days needs a whole number" >&2; exit 2 ;;
 esac
-# The length test comes first: a number past the shell's range would wrap.
-if [ "${#days}" -gt 5 ] || [ "$((10#$days))" -gt 36500 ]; then
+# Drop leading zeros as text, then test the length before the value: a number
+# past the shell's range would wrap.
+days="${days#"${days%%[!0]*}"}"
+days="${days:-0}"
+if [ "${#days}" -gt 5 ] || [ "$days" -gt 36500 ]; then
   echo "second-brain-sweep: --days is at most 36500" >&2; exit 2
 fi
-days=$((10#$days))
 
 dir="${SB_QUESTION_LOG_DIR:-$HOME/.claude/second-brain/questions}"
+# No log folder yet is an empty log. A path that is something else is a mistake.
+if [ -e "$dir" ] && [ ! -d "$dir" ]; then
+  echo "second-brain-sweep: $dir is not a folder; nothing reported" >&2; exit 2
+fi
 # BSD date (macOS) first, GNU date second.
 cutoff=$(date -u -v-"${days}"d +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) ||
   cutoff=$(date -u -d "${days} days ago" +%Y-%m-%dT%H:%M:%SZ) || exit 2
@@ -101,7 +107,7 @@ out=$(
         | "\(.ts[0:10])  \(if $folder == "" then "-" else $folder end)  \(.prompt[0:200])")
   '
 ) || {
-  echo "second-brain-sweep: could not read all of $dir; nothing reported" >&2
+  echo "second-brain-sweep: could not read all of $dir, or jq failed; nothing reported" >&2
   exit 2
 }
 printf '%s\n' "$out"

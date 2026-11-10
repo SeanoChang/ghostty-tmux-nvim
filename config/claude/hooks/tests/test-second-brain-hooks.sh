@@ -153,6 +153,11 @@ out=$(bash "$SWEEP" --days 99999 2>&1); rc=$?
 { [ "$rc" = "2" ] && echo "$out" | grep -q "at most 36500" && [ "$(echo "$out" | wc -l | tr -d ' ')" = "1" ]; } && ok "refuses a --days value over 36500 in one line" || no "refuses a --days value over 36500 in one line" "rc=$rc out=$out"
 out=$(bash "$SWEEP" --days 9223372036854775807 2>&1); rc=$?
 [ "$rc" = "2" ] && ok "refuses a --days value that overflows" || no "refuses a --days value that overflows" "rc=$rc out=$out"
+out=$(bash "$SWEEP" --days 000007 --all 2>&1); rc=$?
+{ [ "$rc" = "0" ] && echo "$out" | head -1 | grep -q "last 7 days: 3 shown of 3"; } && ok "reads --days 000007 as 7" || no "reads --days 000007 as 7" "rc=$rc out=$out"
+# A log path that exists and is not a folder is a mistake, never an empty log.
+out=$(SB_QUESTION_LOG_DIR="$SB_QUESTION_LOG_DIR/a.jsonl" bash "$SWEEP" 2>&1); rc=$?
+{ [ "$rc" = "2" ] && ! echo "$out" | grep -q "shown of"; } && ok "refuses a log path that is a file" || no "refuses a log path that is a file" "rc=$rc out=$out"
 out=$(bash "$SWEEP" --days 36500 --all 2>&1); rc=$?
 { [ "$rc" = "0" ] && echo "$out" | head -1 | grep -q "3 shown of 3"; } && ok "accepts --days 36500" || no "accepts --days 36500" "rc=$rc out=$out"
 teardown

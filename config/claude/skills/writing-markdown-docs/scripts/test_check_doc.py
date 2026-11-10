@@ -875,3 +875,106 @@ def test_cuts_match_a_reference_built_from_the_known_structure():
         expected = [s for g in groups if g for s in _old_sentences("\n".join(g))]
         text = "\n".join(lines)
         assert _sentences(text) == expected, text
+
+
+# ── list state follows markdown's own open and close rules ───────────────────
+# Second adversary pass, 2026-11-10: the splitter remembered an ordered list
+# after the list had ended, and cut a later sentence at a wrapped "3)". A wrong
+# cut hides a long sentence; a wrong join only shows a warning. So the splitter
+# cuts where CommonMark certainly ends the paragraph, and forgets the list
+# state whenever it is in doubt.
+
+STALE_LIST = (
+    "> [!note] How to roll back\n"
+    "> 1) Stop the deploy.\n"
+    "> 2) Revert the commit.\n"
+    ">\n"
+    "> If the revert fails, page the on-call engineer, who checks three things in\n"
+    "> order before anyone retries the deploy by hand: 1) the queue depth, 2) the\n"
+    "> error budget, and\n"
+    "> 3) the replica lag on the primary database and on each of its read copies.\n"
+)
+
+
+def test_a_list_that_has_ended_does_not_cut_a_later_paragraph():
+    assert "prose-long" in codes(doc("Short lead.\n\n## S\n\n" + STALE_LIST))
+
+
+def test_an_empty_quote_line_ends_the_paragraph_above_it():
+    body = "> [!note] Title\n>\n> " + words(20) + "\n>\n> " + words(20) + ".\n"
+    assert "prose-long" not in codes(doc("Short lead.\n\n## S\n\n" + body))
+
+
+def test_a_deeply_indented_dash_continues_the_paragraph():
+    # Four or more spaces past the paragraph: markdown reads a continuation line.
+    body = words(20) + "\n    - " + words(14) + ".\n"
+    assert "prose-long" in codes(doc("Short lead.\n\n## S\n\n" + body))
+
+
+def test_a_nested_list_in_a_callout_is_cut_at_each_item():
+    body = "> [!note] Title\n>\n> - " + words(12) + "\n>     - " + words(12) + "\n>     - " + words(12) + "\n> - " + words(12) + "\n"
+    assert "prose-long" not in codes(doc("Short lead.\n\n## S\n\n" + body))
+
+
+def test_any_numbered_line_at_the_list_level_ends_the_item_above_it():
+    body = words(6) + ":\n- " + words(16) + "\n8) " + words(16) + "\n"
+    assert "prose-long" not in codes(doc("Short lead.\n\n## S\n\n" + body))
+
+
+def test_no_long_sentence_is_lost_against_a_commonmark_parser():
+    """Random hostile blocks, read by markdown-it-py. A sentence over 30 words
+    in one of the parser's paragraphs must sit inside one sentence of the
+    validator. Skipped where markdown-it-py is not installed."""
+    import random
+    import re
+    import pytest
+    markdown_it = pytest.importorskip("markdown_it")
+    from check_doc import _plain, _sentences
+
+    md = markdown_it.MarkdownIt("commonmark")
+
+    def wordy(s):
+        return [w for w in s.split() if re.search(r"\w", w)]
+
+    def split(text):
+        flat = " ".join(_plain(text).split())
+        return [wordy(x) for x in re.split(r"(?<=[.!?])\s+", flat) if x.strip()]
+
+    def inside(big, small):
+        """small's words all appear in big, in order. Not required to be side
+        by side: a marker inside a paragraph is a word to one reader and not
+        to the other, which shifts a count by one without hiding anything."""
+        rest = iter(big)
+        return all(w in rest for w in small)
+
+    vocab = ["alpha", "beta", "gamma", "delta", "the", "and", "of"] * 6 + ["cost:", "end.", "done?"]
+    markers = [""] * 5 + ["- ", "* ", "+ ", "1. ", "1) ", "2. ", "3) ", "8) ", "2019. ", "7. ", "-  ", "1.   ",
+                          "- - ", "+ 1. ", "1. - ", "-      "]
+    # No line that is a bare marker ("+" or "1." alone): `_plain` then eats the
+    # line break after it and reads the next marker as a word, in this reader
+    # and not in the parser. That is a quirk of `_plain`, older than the split.
+    whole = ["***", "- - -", "---", "===", "* * *", "_ _ _", "+ + +"]
+    lost = []
+    for seed in range(6000):
+        rng = random.Random(seed)
+        quoted = rng.random() < 0.6
+        lines = []
+        for _ in range(rng.randint(2, 11)):
+            if quoted and lines and rng.random() < 0.15:
+                lines.append(">")
+                continue
+            q = ("> " if rng.random() < 0.93 else ">> ") if quoted else ""
+            pad = " " * rng.choice([0, 0, 0, 0, 1, 2, 2, 3, 3, 4, 4, 5, 6])
+            if not lines and not quoted:
+                pad = pad[:3]  # four spaces at the start of a block is code, not prose
+            if lines and rng.random() < 0.04:
+                lines.append(q + pad + rng.choice(whole))
+                continue
+            lines.append(q + pad + rng.choice(markers) + " ".join(rng.choice(vocab) for _ in range(rng.randint(2, 13))))
+        body = [re.sub(r"^\s*> ?", "", ln, count=1) for ln in lines] if quoted else lines
+        toks = md.parse("\n".join(body))
+        ref = [s for i, t in enumerate(toks) if t.type == "inline" and toks[i - 1].type == "paragraph_open" for s in split(t.content)]
+        got = [wordy(s) for s in _sentences("\n".join(lines))]
+        if any(len(r) > 30 and not any(inside(g, r) for g in got) for r in ref):
+            lost.append(seed)
+    assert not lost, f"{len(lost)} of 6000 blocks lose a long sentence; first seeds {lost[:5]}"

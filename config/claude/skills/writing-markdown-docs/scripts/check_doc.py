@@ -456,49 +456,101 @@ def _plain(text):
 
 
 _QUOTE = r"\s*(?:>\s*)*"
-LIST_ITEM = re.compile(r"(\s*(?:>\s*)*)(?:[-*+]|(\d+)[.)])\s")
 CALLOUT_TITLE = re.compile(r"\s*(?:>\s*)+\[![A-Za-z-]+\][-+]?")
 IMAGE_LINE = re.compile(_QUOTE + r"!(?:\[\[[^\]]*\]\]|\[[^\]]*\]\([^)]*\))\s*")
 QUOTE_ONLY = re.compile(r"\s*(?:>\s*)*")
+# A line's quote marks (each takes one space after it), then its indent.
+QUOTE_LEAD = re.compile(r"((?: {0,3}> ?)*)( *)")
+# A list marker with text after it: a bullet, or up to nine digits and . or ).
+LIST_MARKER = re.compile(r"(?:[-*+]|(\d{1,9})[.)])( +)(?=\S)")
+THEMATIC_BREAK = re.compile(r"([-*_])(?: *\1){2,} *")
 
 
 def _units(text):
-    """Cut prose where a sentence ends without a full stop: before a list item,
-    after a callout title, and around an image line. An image line is not prose
-    and is dropped.
+    """Cut prose where markdown ends a paragraph without a full stop: before a
+    list item, at an empty quote line, after a callout title, and around an
+    image line. Image lines and empty lines hold no prose and are dropped.
 
-    A cut is made only at a line whose structure says so, never from how a line
-    ends: prose is wrapped at 80 columns, so where a line ends says nothing. A
-    line that starts with a number is a list item only where markdown reads it
-    as one: the number is 1, or the line continues an ordered list at the same
-    depth, or no paragraph is open above it (CommonMark: only "1." may
-    interrupt a paragraph)."""
+    The two ways to be wrong are not equal. A wrong join gives a warning the
+    writer can read and dismiss. A wrong cut hides a long sentence. So a cut is
+    made only where CommonMark certainly ends the paragraph, and never from how
+    a line ends: prose is wrapped at 80 columns, so a line end says nothing.
+
+    `items` holds the list items that are open, as (marker indent, content
+    indent). With `blk` the content indent of the innermost one (0 for none):
+
+    - a line indented 4 or more past `blk` continues the paragraph;
+    - a line inside the item starts a list only with a bullet or with "1"
+      (CommonMark: only "1." may interrupt a paragraph);
+    - a line to the left of `blk` ends the item with any marker, any number,
+      unless it is 4 or more past the item that holds the list;
+    - after an empty line no paragraph is open, so any marker starts an item.
+
+    Whenever the state is in doubt (a line that falls back to the left with no
+    marker, a change of quote depth), `items` is emptied. An empty state can
+    only join; it never cuts where markdown continues."""
     unit = []
-    last = {}  # (quote depth, indent) -> "ordered" | "bullet", the latest item there
-    fresh = True  # no paragraph is open: the start, or after a title, image or empty line
+    items = []  # open list items, outermost first: (marker indent, content indent)
+    depth = None  # quote depth of the line above
+    opened = False  # a paragraph is open: the line above is prose
     for line in text.split("\n"):
         image = IMAGE_LINE.fullmatch(line)
         title = CALLOUT_TITLE.match(line)
-        item = None if image or title else LIST_ITEM.match(line)
-        if item:
-            lead, number = item.group(1), item.group(2)
-            key = (lead.count(">"), len(lead) - len(lead.rstrip(" \t")))
-            if number is None:
-                last[key] = "bullet"
-            elif int(number) == 1 or fresh or last.get(key) == "ordered":
-                last[key] = "ordered"
-            else:
-                item = None
-        if unit and (image or title or item):
-            yield "\n".join(unit)
-            unit = []
-        fresh = bool(image or title or QUOTE_ONLY.fullmatch(line))
-        if image:
+        quote, pad = QUOTE_LEAD.match(line).groups()
+        rest = line[len(quote) + len(pad):]
+        # A row of ---, *** or ___ ends a paragraph only when it is indented less
+        # than 4; further in, markdown may read it as text. Either way it is
+        # never a list item, and what it does to the open items is in doubt.
+        rule = THEMATIC_BREAK.fullmatch(rest)
+        if rule and len(pad) >= 4:
+            items, rule = [], None
+            rest = ""
+        if image or title or rule or QUOTE_ONLY.fullmatch(line):
+            if unit:
+                yield "\n".join(unit)
+                unit = []
+            if title:
+                yield line
+            if title or rule:
+                items = []
+            opened = False
             continue
-        unit.append(line)
-        if title:
+        indent = len(pad)
+        if depth is not None and quote.count(">") != depth:
+            items = []
+        depth = quote.count(">")
+        marker = LIST_MARKER.match(rest)
+        if marker:
+            gap = len(marker.group(2))
+            content = indent + marker.end() - gap + (gap if gap <= 4 else 1)
+            first = marker.group(1) is None or int(marker.group(1)) == 1
+        cut = False
+        blk = items[-1][1] if items else 0  # content indent of the innermost item
+        outer = items[-2][1] if len(items) > 1 else 0  # and of the item its list sits in
+        if not opened:
+            while items and items[-1][1] > indent:
+                items.pop()
+            if marker and indent - (items[-1][1] if items else 0) < 4:
+                items.append((indent, content))
+        elif indent >= blk:
+            if marker and first and indent - blk < 4:
+                cut = True
+                items.append((indent, content))
+        elif marker and indent - outer < 4:
+            cut = True
+            while items and items[-1][1] > indent:
+                items.pop()
+            if indent - (items[-1][1] if items else 0) < 4:
+                items.append((indent, content))
+            else:
+                items = []
+        else:
+            items = []
+        if cut and unit:
             yield "\n".join(unit)
             unit = []
+        unit.append(line)
+        opened = True
     if unit:
         yield "\n".join(unit)
 
