@@ -98,6 +98,17 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(gh pr merge*)",
+            "command": "python3 __HOME__/.claude/hooks/merge-gate.py",
+            "timeout": 30
+          }
+        ]
       }
     ],
     "UserPromptSubmit": [

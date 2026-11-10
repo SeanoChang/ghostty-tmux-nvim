@@ -46,11 +46,22 @@ Reviewed on 2026-11-10 at sha1 `9443fb995e1be73846dbd741a4d54f649e0e8375`.
 - **The hook's own stdout closed or broken gives a non-zero exit.** The
   harness could not read an answer in that case anyway.
 
+### Tested in a real session (2026-11-10, Claude Code 2.1.319)
+
+Headless `claude -p` runs with a fake `gh` first on PATH, in a folder that is
+not a git repo:
+
+- A valid merge written as `--match-head-commit <sha>` ran without a prompt,
+  and `gh` received the rebuilt `--match-head-commit=<sha>`. So Claude Code
+  applies `updatedInput` together with an allow.
+- A merge without the sha, with `--admin`, or with `--delete-branch` was
+  refused with the hook's reason, and `gh` was not called.
+- `gh pr checks 12` and `cd . && gh pr merge …` got no decision from the hook
+  and were stopped by the normal approval.
+
 ### Not tested
 
-- Whether Claude Code applies `updatedInput` together with an allow. The
-  safety of the allow path rests on it. Test this in a live session before
-  the hook is relied on.
+- A real merge on GitHub. The first one is the remaining check.
 - Shell state that Claude Code adds: an alias or function named `gh`, or
   `GH_REPO` / `GH_HOST` set in the shell but not in the hook's environment.
 - Whether the payload's `cwd` follows an earlier `cd` in the Bash tool. If it
