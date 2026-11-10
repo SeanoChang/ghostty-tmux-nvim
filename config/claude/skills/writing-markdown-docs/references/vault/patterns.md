@@ -8,7 +8,7 @@ Frontmatter shown here is already normalized to the committed key set in `refere
 
 - [Template A — study note](#template-a--study-note) — the default
 - [Scaffolds](#scaffolds) — and why not to create more
-- [Type-word variants](#type-word-variants) — Paper, SOTA, Math, LAB, PROJECT, INTERVIEW
+- [Type-word variants](#type-word-variants) — Paper, SOTA, Math, LAB, PROJECT, INTERVIEW (with company prep)
 - [MOC](#moc)
 - [Decision note](#decision-note)
 - [Spec note](#spec-note)
@@ -200,6 +200,52 @@ What they ask next, and the answer to each.
 ## What they're testing
 The signal behind the question.
 ```
+
+#### Company prep
+
+One note per interview round, in `Career/Interview/Companies/<Company>/`, named `<Company> — <Round> Prep.md`. It is `type: interview` with `created` and a `sources` list (the invite, the posting, the research note). 20 of the 100 long notes written from 2026-10-06 to 2026-11-10 were of this kind, and the two fullest ones share this shape:
+
+```markdown
+> <Who you meet, when, how long, and the one thing this round decides.>
+
+## The one message to land
+One or two sentences. Every answer below should support it.
+
+## How this round works
+Format, length, who scores it, what candidates reported. Dated.
+
+## 60-second intro
+Written to be spoken. Mark the time budget in the heading.
+
+## Why <Company>
+Two or three reasons, each tied to work you did.
+
+## Stories to have ready
+One line per story with its time budget, linked to the story note. Do not copy the story here.
+
+## Resume vs the posting
+| The posting asks | Your evidence | Gap line to say |
+
+## Likely questions
+The question, then the answer as you would say it.
+
+## Honesty lines
+What not to claim, and the true sentence to say instead.
+
+## Logistics answers
+Graduation date, location, visa, start date, pay.
+
+## Questions to ask
+Three to five, ranked.
+
+## Company facts
+For recall, not recitation. Each with a source.
+
+## Practice log
+Dated notes from each mock: what failed, what to change.
+```
+
+A fact about the company or the process carries a source and a date, because it goes stale within weeks. Answers are written to be spoken: short sentences, no brackets, and the number first.
 
 ## MOC
 

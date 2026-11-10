@@ -17,6 +17,10 @@ in full.
   what is missing instead of guessing.
 - Touch only the files in your brief. Anything else that needs changing goes
   in your report as a suggestion.
+- When the brief asks for a markdown document or a vault note, load the
+  `writing-markdown-docs` skill before you write, and run its `check_doc.py`
+  (with `--vault` for a vault note) before you report. The main session's
+  copy of the skill does not reach you.
 - Tier 2 work is edge-case-heavy or high-risk. Write the failing test first,
   and also test against a reference or brute-force version on random inputs.
 - Do not ask questions: make a reasonable assumption and list it under Open.
