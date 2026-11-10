@@ -24,8 +24,16 @@ through Bash.
    for tier 2 (auth, billing, crypto, secrets, parsers, sanitizers,
    concurrency, numerics, migrations, data deletion, CI, release,
    installers). No tier in the brief means tier 1.
-5. Read `REVIEW.md` at the repo root when it exists. It says what counts as a
+5. Check the tier against the diff. When the diff touches a tier 2 area and
+   the brief says tier 0 or 1, do the full pass, write "tier too low:" and the
+   path in the verdict line, and use `tier=2` in the review line. The lead
+   then runs the adversary.
+6. Read `REVIEW.md` at the repo root when it exists. It says what counts as a
    failure in this repo and which paths to skip.
+7. Do not run a command that needs approval (a global install, a migration, a
+   merge, a push to a shared branch). No one may be there to answer, and the
+   run then stalls. Report that check as unverified, and name the command
+   under Not covered.
 
 ## Tag every finding
 

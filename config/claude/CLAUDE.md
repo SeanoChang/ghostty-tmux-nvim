@@ -64,7 +64,9 @@
 
 - Set the tier when you write the task, from what the change touches, and write
   it on the task. Unknown is tier 1. A repo's `REVIEW.md` can name paths that
-  are always tier 2.
+  are always tier 2. The diff decides: when a change comes to touch a higher
+  tier than its task says, raise the tier on the task and run that tier's
+  review. A verifier that reports "tier too low" has raised it.
 
   | Tier | The change touches                                                                                                             | Review                                             |
   | ---- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------- |
@@ -90,6 +92,9 @@
   Then run `gh pr merge <n> --squash --match-head-commit <sha>` as its own
   command. The `merge-gate` hook checks each condition. Never merge into main,
   and never pass `--admin`, `--auto` or `--delete-branch`.
+- A repo with no `dev` branch or no CI cannot meet the merge rule. Do not
+  merge there, and do not go around the gate with `gh api` or a direct push.
+  Leave the work on its branch and list it under "Blocked on me".
 - At the end of a milestone: run the real app, open one PR from `dev` to main,
   and stop. Its body has Delivers, Testing, Tier 2 changes (with
   reviews-to-pass), Risk, How to revert, Known limits, and Blocked on me.

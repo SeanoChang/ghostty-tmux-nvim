@@ -71,3 +71,33 @@ not a git repo:
   reasoning, not by test.
 - `gh` versions other than 2.103.3, and real GitHub answers for edge cases
   (more than 100 checks, comment paging, stale check runs).
+
+## Review rules (`config/claude/CLAUDE.md`, `config/claude/agents/`)
+
+Reviewed on 2026-11-10 at commit `0a4b43a`. One review read the rules for
+gaps, contradictions and loops, and a second one in fresh context checked its
+list. Three Important gaps were fixed: a reviewer could run a command that
+needs approval, a diff could outgrow its task's tier, and no rule covered a
+repo with no `dev` branch or no CI.
+
+### Minor, not fixed
+
+- **"Less adversary" has no rule for a re-check that reports broken.** It
+  allows one adversary pass and one re-check. A broken re-check is the second
+  failure, and the third round never comes. The merge gate still needs
+  ` adversary=held`, so the merge is denied: it fails safe.
+- **No rule says a branch must be up to date with `dev` before the squash.**
+  Two PRs, each reviewed against an older `dev`, can merge into a combination
+  that no reviewer saw. CI on each head commit limits this.
+- **The verifier's "uncommitted changes" rule does not name untracked or
+  unrelated files.** One verifier leaves the review line out for an untracked
+  file that is not part of the change; another keeps it.
+- **A fix round can start on a finding that no refuter checked.** The refuter
+  rule covers findings that reach Sean, not findings that start a fix. A false
+  Important then costs one round and counts toward the limit of three.
+  "Release-blocking" is not defined.
+- **The Plan page example drifts from the eight-line brief.** In
+  `visual-artifacts/references/plan.md` the task's Files row lists one file
+  and its copied brief lists two, and the copied Files line has no "must not
+  touch" part. `builder.md` ("Touch only the files in your brief") still
+  bounds the edit.
