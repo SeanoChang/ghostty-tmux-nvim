@@ -67,6 +67,8 @@ mkdir -p "$SB_QUESTION_LOG_DIR"
   echo '{"ts":"2099-01-01T00:00:00Z","cwd":42,"prompt":["what is this list doing here in the log"]}'
   echo '[1,2,3]'
   jq -cn --arg ts "$(now)" '{ts:$ts, prompt:"how does the clock algorithm pick a victim page"}'
+  # A good prompt with a cwd of the wrong type: the line stays, the folder shows as -.
+  jq -cn --arg ts "$(now)" '{ts:$ts, cwd:42, prompt:"what is a page fault and who handles it"}'
 } > "$SB_QUESTION_LOG_DIR/b.jsonl"
 before=$(cd "$SB_QUESTION_LOG_DIR" && cksum ./*.jsonl)
 out=$(bash "$SWEEP" 2>&1); rc=$?
@@ -75,14 +77,15 @@ echo "$out" | grep -q "row space and the null space" && ok "lists a concept ques
 echo "$out" | grep -q "clock algorithm" && ok "reads every session log, and skips a malformed line" || no "reads every session log, and skips a malformed line" "$out"
 [ "$(echo "$out" | grep -c "row space and the null space")" = "1" ] && ok "lists a repeated question once" || no "lists a repeated question once" "$out"
 echo "$out" | grep -q "^[0-9-]*  -  how does the clock" && ok "shows - as the folder when a line has no cwd" || no "shows - as the folder when a line has no cwd" "$out"
+echo "$out" | grep -q "^[0-9-]*  -  what is a page fault" && ok "keeps a good prompt whose cwd has the wrong type, with - as the folder" || no "keeps a good prompt whose cwd has the wrong type, with - as the folder" "rc=$rc out=$out"
 echo "$out" | grep -q "red-black" && no "omits a question older than --days" "$out" || ok "omits a question older than --days"
 echo "$out" | grep -q "idempotency" && no "omits temp-folder sessions" "$out" || ok "omits temp-folder sessions"
 echo "$out" | grep -q "fast mode" && no "omits slash commands" "$out" || ok "omits slash commands"
 echo "$out" | grep -q "run the tests again" && no "hides a prompt with no concept phrase by default" "$out" || ok "hides a prompt with no concept phrase by default"
-echo "$out" | head -1 | grep -q "2 shown of 3" && ok "first line says how many are shown and how many are held back" || no "first line says how many are shown and how many are held back" "$(echo "$out" | head -1)"
+echo "$out" | head -1 | grep -q "3 shown of 4" && ok "first line says how many are shown and how many are held back" || no "first line says how many are shown and how many are held back" "$(echo "$out" | head -1)"
 out=$(bash "$SWEEP" --all 2>&1)
 echo "$out" | grep -q "run the tests again" && ok "--all shows prompts with no concept phrase" || no "--all shows prompts with no concept phrase" "$out"
-echo "$out" | head -1 | grep -q "3 shown of 3" && ok "--all counts every kept prompt" || no "--all counts every kept prompt" "$(echo "$out" | head -1)"
+echo "$out" | head -1 | grep -q "4 shown of 4" && ok "--all counts every kept prompt" || no "--all counts every kept prompt" "$(echo "$out" | head -1)"
 out=$(bash "$SWEEP" --days 4000 2>&1)
 echo "$out" | grep -q "red-black" && ok "--days widens the window" || no "--days widens the window" "$out"
 after=$(cd "$SB_QUESTION_LOG_DIR" && cksum ./*.jsonl)
