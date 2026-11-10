@@ -87,7 +87,9 @@ Text here shows under the options: the cost of the recommended one.
 A decision runs from its `## ?` heading to the next `##` heading. Text before
 the list shows above the options, and text after it shows below them. Every
 decision gets a note box, and the page ends with one comment box. When any
-option is recommended, a "Use recommendations" button picks all of them.
+option is recommended, a "Use recommendations" button sets each decision that
+has a recommendation to its recommended options, and clears his other picks
+there.
 
 Not supported: images, raw HTML (it is shown as text), math and charts. A page
 that needs those is a visual-artifacts page.

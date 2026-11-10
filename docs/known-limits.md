@@ -119,7 +119,8 @@ repo with no `dev` branch or no CI.
 
 ## `config/claude/skills/brief-artifact`
 
-Reviewed on 2026-11-10 at commit `65ac836`. The adversary then found two
+Reviewed on 2026-11-10: verifier pass and adversary held at commit `c210cd4`.
+The first verifier pass was at `65ac836`. The adversary then found two
 Important breaks, both fixed: a `data:image` link passed the parser's own link
 check, and nesting past the parser's limit of 20 dropped the rest of the file
 without an error.
@@ -155,6 +156,15 @@ without an error.
   320 px.** The six known kinds are short.
 - **`PYTHONIOENCODING=ascii` with a non-ASCII title ends in a traceback**
   after the page is written. The default environment prints UTF-8.
+- **An unclosed code fence takes every decision after it.** A pasted markdown
+  file with its own fences can close the outer fence early and open one that
+  runs to the end of the file. The text stays on the page as code, and the
+  build summary shows the lower decision count. This is how CommonMark reads
+  the file.
+- **`[text]()` is drawn like a link but does nothing.** The empty target is
+  removed, and the link colour and underline stay.
+- **The nesting limit counts a list as two levels and a quote as one,**
+  against 14. SKILL.md gives only the pure cases (six lists, thirteen quotes).
 
 ### Not tested
 
