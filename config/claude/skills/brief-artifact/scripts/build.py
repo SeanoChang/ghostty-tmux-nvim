@@ -503,7 +503,9 @@ SCRIPT = r"""(() => {
 
   function update() {
     const state = compose();
-    reply.textContent = state.text;
+    // Write only on a change: a write can replace the text node, and that
+    // drops the selection the last copy fallback made.
+    if (reply.textContent !== state.text) reply.textContent = state.text;
     status.textContent = flash || state.answered + ' of ' + sections.length + ' answered';
     return state;
   }
@@ -578,7 +580,11 @@ def main(argv=None):
         print(f"brief: error: {error}", file=sys.stderr)
         return 1
     out = args.output or args.source.with_suffix(".html")
-    out.write_text(result.html, encoding="utf-8")
+    try:
+        out.write_text(result.html, encoding="utf-8")
+    except OSError as error:
+        print(f"brief: error: cannot write {out}: {error}", file=sys.stderr)
+        return 1
     kinds = [d["kind"] for d in result.decisions]
     n = len(kinds)
     detail = (" (" + ", ".join(f"{kinds.count(k)} {w}" for k, w in

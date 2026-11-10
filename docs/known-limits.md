@@ -101,3 +101,48 @@ repo with no `dev` branch or no CI.
   and its copied brief lists two, and the copied Files line has no "must not
   touch" part. `builder.md` ("Touch only the files in your brief") still
   bounds the edit.
+
+### Minor, from the re-check of the fixes (not checked by a second reviewer)
+
+- **An adversary that skips an attack because it needs approval can still
+  report held.** The verifier's version of the rule forces "unverified". The
+  adversary's version only moves the attack to Not tried.
+- **"Tier too low" reads the tier 2 list, not `REVIEW.md`.** The verifier
+  checks the diff against the list in its own step 4. A path that a repo's
+  `REVIEW.md` names as always tier 2 may not raise the tier.
+- **The milestone rule still assumes `dev`.** "Open one PR from `dev` to main"
+  has no reading in a repo with no `dev` branch. This is the second gap of one
+  class: the rules assume `dev` and CI. It waits for Sean's decision on what
+  such a repo should do.
+- **No rule covers a task that depends on a blocked, unmerged task** (older
+  than this change): build on its branch, or skip it.
+
+## `config/claude/skills/brief-artifact`
+
+Reviewed on 2026-11-10 at commit `65ac836`.
+
+### By design
+
+- **Answers are not kept across a reload**, and the page sends nothing back.
+- **No images, math, charts or raw HTML.** Raw HTML is shown as text.
+- **A callout inside a list item, and a lead of more than one paragraph, are
+  plain quotes.**
+
+### Minor, not fixed
+
+- **A `## ?` decision whose list has no bold label becomes a free answer with
+  no warning.** The build summary still says "free answer" for it. A list in
+  a decision body can be ordinary context, so the script cannot refuse it.
+- **An h2 that starts with `?` is always a decision.** `## \? Text` is one
+  too, because the parser joins the escaped character back into the text.
+- **No space is needed after the `?`.** `## ?**Bold** text` is a decision.
+- **A build that fails leaves an earlier page at the output path.** The exit
+  code is 1 and nothing new is written, but the old file can still be
+  published by mistake.
+
+### Not tested
+
+- The copy button in the Claude desktop viewer, Safari and Firefox. The tests
+  run in Chromium. One test makes the page behave like an engine that
+  replaces the text node on each write, for the select-the-reply fallback.
+- Contrast of text on the semi-transparent inline-code background.

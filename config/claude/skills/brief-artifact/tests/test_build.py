@@ -146,6 +146,7 @@ def test_text_from_the_source_is_escaped_in_attributes():
     ("# T\n\n## ? Q\n\n- ****\n- **B**\n", "label"),
     ("# T\n\n# U\n", "one `# ` title"),
     ("# T\n\n## ?\n\n- **A**\n- **B**\n", "question"),
+    ("intro\n\n# Two words\n", "first"),
 ])
 def test_a_brief_that_cannot_be_answered_is_an_error(source, needle):
     with pytest.raises(build.BriefError) as err:
@@ -160,6 +161,13 @@ def test_warnings_for_a_brief_that_is_too_long_or_has_no_recommendation():
     assert any("recommend" in w for w in r.warnings)
     r = build.build("# One two three four five six seven\n\ntext\n")
     assert r.name == "One two three four"
+    assert any("7 words" in w for w in r.warnings)
+    assert any("one word" in w for w in build.build("# One\n\ntext\n").warnings)
+    assert build.build("# Two words\n\ntext\n").warnings == []
+    seven = "# Two words\n\n" + "".join(f"## ? Question {i}\n\n" for i in range(7))
+    assert any("7 decisions" in w for w in build.build(seven).warnings)
+    six = "# Two words\n\n" + "".join(f"## ? Question {i}\n\n" for i in range(6))
+    assert build.build(six).warnings == []
 
 
 def test_a_question_mark_heading_inside_a_code_block_is_not_a_decision():
@@ -187,6 +195,11 @@ def test_the_command_writes_the_page_and_reports(tmp_path):
     proc = subprocess.run([sys.executable, str(SCRIPT), str(bad)], capture_output=True, text=True)
     assert proc.returncode == 1 and "one option" in proc.stderr
     assert not (tmp_path / "bad.html").exists()
+    # A page that cannot be written is one clean error line, not a traceback.
+    target = tmp_path / "no" / "such" / "dir" / "out.html"
+    proc = subprocess.run([sys.executable, str(SCRIPT), str(src), "-o", str(target)], capture_output=True, text=True)
+    assert proc.returncode == 1 and "cannot write" in proc.stderr
+    assert "Traceback" not in proc.stderr and proc.stdout == ""
 
 
 # ------------------------------------------------ random input, two references

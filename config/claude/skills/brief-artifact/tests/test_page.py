@@ -159,10 +159,19 @@ def test_copy_falls_back_when_the_clipboard_is_blocked(browser):
     assert page.locator("main textarea.offscreen").count() == 0
 
     # Both blocked: the reply is selected on the page and the status says what to press.
+    # Some engines replace the text node on every write to textContent, which
+    # drops a selection inside it. The page here is made to do the same, so the
+    # test fails if the reply is written again after it was selected.
     page = open_page(browser, r.html, clipboard=False)
     page.evaluate("""() => {
       Object.defineProperty(navigator, 'clipboard', { value: undefined });
       document.execCommand = () => false;
+      const reply = document.getElementById('reply');
+      const native = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent');
+      Object.defineProperty(reply, 'textContent', {
+        get() { return native.get.call(this); },
+        set(value) { this.replaceChildren(document.createTextNode(value)); },
+      });
     }""")
     page.check('#d1 input[value="A"]')
     page.click("#copy")
