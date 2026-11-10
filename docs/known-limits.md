@@ -234,15 +234,32 @@ was made. None blocks the change.
 - **The GNU `date -d` branch has no test.** Only BSD date runs on this machine.
 - **No session learns of the sweep from this repo.** The second-brain-obsidian
   skill names it, and that skill lives in its own repository.
+- **A one-word prompt path reads as a slash command.** A prompt that starts
+  with `/etc` and a space is left out. A path with a second slash in its first
+  word is kept.
+- **A log file that is itself a symlink is not read.** The log folder may be a
+  symlink; the logger writes plain files.
+- **A sweep that runs while a session writes a large prompt** can meet a line
+  that is half written. The line is counted as unreadable in the first line of
+  the output. Not run as a test; inferred from how the logger writes.
 
 ### The validator (`writing-markdown-docs/scripts/check_doc.py`)
 
-- **A line that ends in a colon always ends a sentence.** A long sentence that
-  is hard-wrapped right after a colon is no longer flagged by `prose-long`.
-  Vault notes are never hard-wrapped, so this touches repo documents only.
-- **`lead-long` now counts each list item under an opening paragraph as a
-  sentence,** because it shares the sentence splitter. Over 1,954 vault files
-  this added 8 warnings and removed none.
+- **A label line and the prose on the next line are one sentence.** Markdown
+  renders them as one paragraph, and a cut after a colon hid long sentences
+  that were wrapped there (found by the adversary pass, fixed in the same
+  change). A label over a list is still cut, at the list item.
+- **Some image lines are not seen as images,** so a caption under one can
+  still join it and give a false `prose-long`: a linked image, a URL with
+  parentheses, alt text with brackets, a caption on the image's own line, and
+  an HTML `img`. Same result as before the change.
+- **No cut at a footnote definition, a `**Term**:` line, a bold label or a
+  setext heading.** Same result as before the change.
+- **A list block is split at every line that starts with a number,** by the
+  block reader, even where markdown reads the line as a continuation.
+  Pre-existing; the sentence splitter itself follows the markdown rule.
+- **`_plain` takes quadratic time on a long run of `[` after `!`.** Pre-existing.
+  A 32,000-character run takes over 20 s.
 - **`reader-third` flags "the owner" and "the user" when they name a file
   owner or an operating-system user.** Pre-existing. Three of three such
   warnings on the OS lecture notes were false.

@@ -83,6 +83,7 @@ echo "$out" | grep -q "idempotency" && no "omits temp-folder sessions" "$out" ||
 echo "$out" | grep -q "fast mode" && no "omits slash commands" "$out" || ok "omits slash commands"
 echo "$out" | grep -q "run the tests again" && no "hides a prompt with no concept phrase by default" "$out" || ok "hides a prompt with no concept phrase by default"
 echo "$out" | head -1 | grep -q "3 shown of 4" && ok "first line says how many are shown and how many are held back" || no "first line says how many are shown and how many are held back" "$(echo "$out" | head -1)"
+echo "$out" | head -1 | grep -q "; 4 unreadable lines skipped$" && ok "first line counts the lines it could not read" || no "first line counts the lines it could not read" "$(echo "$out" | head -1)"
 out=$(bash "$SWEEP" --all 2>&1)
 echo "$out" | grep -q "run the tests again" && ok "--all shows prompts with no concept phrase" || no "--all shows prompts with no concept phrase" "$out"
 echo "$out" | head -1 | grep -q "4 shown of 4" && ok "--all counts every kept prompt" || no "--all counts every kept prompt" "$(echo "$out" | head -1)"
@@ -92,6 +93,68 @@ after=$(cd "$SB_QUESTION_LOG_DIR" && cksum ./*.jsonl)
 [ "$before" = "$after" ] && ok "never changes the logs" || no "never changes the logs" "logs differ"
 bash "$SWEEP" --days soon >/dev/null 2>&1; [ "$?" = "2" ] && ok "refuses a --days value that is not a number" || no "refuses a --days value that is not a number" "wrong exit code"
 bash "$SWEEP" --frobnicate >/dev/null 2>&1; [ "$?" = "2" ] && ok "refuses an unknown argument" || no "refuses an unknown argument" "wrong exit code"
+teardown
+
+# The sweep must never report a log as empty or shorter than it is without a word.
+setup
+mkdir -p "$SB_QUESTION_LOG_DIR"
+real="$SB_QUESTION_LOG_DIR"
+# Three files with no trailing newline: joined end to end, no line would parse.
+for f in a b c; do printf '%s' "$(line "$(now)" "/Users/x/dev/app" "explain how topic $f works in detail")" > "$real/$f.jsonl"; done
+out=$(bash "$SWEEP" 2>&1)
+echo "$out" | head -1 | grep -q "3 shown of 3" && ok "keeps the last line of a file that has no trailing newline" || no "keeps the last line of a file that has no trailing newline" "$(echo "$out" | head -1)"
+echo "$out" | head -1 | grep -q "unreadable" && no "says nothing about unreadable lines when there are none" "$(echo "$out" | head -1)" || ok "says nothing about unreadable lines when there are none"
+# A write that was cut short drops its own line only, and the first line says so.
+printf '%s' '{"ts":"2099-01-01T00:00:00Z","cwd":"/Users/x","prompt":"what is a half writ' > "$real/d.jsonl"
+out=$(bash "$SWEEP" 2>&1)
+echo "$out" | head -1 | grep -q "3 shown of 3.*; 1 unreadable line skipped$" && ok "drops a cut-short line alone and counts it in the first line" || no "drops a cut-short line alone and counts it in the first line" "$(echo "$out" | head -1)"
+# A timestamp that is not a date cannot be placed in the window: unreadable, not shown for ever.
+echo '{"ts":"zzzz","cwd":"/Users/x/dev/app","prompt":"what is a timestamp that is not a date"}' > "$real/d.jsonl"
+out=$(bash "$SWEEP" 2>&1)
+{ ! echo "$out" | grep -q "not a date" && echo "$out" | head -1 | grep -q "; 1 unreadable line skipped$"; } && ok "treats a timestamp that is not a date as unreadable" || no "treats a timestamp that is not a date as unreadable" "$out"
+rm "$real/d.jsonl"
+# A symlink to the log folder is the log folder.
+ln -s "$real" "$TD/link"
+out=$(SB_QUESTION_LOG_DIR="$TD/link" bash "$SWEEP" 2>&1)
+echo "$out" | head -1 | grep -q "3 shown of 3" && ok "reads a log folder that is a symlink" || no "reads a log folder that is a symlink" "$(echo "$out" | head -1)"
+# What it cannot read is an error, never an empty or a shorter log. (Root reads everything.)
+if [ "$(id -u)" != "0" ]; then
+  chmod 000 "$real"
+  out=$(bash "$SWEEP" 2>&1); rc=$?
+  chmod 700 "$real"
+  { [ "$rc" = "2" ] && ! echo "$out" | grep -q "shown of"; } && ok "refuses a log folder it cannot read" || no "refuses a log folder it cannot read" "rc=$rc out=$out"
+  chmod 000 "$real/a.jsonl"
+  out=$(bash "$SWEEP" 2>&1); rc=$?
+  chmod 600 "$real/a.jsonl"
+  { [ "$rc" = "2" ] && ! echo "$out" | grep -q "shown of"; } && ok "refuses to report when one log file cannot be read" || no "refuses to report when one log file cannot be read" "rc=$rc out=$out"
+fi
+teardown
+
+# What counts as a slash command, a temp folder and a folder name.
+setup
+mkdir -p "$SB_QUESTION_LOG_DIR"
+{
+  line "$(now)" "/Users/x/dev/app" "/Users/me/notes.md what is this file about"
+  line "$(now)" "/Users/x/dev/app" "/code-review:code-review what is the scope here"
+  line "$(now)" "/Users/x/dev/app" "/plugin"
+  line "$(now)" "/var/tmp/agent-run" "what is a session in a var tmp folder"
+  line "$(now)" "/private/var/tmp/agent-run" "what is a session in a private var tmp folder"
+  line "$(now)" "/" "what is the root folder doing as a cwd"
+  line "$(now)" "/Users/x/dev/trailing/" "what is a cwd with a trailing slash"
+} > "$SB_QUESTION_LOG_DIR/a.jsonl"
+out=$(bash "$SWEEP" --all 2>&1)
+echo "$out" | grep -q "notes.md what is this file" && ok "keeps a prompt that starts with a file path" || no "keeps a prompt that starts with a file path" "$out"
+echo "$out" | grep -q "code-review" && no "omits a namespaced slash command" "$out" || ok "omits a namespaced slash command"
+echo "$out" | grep -q "var tmp folder" && no "omits sessions under /var/tmp and /private/var/tmp" "$out" || ok "omits sessions under /var/tmp and /private/var/tmp"
+echo "$out" | grep -q "^[0-9-]*  -  what is the root folder" && ok "shows - as the folder for a cwd of /" || no "shows - as the folder for a cwd of /" "$out"
+echo "$out" | grep -q "^[0-9-]*  trailing  what is a cwd with" && ok "names the folder of a cwd that ends in a slash" || no "names the folder of a cwd that ends in a slash" "$out"
+echo "$out" | head -1 | grep -q "3 shown of 3" && ok "counts exactly the three kept prompts" || no "counts exactly the three kept prompts" "$(echo "$out" | head -1)"
+out=$(bash "$SWEEP" --days 99999 2>&1); rc=$?
+{ [ "$rc" = "2" ] && echo "$out" | grep -q "at most 36500" && [ "$(echo "$out" | wc -l | tr -d ' ')" = "1" ]; } && ok "refuses a --days value over 36500 in one line" || no "refuses a --days value over 36500 in one line" "rc=$rc out=$out"
+out=$(bash "$SWEEP" --days 9223372036854775807 2>&1); rc=$?
+[ "$rc" = "2" ] && ok "refuses a --days value that overflows" || no "refuses a --days value that overflows" "rc=$rc out=$out"
+out=$(bash "$SWEEP" --days 36500 --all 2>&1); rc=$?
+{ [ "$rc" = "0" ] && echo "$out" | head -1 | grep -q "3 shown of 3"; } && ok "accepts --days 36500" || no "accepts --days 36500" "rc=$rc out=$out"
 teardown
 
 setup

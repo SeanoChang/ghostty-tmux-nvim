@@ -456,35 +456,58 @@ def _plain(text):
 
 
 _QUOTE = r"\s*(?:>\s*)*"
-LIST_ITEM = re.compile(_QUOTE + r"(?:[-*+]|\d+[.)])\s")
-CALLOUT_TITLE = re.compile(r"\s*(?:>\s*)+\[![A-Za-z]+\][-+]?")
+LIST_ITEM = re.compile(r"(\s*(?:>\s*)*)(?:[-*+]|(\d+)[.)])\s")
+CALLOUT_TITLE = re.compile(r"\s*(?:>\s*)+\[![A-Za-z-]+\][-+]?")
 IMAGE_LINE = re.compile(_QUOTE + r"!(?:\[\[[^\]]*\]\]|\[[^\]]*\]\([^)]*\))\s*")
+QUOTE_ONLY = re.compile(r"\s*(?:>\s*)*")
 
 
 def _units(text):
     """Cut prose where a sentence ends without a full stop: before a list item,
-    after a callout title, after a label line that ends in a colon, and around
-    an image line. An image line is not prose and is dropped."""
+    after a callout title, and around an image line. An image line is not prose
+    and is dropped.
+
+    A cut is made only at a line whose structure says so, never from how a line
+    ends: prose is wrapped at 80 columns, so where a line ends says nothing. A
+    line that starts with a number is a list item only where markdown reads it
+    as one: the number is 1, or the line continues an ordered list at the same
+    depth, or no paragraph is open above it (CommonMark: only "1." may
+    interrupt a paragraph)."""
     unit = []
+    last = {}  # (quote depth, indent) -> "ordered" | "bullet", the latest item there
+    fresh = True  # no paragraph is open: the start, or after a title, image or empty line
     for line in text.split("\n"):
         image = IMAGE_LINE.fullmatch(line)
         title = CALLOUT_TITLE.match(line)
-        if unit and (image or title or LIST_ITEM.match(line)):
+        item = None if image or title else LIST_ITEM.match(line)
+        if item:
+            lead, number = item.group(1), item.group(2)
+            key = (lead.count(">"), len(lead) - len(lead.rstrip(" \t")))
+            if number is None:
+                last[key] = "bullet"
+            elif int(number) == 1 or fresh or last.get(key) == "ordered":
+                last[key] = "ordered"
+            else:
+                item = None
+        if unit and (image or title or item):
             yield "\n".join(unit)
             unit = []
+        fresh = bool(image or title or QUOTE_ONLY.fullmatch(line))
         if image:
             continue
         unit.append(line)
-        if title or line.rstrip().endswith(":"):
+        if title:
             yield "\n".join(unit)
             unit = []
     if unit:
         yield "\n".join(unit)
 
 
-def _sentences(text):
+def _sentences(text, cut=True):
+    """Sentences as read. With cut=False the text is one run of prose, split
+    at full stops only: the count that `lead-long` has always used."""
     out = []
-    for unit in _units(text):
+    for unit in _units(text) if cut else [text]:
         flat = " ".join(_plain(unit).split())
         out.extend(x for x in re.split(r"(?<=[.!?])\s+", flat) if x.strip())
     return out
@@ -528,7 +551,7 @@ def _check_reader_load(lines, fm_end, dtype, vault=False):
                 out.append(Finding("lead-late", lead[0][1], f"{before} words come before the TLDR; put the answer first and method, sources or caveats after it", "warning"))
         else:
             first = next(((at, b) for k, at, b in lead if k == "para"), None)
-            if first and len(_sentences("\n".join(first[1]))) > 3:
+            if first and len(_sentences("\n".join(first[1]), cut=False)) > 3:
                 out.append(Finding("lead-long", first[0], "the opening paragraph has more than 3 sentences; open with a short answer (a [!tldr] callout of at most 60 words)", "warning"))
 
     # Opaque IDs, third person, sentence length, density.

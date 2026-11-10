@@ -727,3 +727,151 @@ def test_new_sentence_split_only_refines_the_old_one():
         assert new_words == old_words, text
         longest_old = max((len(wordy(s)) for s in old(text)), default=0)
         assert all(len(wordy(s)) <= longest_old for s in _sentences(text)), text
+
+
+# ── a cut happens only at a structural line ──────────────────────────────────
+# Found by an adversary pass on 2026-11-10. The first version cut after every
+# line that ended in a colon. The validator's own wrap rule breaks prose at 80
+# columns, so a long sentence passed whenever a wrap fell after a colon.
+
+COLON_WRAP = (
+    "The plan has three parts that we agreed on last week, and in order of cost:\n"
+    "the cache layer, the queue, and the retry loop that never stops running at\n"
+    "night in the busy region.\n"
+)
+
+
+def test_a_wrap_after_a_colon_does_not_end_the_sentence():
+    assert "prose-long" in codes(doc("Short lead.\n\n## S\n\n" + COLON_WRAP))
+
+
+def test_a_wrap_after_a_colon_in_a_list_item_or_a_callout_does_not_end_the_sentence():
+    item = "- " + words(17) + " cost:\n  " + words(16) + ".\n"
+    assert "prose-long" in codes(doc("Short lead.\n\n## S\n\n" + item))
+    callout = "> [!note] Title\n>\n> " + words(17) + " cost:\n> " + words(16) + ".\n"
+    assert "prose-long" in codes(doc("Short lead.\n\n## S\n\n" + callout))
+
+
+def test_inline_code_wrapped_after_a_colon_does_not_hide_the_next_sentence():
+    body = "Set `retry:\nmax=3` in the file. " + words(33) + " `x` end.\n"
+    assert "prose-long" in codes(doc("Short lead.\n\n## S\n\n" + body))
+
+
+def test_a_wrapped_line_that_starts_with_a_year_is_not_a_list_item():
+    # Only "1." can start a list inside a paragraph (CommonMark).
+    # 19 words, a wrap, then 14: over the limit only when read as one sentence.
+    body = words(18) + " in\n2019. " + words(14) + ".\n"
+    assert "prose-long" in codes(doc("Short lead.\n\n## S\n\n" + body))
+    # The same inside a callout, where the line continues the paragraph above it.
+    body = "> [!note] Title\n>\n> " + words(18) + " in\n> 2019. " + words(14) + ".\n"
+    assert "prose-long" in codes(doc("Short lead.\n\n## S\n\n" + body))
+
+
+def test_a_callout_list_that_starts_past_one_is_still_cut_at_each_item():
+    # No paragraph is open after the empty quote line, so "3." starts a list.
+    body = "> [!note] Title\n>\n" + "".join(f"> {i}. {words(9)}\n" for i in range(3, 8))
+    assert "prose-long" not in codes(doc("Short lead.\n\n## S\n\n" + body))
+
+
+def test_a_numbered_list_under_a_paragraph_is_still_cut_at_each_item():
+    body = words(10) + "\n" + "".join(f"{i}. {words(9)}\n" for i in range(1, 6))
+    assert "prose-long" not in codes(doc("Short lead.\n\n## S\n\n" + body))
+
+
+def test_a_callout_type_with_a_hyphen_does_not_join_its_body():
+    body = "> [!my-type] " + words(6) + "\n>\n> " + words(27) + ".\n"
+    assert "prose-long" not in codes(doc("Short lead.\n\n## S\n\n" + body))
+
+
+def test_lead_long_counts_sentences_as_it_did_before_the_split_changed():
+    # A label and its list under the H1 have no full stop: one sentence, as before.
+    assert "lead-long" not in codes(doc("Key points:\n- alpha\n- beta\n- gamma\n"))
+    # Three sentences, one of them wrapped after a colon.
+    lead = "First one here. The second has parts:\nthe cache and the queue. Third one.\n"
+    assert "lead-long" not in codes(doc(lead))
+    assert "lead-long" in codes(doc("One. Two. Three. Four.\n"))
+
+
+def _old_sentences(text):
+    import re
+    from check_doc import _plain
+    flat = " ".join(_plain(text).split())
+    return [x for x in re.split(r"(?<=[.!?])\s+", flat) if x.strip()]
+
+
+def test_text_with_no_structural_line_splits_exactly_as_before():
+    """Random wrapped prose with colons, inline code and years at line ends and
+    starts, but no list, callout title or image line: nothing may be cut."""
+    import random
+    from check_doc import _sentences
+
+    rng = random.Random(4522)
+    vocab = ["alpha", "beta", "gamma", "x1", "`a b:`", "`retry:", "max=3`", "2019.", "(see", "it)"]
+    ends = ["", "", "", "", ".", ":", "?", ";", ","]
+    for _ in range(2000):
+        lines = []
+        for _ in range(rng.randint(1, 7)):
+            toks = [rng.choice(vocab) + rng.choice(ends) for _ in range(rng.randint(1, 14))]
+            if not lines and toks[0] == "2019.":
+                toks[0] = "alpha"  # a number that opens the block does start a list
+            lines.append(rng.choice(["", "", "> ", "  "]) + " ".join(toks))
+        text = "\n".join(lines)
+        assert _sentences(text) == _old_sentences(text), text
+
+
+def test_cuts_match_a_reference_built_from_the_known_structure():
+    """Random blocks made of units whose kind the generator knows. The expected
+    result cuts before a list item, before and after a callout title, and at an
+    image line, and nowhere else; each group is then split as plain prose."""
+    import random
+    from check_doc import _sentences
+
+    rng = random.Random(20261110)
+    ends = ["", "", "", ".", ":", "?", ";"]
+    images = ["![[fig-1.png]]", "![alt text](a/b.png)", "> ![[x.png]]"]
+    titles = ["> [!note] ", "> [!my-type]- ", "> [!tip]+ "]
+
+    def tokens(n):
+        return [rng.choice(["alpha", "beta", "gamma", "x1", "`k: v`"]) + rng.choice(ends) for _ in range(n)]
+
+    def wrap(toks, first, rest, year_ok):
+        """Break toks over one to three lines; a later line may start with a year."""
+        out, cuts = [], sorted(rng.sample(range(1, len(toks)), min(len(toks) - 1, rng.randint(0, 2))))
+        for a, b in zip([0] + cuts, cuts + [len(toks)]):
+            part = toks[a:b]
+            if out and year_ok and rng.random() < 0.3:
+                part = ["2019."] + part
+            out.append((rest if out else first) + " ".join(part))
+        return out
+
+    for _ in range(1500):
+        groups, lines = [[]], []
+        number, ordered_seen, prev = 0, False, None
+        for _ in range(rng.randint(1, 8)):
+            kind = rng.choice(["para", "para", "quote", "bullet", "ordered", "quote_bullet", "title", "image"])
+            if kind == "image":
+                lines.append(rng.choice(images))
+                groups.append([])
+            elif kind == "title":
+                line = rng.choice(titles) + " ".join(tokens(rng.randint(0, 6)))
+                lines.append(line)
+                groups.extend([[line], []])
+            else:
+                number = number + 1 if kind == "ordered" and prev == "ordered" else 1
+                first, rest, year_ok = {
+                    "para": ("", "", not ordered_seen),
+                    "quote": ("> ", "> ", True),
+                    "bullet": ("- ", "  ", True),
+                    "ordered": (f"{number}. ", "   ", True),
+                    "quote_bullet": ("> - ", ">   ", True),
+                }[kind]
+                made = wrap(tokens(rng.randint(2, 14)), first, rest, year_ok)
+                if kind in ("bullet", "ordered", "quote_bullet"):
+                    groups.append([])
+                ordered_seen = ordered_seen or kind == "ordered"
+                lines.extend(made)
+                groups[-1].extend(made)
+            prev = kind
+        expected = [s for g in groups if g for s in _old_sentences("\n".join(g))]
+        text = "\n".join(lines)
+        assert _sentences(text) == expected, text
