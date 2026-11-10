@@ -63,7 +63,10 @@ mkdir -p "$SB_QUESTION_LOG_DIR"
 {
   line "$(now)" "/Users/x/vaults/Seano/Learning" "explain why the row space and the null space are perpendicular"
   echo 'this line is not json'
-  line "$(now)" "/Users/x/dev/purdue/ece695os" "how does the clock algorithm pick a victim page"
+  echo '{"ts":"2099-01-01T00:00:00Z","cwd":"/Users/x/dev/app","prompt":42}'
+  echo '{"ts":"2099-01-01T00:00:00Z","cwd":42,"prompt":["what is this list doing here in the log"]}'
+  echo '[1,2,3]'
+  jq -cn --arg ts "$(now)" '{ts:$ts, prompt:"how does the clock algorithm pick a victim page"}'
 } > "$SB_QUESTION_LOG_DIR/b.jsonl"
 before=$(cd "$SB_QUESTION_LOG_DIR" && cksum ./*.jsonl)
 out=$(bash "$SWEEP" 2>&1); rc=$?
@@ -71,6 +74,7 @@ out=$(bash "$SWEEP" 2>&1); rc=$?
 echo "$out" | grep -q "row space and the null space" && ok "lists a concept question from the last 7 days" || no "lists a concept question from the last 7 days" "$out"
 echo "$out" | grep -q "clock algorithm" && ok "reads every session log, and skips a malformed line" || no "reads every session log, and skips a malformed line" "$out"
 [ "$(echo "$out" | grep -c "row space and the null space")" = "1" ] && ok "lists a repeated question once" || no "lists a repeated question once" "$out"
+echo "$out" | grep -q "^[0-9-]*  -  how does the clock" && ok "shows - as the folder when a line has no cwd" || no "shows - as the folder when a line has no cwd" "$out"
 echo "$out" | grep -q "red-black" && no "omits a question older than --days" "$out" || ok "omits a question older than --days"
 echo "$out" | grep -q "idempotency" && no "omits temp-folder sessions" "$out" || ok "omits temp-folder sessions"
 echo "$out" | grep -q "fast mode" && no "omits slash commands" "$out" || ok "omits slash commands"

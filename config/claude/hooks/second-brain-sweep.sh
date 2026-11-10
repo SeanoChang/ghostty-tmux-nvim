@@ -42,11 +42,16 @@ concept='\b(what is|what'"'"'s|what are|how does|how do|how is|explain|help me u
     [ inputs
       | fromjson?
       | select(type == "object")
-      | select((.ts // "") >= $cutoff)
-      | .prompt = ((.prompt // "") | gsub("\\s+"; " ") | sub("^ "; "") | sub(" $"; ""))
+      # A field of the wrong type must drop its own line, not stop the sweep.
+      | select((.ts | type) == "string" and (.prompt | type) == "string")
+      | .cwd = (if (.cwd | type) == "string" then .cwd else "" end)
+      | select(.ts >= $cutoff)
+      # Only the first 400 characters are read: a pasted document can be megabytes,
+      # and a question states itself early.
+      | .prompt = (.prompt[0:400] | gsub("\\s+"; " ") | sub("^ "; "") | sub(" $"; ""))
       | select((.prompt | length) >= 15)
       | select(.prompt | startswith("/") | not)
-      | select((.cwd // "") | test("^(/private)?/tmp(/|$)|^(/private)?/var/folders/") | not)
+      | select(.cwd | test("^(/private)?/tmp(/|$)|^(/private)?/var/folders/") | not)
     ]
     | unique_by(.prompt)
     | sort_by(.ts)
@@ -54,5 +59,5 @@ concept='\b(what is|what'"'"'s|what are|how does|how do|how is|explain|help me u
     | ($kept | map(select($all == 1 or (.prompt | test($concept; "i"))))) as $shown
     | "Logged questions, last \($days) days: \($shown | length) shown of \($kept | length)"
       + (if $all == 1 then "" else " (concept-phrased only; --all lists the rest)" end),
-      ($shown[] | "\(.ts[0:10])  \((.cwd // "") | split("/") | last)  \(.prompt[0:200])")
+      ($shown[] | "\(.ts[0:10])  \(.cwd | split("/") | last // "-")  \(.prompt[0:200])")
   '

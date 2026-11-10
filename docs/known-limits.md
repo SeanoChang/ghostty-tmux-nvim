@@ -214,3 +214,51 @@ without an error.
   run in Chromium. One test makes the page behave like an engine that
   replaces the text node on each write, for the select-the-reply fallback.
 - Contrast of text on the semi-transparent inline-code background.
+
+## Skills review fixes (2026-11-10)
+
+Found by the reviewer of `claude/skills-review-fixes`, or known when the change
+was made. None blocks the change.
+
+### The sweep (`hooks/second-brain-sweep.sh`)
+
+- **It reads every project's prompts into the calling session.** That is its
+  job: a sweep across the week. The removed Stop hook listed one session only.
+  A prompt that held a pasted secret is shown again, cut to 200 characters.
+- **Only the first 400 characters of a prompt are read.** A concept phrase
+  after that point is not seen, and two prompts that share their first 400
+  characters count as one. Without the limit the sweep took 13 s on an 11 MB
+  log; with it, 0.5 s.
+- **The concept filter is a phrase list.** It over-matches ("what is the
+  status") and misses a question with no such phrase. `--all` shows the rest.
+- **The GNU `date -d` branch has no test.** Only BSD date runs on this machine.
+- **No session learns of the sweep from this repo.** The second-brain-obsidian
+  skill names it, and that skill lives in its own repository.
+
+### The validator (`writing-markdown-docs/scripts/check_doc.py`)
+
+- **A line that ends in a colon always ends a sentence.** A long sentence that
+  is hard-wrapped right after a colon is no longer flagged by `prose-long`.
+  Vault notes are never hard-wrapped, so this touches repo documents only.
+- **`lead-long` now counts each list item under an opening paragraph as a
+  sentence,** because it shares the sentence splitter. Over 1,954 vault files
+  this added 8 warnings and removed none.
+- **`reader-third` flags "the owner" and "the user" when they name a file
+  owner or an operating-system user.** Pre-existing. Three of three such
+  warnings on the OS lecture notes were false.
+- **No check that an image has a `Diagram as text` block under it,** although
+  SKILL.md requires one. Pre-existing. Seven of ten learning notes read on
+  2026-11-10 had images with no text version.
+- **A table inside a callout counts as prose.** Pre-existing.
+- **Learn-genre checks do not run on vault notes.** Pre-existing and by
+  design in `references/vault.md`; the 2026-11-10 diagnosis of the lecture
+  notes questions that design.
+
+### Skill and agent text
+
+- **The writing-markdown-docs description is 1,039 characters.** The Agent
+  Skills limit is 1,024. Claude Code 2.1.319 lists it in full. The
+  visual-artifacts description is 1,565 and the list cuts its last line.
+- **The builder rule to load the markdown skill is text only.** Nothing checks
+  that a subagent ran `check_doc.py`. A hook that runs it after each write was
+  offered on 2026-11-10 and declined.
