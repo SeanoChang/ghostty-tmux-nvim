@@ -119,10 +119,17 @@ repo with no `dev` branch or no CI.
 
 ## `config/claude/skills/brief-artifact`
 
-Reviewed on 2026-11-10 at commit `65ac836`.
+Reviewed on 2026-11-10 at commit `65ac836`. The adversary then found two
+Important breaks, both fixed: a `data:image` link passed the parser's own link
+check, and nesting past the parser's limit of 20 dropped the rest of the file
+without an error.
 
 ### By design
 
+- **A link target that is not `http`, `https`, `mailto:` or `#` stays as
+  text.** This includes relative paths. `[text]()` keeps its text and is not
+  a link.
+- **Nesting deeper than six lists or thirteen quotes is an error.**
 - **Answers are not kept across a reload**, and the page sends nothing back.
 - **No images, math, charts or raw HTML.** Raw HTML is shown as text.
 - **A callout inside a list item, and a lead of more than one paragraph, are
@@ -139,6 +146,15 @@ Reviewed on 2026-11-10 at commit `65ac836`.
 - **A build that fails leaves an earlier page at the output path.** The exit
   code is 1 and nothing new is written, but the old file can still be
   published by mistake.
+- **A pick-one answer cannot be cleared.** After a click, or after "Use
+  recommendations", a radio group has no way back to "(no answer)". The
+  reader can pick another option or write a note.
+- **A file that starts with a byte-order mark is refused with "found 0
+  titles".** It fails safe, but the message does not name the cause.
+- **A callout kind of 40 or more letters scrolls the page sideways at
+  320 px.** The six known kinds are short.
+- **`PYTHONIOENCODING=ascii` with a non-ASCII title ends in a traceback**
+  after the page is written. The default environment prints UTF-8.
 
 ### Not tested
 

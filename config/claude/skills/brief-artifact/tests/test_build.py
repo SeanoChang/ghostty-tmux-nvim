@@ -241,3 +241,117 @@ def test_random_sources_never_crash_and_never_leak_markup():
             assert d["kind"] in ("one", "many", "open")
             assert len(d["options"]) != 1
     assert built > 300 and refused > 100, (built, refused)
+
+
+# ------------------------------------------------------ links and deep nesting
+
+from html.parser import HTMLParser  # noqa: E402
+
+ALLOWED_HREF = re.compile(r"(https?://|mailto:|#)", re.I)
+
+
+def hrefs(page_html):
+    found = []
+
+    class Links(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            found.extend(value or "" for name, value in attrs if name == "href")
+
+    Links().feed(page_html)
+    return found
+
+
+@pytest.mark.parametrize("source", [
+    "![i](data:image/png;base64,AAAA)",
+    "[a](data:image/webp;base64,AA)",
+    "<DATA:image/png;base64,AA>",
+    "[a][r]\n\n[r]: data:image/gif;base64,R0",
+    "> [!note] [t](data:image/png;base64,AA)\n> body",
+    "[a](data:text/html,<b>x</b>)",
+    "[a](JaVaScRiPt:alert(1))",
+    "[a](vbscript:x)",
+    "[a](file:///etc/passwd)",
+    "<ftp://example.com/x>",
+    "[a](blob:https://example.com/1)",
+    "[a](docs/relative.md)",
+    "[a](//example.com/x)",
+    "[a]()",
+    "[a](<>)",
+])
+def test_a_link_that_is_not_web_mail_or_a_fragment_is_not_a_link(source):
+    page = build.build("# Two words\n\n" + source + "\n").html
+    assert hrefs(page) == [], source
+
+
+def test_web_mail_and_fragment_links_stay_links():
+    page = build.build("# Two words\n\n[a](https://example.com/x) <http://example.com> "
+                       "[m](mailto:a@example.com) [s](#part)\n").html
+    assert hrefs(page) == ["https://example.com/x", "http://example.com", "mailto:a@example.com", "#part"]
+    assert page.count('target="_blank"') == 2 and page.count('rel="noopener noreferrer"') == 2
+
+
+def test_random_link_targets_never_give_a_link_outside_the_allowed_kinds():
+    rng = random.Random(11)
+    schemes = ["data:image/png;base64,", "data:image/gif;base64,", "DATA:image/jpeg;base64,", "data:text/html,",
+               "javascript:", "JAVASCRIPT:", "vbscript:", "file:///", "blob:", "ftp://", "tel:", "sms:", "about:",
+               "chrome://", "view-source:", "ws://", "intent://", "https://", "http://", "mailto:", "#", "", "//",
+               "&#106;avascript:", "java\tscript:", "%6Aavascript:", " data:image/png;base64,", "x-custom:"]
+    rest = ["AAAA", "x.y/z", "alert(1)", "a@b.c", "R0lGOD", "", "a b", "a\"b", "a<b>", "a)b"]
+    shapes = ["[t]({u})", "<{u}>", "[t][r]\n\n[r]: {u}", "> [!note] [t]({u})\n> body", "![i]({u})",
+              "- **A** — [t]({u})\n- **B** — x", "| a |\n| - |\n| [t]({u}) |", "[t]({u} \"title\")", "## [t]({u})"]
+    links = 0
+    for _ in range(3000):
+        url = rng.choice(schemes) + rng.choice(rest)
+        source = "# Two words\n\n## ? Question\n\n" + rng.choice(shapes).format(u=url) + "\n"
+        try:
+            page = build.build(source).html
+        except build.BriefError:
+            continue
+        for href in hrefs(page):
+            links += 1
+            assert ALLOWED_HREF.match(href), (url, href)
+    assert links > 200
+
+
+TAIL = "\n## ? Tail question\n\n- **Yes** (recommended) — go\n- **No** — stop\n\nsentinel-after\n"
+
+
+def nested(kinds):
+    """One line per level; each level sits inside all the levels before it."""
+    lines, prefix = [], ""
+    for i, kind in enumerate(kinds):
+        lines.append(prefix + ("- " if kind == "list" else "> ") + f"word{i}x")
+        prefix += "  " if kind == "list" else "> "
+    return "# Two words\n\n" + "\n".join(lines) + "\n" + TAIL
+
+
+def test_nesting_past_the_limit_is_an_error_and_never_a_silent_cut():
+    # The adversary's case: a pasted tree ten lists deep dropped the decision after it.
+    with pytest.raises(build.BriefError) as err:
+        build.build(nested(["list"] * 10))
+    assert "nested" in str(err.value) and "line" in str(err.value)
+    for kinds in (["list"] * 6, ["quote"] * 13):
+        r = build.build(nested(kinds))
+        assert f"word{len(kinds) - 1}x" in r.html and len(r.decisions) == 1
+    for kinds in (["list"] * 7, ["quote"] * 14, ["quote"] * 30, ["list"] * 40):
+        with pytest.raises(build.BriefError):
+            build.build(nested(kinds))
+    # The script's own limit must sit below the parser's, where the parser cuts silently.
+    assert build.MAX_LEVEL < build.make_parser().options["maxNesting"]
+
+
+def test_random_nesting_either_keeps_every_word_or_is_refused():
+    rng = random.Random(23)
+    built = refused = 0
+    for _ in range(600):
+        kinds = [rng.choice(["list", "quote"]) for _ in range(rng.randint(1, 26))]
+        try:
+            r = build.build(nested(kinds))
+        except build.BriefError:
+            refused += 1
+            continue
+        built += 1
+        for i in range(len(kinds)):
+            assert f"word{i}x" in r.html, kinds
+        assert "sentinel-after" in r.html and [d["title"] for d in r.decisions] == ["Tail question"], kinds
+    assert built > 100 and refused > 100, (built, refused)

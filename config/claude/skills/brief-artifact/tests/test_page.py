@@ -335,3 +335,11 @@ def test_a_selected_option_differs_by_more_than_colour(browser):
     assert page.locator('#d1 input[value="B"]').is_checked()
     after = option.evaluate("e => getComputedStyle(e).boxShadow")
     assert before == "none" and re.search(r"inset", after)
+
+
+@pytest.mark.parametrize("kinds", [["quote"] * 13, ["list"] * 6, ["list", "quote"] * 4 + ["quote"]])
+def test_the_deepest_nesting_the_script_accepts_fits_a_320px_page(browser, kinds):
+    from test_build import nested
+    page = open_page(browser, build.build(nested(kinds)).html, width=320, height=700)
+    sizes = page.evaluate("[document.documentElement.scrollWidth, document.documentElement.clientWidth]")
+    assert sizes[0] <= sizes[1], (kinds, sizes)

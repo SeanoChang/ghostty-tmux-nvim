@@ -92,6 +92,14 @@ option is recommended, a "Use recommendations" button picks all of them.
 Not supported: images, raw HTML (it is shown as text), math and charts. A page
 that needs those is a visual-artifacts page.
 
+Two limits protect the page from pasted material:
+
+- A link works only when its target starts with `http://`, `https://`,
+  `mailto:` or `#`. Any other target, a relative path included, stays as text.
+- Lists nest to six levels and quotes to thirteen. Deeper nesting is an error,
+  because the parser would drop the rest of the file. Put a pasted tree in a
+  code block.
+
 ## Writing a brief
 
 - **Decisions first, evidence after.** He opens the page to answer. Put only

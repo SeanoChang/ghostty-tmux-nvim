@@ -41,6 +41,13 @@ except ImportError:  # pragma: no cover - environment problem, not logic
 WORD_LIMIT = 900        # prose words; above this the page is a report, not a brief
 DECISION_LIMIT = 6
 KEYS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+# A link is kept only when it goes to the web, to mail, or to a place on the
+# page. Everything else (data:, file:, blob:, a relative path) stays text.
+ALLOWED_LINK = re.compile(r"(?:https?://|mailto:|#)", re.I)
+# The deepest container (list item or quote) the script accepts: six lists or
+# thirteen quotes. markdown-it stops parsing at its own limit of 20 and drops
+# the rest of the file without an error, so this limit must stay below it.
+MAX_LEVEL = 14
 CALLOUTS = {"note": "Note", "tip": "Tip", "important": "Important",
             "warning": "Warning", "caution": "Caution", "done": "Done"}
 
@@ -93,7 +100,12 @@ def _table_close(self, tokens, idx, options, env):
 
 def _link_open(self, tokens, idx, options, env):
     href = tokens[idx].attrGet("href") or ""
-    if re.match(r"https?://", href, re.I):
+    if not ALLOWED_LINK.match(href):
+        # The second check, at the one place every link is written. It also
+        # catches `[text]()`: an empty target would reload the page and lose
+        # the answers. The text stays; it is not a link.
+        tokens[idx].attrs = {}
+    elif re.match(r"https?://", href, re.I):
         tokens[idx].attrSet("target", "_blank")
         tokens[idx].attrSet("rel", "noopener noreferrer")
     return self.renderToken(tokens, idx, options, env)
@@ -101,8 +113,10 @@ def _link_open(self, tokens, idx, options, env):
 
 def make_parser():
     # html off: raw HTML in the source is shown as text. image off: the page
-    # loads nothing. markdown-it itself refuses javascript: and data: links.
+    # loads nothing. The link check is an allow-list: markdown-it's own check
+    # is a deny-list, and it lets data:image/... through on purpose.
     md = MarkdownIt("commonmark", {"html": False}).enable(["table", "strikethrough"]).disable(["image"])
+    md.validateLink = lambda url: bool(ALLOWED_LINK.match(url))
     md.add_render_rule("table_open", _table_open)
     md.add_render_rule("table_close", _table_close)
     md.add_render_rule("link_open", _link_open)
@@ -148,7 +162,12 @@ class Builder:
     def __init__(self, source):
         self.md = make_parser()
         self.env = {}
-        self.blocks = split_blocks(self.md.parse(source, self.env))
+        tokens = self.md.parse(source, self.env)
+        for token in tokens:
+            if token.type in ("list_item_open", "blockquote_open") and token.level + 1 >= MAX_LEVEL:
+                raise BriefError(f"line {line_of(token)}: nested too deep (the limit is six list levels or "
+                                 "thirteen quote levels). Flatten it, or put a tree in a code block")
+        self.blocks = split_blocks(tokens)
         self.warnings = []
         self.decisions = []
 
