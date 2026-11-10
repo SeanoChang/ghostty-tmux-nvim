@@ -1071,7 +1071,8 @@
       if (t.touches.length) out.push('Touches: ' + t.touches.map(blkName).join(', '));
       $$('dl.task-spec > dt', t.el).forEach(dt => {
         const dd = dt.nextElementSibling; if (!dd || dd.tagName !== 'DD') return;
-        const label = md(dt), figs = $$(':scope > .fig.codeblock', dd);
+        // The verify row is the Done line of the eight-line agent brief.
+        const label = dd.dataset.part === 'verify' ? 'Done' : md(dt), figs = $$(':scope > .fig.codeblock', dd);
         if (figs.length) { out.push(`${label}:`, ...figs.map(codeMd)); return; }
         const pre = $('pre', dd);
         if (pre) {
@@ -1081,6 +1082,9 @@
         const items = $$('li', dd).length ? $$('li', dd) : $$('code', dd);
         out.push(items.length > 1 ? `${label}:\n` + items.map(i => '- ' + md(i)).join('\n') : `${label}: ${md(dd)}`);
       });
+      // The last two lines of the brief are the same for every task.
+      out.push('Do not: ask questions, start agents, or run a command that needs approval. Report it instead.',
+        'Return: five short lines: Result, Changes, Evidence (the check output), Not covered, Open.');
       return out.join('\n\n');
     }
     const briefAll = () => `# ${document.title || 'Plan'} · tasks\n\n` + tasks.map(t => brief(t.id)).join('\n\n---\n\n');

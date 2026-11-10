@@ -369,15 +369,23 @@ def test_the_plan_template_uses_the_one_theme(browser, scheme, bg):
 
 
 # ── plan pages ──────────────────────────────────────────────────────────────
+# Every agent brief ends with these two lines of the eight-line brief (CLAUDE.md, Delegation).
+BRIEF_TAIL = [
+    "Do not: ask questions, start agents, or run a command that needs approval. Report it instead.",
+    "Return: five short lines: Result, Changes, Evidence (the check output), Not covered, Open.",
+]
+
+
 def task(n, title, touches, files, state="", deps="", extra=""):
     attrs = f' data-state="{state}"' * bool(state) + f' data-deps="{deps}"' * bool(deps)
     code = "".join(f"<li><code>{f}</code></li>" for f in files)
     return f"""<li class="task" id="task-{n}" data-task="{n}"{attrs} data-touches="{touches}">
   <div class="task-head"><span class="task-num">{n}</span><h3 class="task-title">{title}</h3></div>
   <p class="task-goal">Goal of task {n}.</p>
-  <dl class="task-spec"><dt>Files</dt><dd data-part="files"><ul>{code}</ul></dd>{extra}
+  <dl class="task-spec"><dt>Tier</dt><dd>1</dd><dt>Files</dt><dd data-part="files"><ul>{code}</ul></dd>{extra}
     <dt>Test first</dt><dd data-part="test">Test{n}: it works</dd>
-    <dt>Verify</dt><dd data-part="verify"><code>go test ./t{n}/</code></dd></dl>
+    <dt>Verify</dt><dd data-part="verify"><code>go test ./t{n}/</code></dd>
+    <dt>Budget</dt><dd>30 min</dd></dl>
 </li>"""
 
 
@@ -511,10 +519,13 @@ def test_task_brief_is_markdown_an_agent_can_use(browser):
         "Goal: Goal of task 4.",
         "Depends on: Task 1, Task 2",
         "Touches: cubit CLI, delegation tracker",
+        "Tier: 1",
         "Files:\n- `cubit/cmd/delegate.go`\n- `cubit/internal/delegation/delegation.go`",
         "Interface:\n```go\nfunc runDelegate(to []string, task string) (Delegation, error)\n```",
         "Test first: Test4: it works",
-        "Verify: `go test ./t4/`",
+        "Done: `go test ./t4/`",
+        "Budget: 30 min",
+        *BRIEF_TAIL,
     ])
     full = pg.evaluate("p.briefAll()")
     assert full.index("## Task 1:") < full.index("## Task 5:")
@@ -996,11 +1007,14 @@ def test_the_brief_carries_each_key_change_as_a_fenced_block(browser):
         "    r.Use(middleware.RateLimit(l, rt))\n    r.Handle(\"/\", proxy)\n}\n```\n- Line 31 · Warning: Order matters it must run before the proxy.",
         "`internal/ratelimit/limiter.go` · sketch · Fail open\n```go\nd, err := l.Take(ctx, key, 1)\nif err != nil {\n"
         "    return Decision{Allowed: true}, nil\n}\n```\n- Line 41 · Risk: Fail open. A Redis outage lets requests through.",
+        *BRIEF_TAIL,
     ])), b3
+    assert "\n\nDone: `go test ./gateway/`\n\n" in b3 and "Verify:" not in b3, b3
     b5 = pg.evaluate("p.brief(5)")
     assert b5.endswith("Key change:\n\n`gateway/middleware/ratelimit.go` · diff\n```diff\n@@ -10,3 +10,4 @@\n     d, err := l.Take(ctx, key, 1)\n"
                        "-    if !d.Allowed { w.WriteHeader(429) }\n+    if !d.Allowed {\n+        w.Header().Set(\"Retry-After\", secs(d.RetryAfter))\n     }\n```\n"
-                       "- Line 12 · Note: Rounds up 1.2 s becomes 2.\n- Old line 11 · Risk: Old line sent no header."), b5
+                       "- Line 12 · Note: Rounds up 1.2 s becomes 2.\n- Old line 11 · Risk: Old line sent no header.\n\n"
+                       + "\n\n".join(BRIEF_TAIL)), b5
 
 
 @pytest.mark.slow

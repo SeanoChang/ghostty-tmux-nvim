@@ -247,10 +247,12 @@ the legend. A row's place links to the claim or code block that shows it.
   <div class="task-head"><span class="task-num">3</span><h3 class="task-title">Limiter middleware in the gateway</h3></div>
   <p class="task-goal">Ask the limiter before the proxy runs. Fail open if Redis does not answer in 50 ms.</p>
   <dl class="task-spec">
+    <dt>Tier</dt><dd>2</dd>
     <dt>Files</dt><dd data-part="files"><ul><li><code>gateway/middleware/ratelimit.go</code></li></ul></dd>
     <dt>Interface</dt><dd><pre><code class="language-go">func RateLimit(l ratelimit.Limiter, routes RouteTable) func(http.Handler) http.Handler</code></pre></dd>
     <dt>Test first</dt><dd data-part="test"><code>TestLimitedRequestNeverReachesUpstream</code>: with an empty bucket, upstream sees 0 calls.</dd>
     <dt>Verify</dt><dd data-part="verify"><code>go test ./gateway/... -run RateLimit</code></dd>
+    <dt>Budget</dt><dd>40 min</dd>
     <dt>Key change</dt><dd data-part="code" data-code="code-router">
       <figure class="fig codeblock" id="code-ratelimit">…a sketch of RateLimit, 12 lines, with pins…</figure>
     </dd>
@@ -320,6 +322,8 @@ Depends on: Task 1, Task 2
 
 Touches: API gateway, rate limiter
 
+Tier: 2
+
 Files:
 - `gateway/middleware/ratelimit.go`
 - `gateway/router.go`
@@ -331,7 +335,9 @@ func RateLimit(l ratelimit.Limiter, routes RouteTable) func(http.Handler) http.H
 
 Test first: `TestLimitedRequestNeverReachesUpstream`: with an empty bucket, upstream sees 0 calls.
 
-Verify: `go test ./gateway/... -run RateLimit`
+Done: `go test ./gateway/... -run RateLimit`
+
+Budget: 40 min
 
 Key change:
 
@@ -346,7 +352,17 @@ Key change:
  }
 ```
 - Line 30 · Warning: Order matters. After auth, so the key is known. Before the proxy, so upstream never sees a limited request.
+
+Do not: ask questions, start agents, or run a command that needs approval. Report it instead.
+
+Return: five short lines: Result, Changes, Evidence (the check output), Not covered, Open.
 ~~~
+
+The copy is the eight-line brief of the global rules (CLAUDE.md, Delegation):
+Goal, Tier, Files, Done, Context, Budget, Do not, Return. Write a `Tier` row
+and a `Budget` row in each task's `dl.task-spec`; the `Verify` row is copied
+as `Done`; Depends on, Touches, Interface, Test first and Key change are the
+Context; the last two lines are added to every brief.
 
 The code comes as written, with no line numbers; a diff keeps its signs and
 `@@` headers. Each pin follows as a bullet with its line and tone word.

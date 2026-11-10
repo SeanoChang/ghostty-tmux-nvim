@@ -355,10 +355,12 @@ type Decision struct {
           <div class="task-head"><span class="task-num">1</span><h3 class="task-title">Token bucket in Redis</h3></div>
           <p class="task-goal">Take tokens atomically, so two replicas can never spend the same token.</p>
           <dl class="task-spec">
+            <dt>Tier</dt><dd>2</dd>
             <dt>Files</dt><dd data-part="files"><ul><li><code>internal/ratelimit/limiter.go</code></li><li><code>internal/ratelimit/take.lua</code></li><li><code>internal/ratelimit/limiter_test.go</code></li></ul></dd>
             <dt>Interface</dt><dd><code>Take(ctx, key, cost) (Decision, error)</code></dd>
             <dt>Test first</dt><dd data-part="test"><code>TestTakeIsAtomicUnderConcurrency</code>: 200 goroutines take from a bucket of 100; exactly 100 succeed.</dd>
             <dt>Verify</dt><dd data-part="verify"><code>go test ./internal/ratelimit/ -race</code></dd>
+            <dt>Budget</dt><dd>30 min</dd>
             <dt>Key change</dt><dd data-part="code" data-code="code-take">
               <figure class="fig codeblock" id="code-take-test">
                 <div class="fig-head"><div><p class="fig-kicker">Sketch · internal/ratelimit/limiter_test.go</p><h3 class="fig-title">Exactly 100 of 200 takes succeed</h3></div></div>
@@ -388,9 +390,11 @@ type Decision struct {
           <div class="task-head"><span class="task-num">2</span><h3 class="task-title">Per-route limits in config</h3></div>
           <p class="task-goal">Load rate and burst per route, and reject a config with a missing value.</p>
           <dl class="task-spec">
+            <dt>Tier</dt><dd>1</dd>
             <dt>Files</dt><dd data-part="files"><ul><li><code>config/routes.yaml</code></li><li><code>internal/ratelimit/limiter.go</code></li></ul></dd>
             <dt>Test first</dt><dd data-part="test"><code>TestRouteWithoutBurstIsRejected</code>: loading fails and names the route.</dd>
             <dt>Verify</dt><dd data-part="verify"><code>go test ./config/ ./internal/ratelimit/</code></dd>
+            <dt>Budget</dt><dd>30 min</dd>
             <dt>Key change</dt><dd data-part="code">
               <figure class="fig codeblock" id="code-routes">
                 <div class="fig-head"><div><p class="fig-kicker">Diff · config/routes.yaml</p><h3 class="fig-title">Each route gets a rate and a burst</h3></div></div>
@@ -425,10 +429,12 @@ type Decision struct {
           <div class="task-head"><span class="task-num">3</span><h3 class="task-title">Limiter middleware in the gateway</h3></div>
           <p class="task-goal">Ask the limiter before the proxy runs. Fail open if Redis does not answer in 50 ms.</p>
           <dl class="task-spec">
+            <dt>Tier</dt><dd>2</dd>
             <dt>Files</dt><dd data-part="files"><ul><li><code>gateway/middleware/ratelimit.go</code></li><li><code>gateway/router.go</code></li></ul></dd>
             <dt>Interface</dt><dd><pre><code class="language-go">func RateLimit(l ratelimit.Limiter, routes RouteTable) func(http.Handler) http.Handler</code></pre></dd>
             <dt>Test first</dt><dd data-part="test"><code>TestLimitedRequestNeverReachesUpstream</code>: with an empty bucket, the upstream fake sees 0 calls.</dd>
             <dt>Verify</dt><dd data-part="verify"><code>go test ./gateway/... -run RateLimit</code></dd>
+            <dt>Budget</dt><dd>30 min</dd>
             <dt>Key change</dt><dd data-part="code" data-code="code-router">
               <figure class="fig codeblock" id="code-ratelimit">
                 <div class="fig-head"><div><p class="fig-kicker">Sketch · gateway/middleware/ratelimit.go</p><h3 class="fig-title">Ask the limiter; fail open after 50 ms</h3></div></div>
@@ -456,9 +462,11 @@ type Decision struct {
           <div class="task-head"><span class="task-num">4</span><h3 class="task-title">Allowed and limited counters</h3></div>
           <p class="task-goal">Count every decision per route, so a dashboard can show who hits the limit.</p>
           <dl class="task-spec">
+            <dt>Tier</dt><dd>1</dd>
             <dt>Files</dt><dd data-part="files"><ul><li><code>gateway/metrics/ratelimit.go</code></li></ul></dd>
             <dt>Test first</dt><dd data-part="test"><code>TestDecisionsAreCountedPerRoute</code>: 3 allowed and 1 limited give counters of 3 and 1.</dd>
             <dt>Verify</dt><dd data-part="verify"><code>go test ./gateway/metrics/</code></dd>
+            <dt>Budget</dt><dd>30 min</dd>
             <dt>Key change</dt><dd data-part="code">
               <figure class="fig codeblock" id="code-metrics">
                 <div class="fig-head"><div><p class="fig-kicker">Sketch · gateway/metrics/ratelimit.go</p><h3 class="fig-title">One counter, two labels</h3></div></div>
@@ -483,9 +491,11 @@ func Observe(route string, d ratelimit.Decision) {
           <div class="task-head"><span class="task-num">5</span><h3 class="task-title">429 response and headers</h3></div>
           <p class="task-goal">Send Retry-After on 429 and RateLimit-Remaining on every response.</p>
           <dl class="task-spec">
+            <dt>Tier</dt><dd>0</dd>
             <dt>Files</dt><dd data-part="files"><ul><li><code>gateway/middleware/ratelimit.go</code></li></ul></dd>
             <dt>Test first</dt><dd data-part="test"><code>TestRetryAfterRoundsUp</code>: a refill in 1.2 s gives <code>Retry-After: 2</code>.</dd>
             <dt>Verify</dt><dd data-part="verify"><code>go test ./gateway/middleware/ -run Retry</code></dd>
+            <dt>Budget</dt><dd>30 min</dd>
             <dt>Key change</dt><dd data-part="code" data-code="code-429"></dd>
           </dl>
         </li>
@@ -493,9 +503,11 @@ func Observe(route string, d ratelimit.Decision) {
           <div class="task-head"><span class="task-num">6</span><h3 class="task-title">Remove the IP blocklist</h3></div>
           <p class="task-goal">Delete the old middleware after per-key limits run in production for a week.</p>
           <dl class="task-spec">
+            <dt>Tier</dt><dd>1</dd>
             <dt>Files</dt><dd data-part="files"><ul><li><code>gateway/middleware/ipblock.go</code></li><li><code>gateway/router.go</code></li></ul></dd>
             <dt>Test first</dt><dd data-part="test"><code>TestRouterHasNoIPBlock</code>: the middleware chain no longer lists ipblock.</dd>
             <dt>Verify</dt><dd data-part="verify"><code>go test ./gateway/... &amp;&amp; go vet ./gateway/...</code></dd>
+            <dt>Budget</dt><dd>30 min</dd>
             <dt>Key change</dt><dd data-part="code">
               <figure class="fig codeblock" id="code-unblock">
                 <div class="fig-head"><div><p class="fig-kicker">Diff · gateway/router.go</p><h3 class="fig-title">The blocklist leaves the chain</h3></div></div>
