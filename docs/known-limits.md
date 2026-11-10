@@ -138,7 +138,10 @@ repo with no `dev` branch or no CI.
 - **The agent judges whether a repo "integrates on another branch".** When it
   cannot tell, the rule says not to create `dev` and to list the task under
   "Blocked on me". With `dev` and `develop` both present, the rule takes
-  `dev`, which can be the stale one.
+  `dev`, which can be the stale one. The same holds for an abandoned `dev` in
+  a repo that now integrates on a branch with another name: the rule picks
+  `dev` by its name, and the gate accepts it. The work lands on a branch that
+  is not a release branch, so it can be recovered.
 - **Three cases in the no-CI rule are left to one sensible reading:** a PR
   that adds the first workflow can turn its own check green, and only "I
   merge the first workflow" stops the agent from merging it; a repo whose CI
