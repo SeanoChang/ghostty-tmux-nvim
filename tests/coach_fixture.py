@@ -146,5 +146,15 @@ def build(folder):
     return folder
 
 
+def export_starter(repo, folder):
+    """Unpack the starter commit into `folder`, for a session that has no shell
+    and so cannot ask git what the course gave out."""
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    for name in git(repo, "ls-tree", "-r", "--name-only", "starter").split():
+        (folder / name).write_text(git(repo, "show", f"starter:{name}"))
+    return folder
+
+
 if __name__ == "__main__":
     print(build(sys.argv[1]))

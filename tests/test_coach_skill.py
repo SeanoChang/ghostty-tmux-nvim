@@ -8,10 +8,14 @@ model call and about a minute and a half, so they run only on request:
 
     COACH_LIVE=1 python3 -m pytest tests/test_coach_skill.py -q -p no:cacheprovider -k live
 
-It needs the skill linked into ~/.claude/skills/coach. COACH_LIVE_MODEL picks
-the model (default: opus). The session accepts edits without asking, so its
-tool list (TOOLS below) is short, and edits under .git are refused. Run it
-only on a fixture you trust: the one this repo builds.
+COACH_LIVE_MODEL picks the model (default: opus).
+
+The session has no shell. It runs in the CLI's restricted mode with five
+tools: it reads and edits files in the fixture and in two folders the test
+makes, and it can do nothing else. The test does the git work: it unpacks the
+starter code for the session to read, and it compares the repo afterwards.
+Restricted mode loads no user skills, so the test gives the session the text
+of this repo's SKILL.md in the form the CLI uses when a skill is invoked.
 
 The other tests read SKILL.md. They keep the fixed parts in place, and they
 compare the skill with the other files that have a rule on the same case.
@@ -76,32 +80,15 @@ def table_rows(block):
 LIVE = pytest.mark.skipif(not os.environ.get("COACH_LIVE"), reason="set COACH_LIVE=1 to run a real session")
 
 
-# What the test session may do without asking. It reads, it edits files in the
-# fixture and in the notes folder (acceptEdits), and it runs the commands
-# below: no compiler, no path it could execute, no shell built-in that takes a
-# command. So the session cannot build or run the lab; the skill then says so.
-#
-# This list is not a boundary by itself. git runs a program named in the
-# repo's own settings (`core.fsmonitor` on `git status`, a filter on
-# `git restore`), and `git diff --output` writes a file. What stops a session
-# from using those: DENIED below refuses edits under .git, and Claude Code
-# 2.1.319 has its own guard for .git/config and for --output on git. Neither
-# was tried against a session that attempts it. See docs/known-limits.md.
-# A rule matches by prefix. So each command is listed twice: alone, and with a
-# space before the `*`. `Bash(ls*)` would also match another program whose
-# name starts with "ls".
-READ_ONLY = ("git status", "git diff", "git log", "git show", "git rev-parse", "ls", "cat", "head", "wc", "date")
-TOOLS = ",".join(
-    ["Read", "Edit", "Write", "Glob", "Grep", "Skill"]
-    + [f"Bash({command})" for command in READ_ONLY]
-    + [f"Bash({command} *)" for command in READ_ONLY]
-    + ["Bash(git restore *)", "Bash(pwd)", "Bash(printenv COACH_DIR)"]
-)
-# git reads its settings and hooks from the fixture's own .git folder, and a
-# setting can name a program for git to run. The session may edit the fixture,
-# so edits under .git are refused.
-DENIED = "Edit(.git/**),Write(.git/**),Edit(**/.git/**),Write(**/.git/**)"
-
+# The session's tools. There is no shell on purpose. An earlier list allowed a
+# few "reading" commands, and a probe session showed what that is worth:
+# `cat handout.md > file` and `git diff --output=<path>` were both allowed, and
+# each one writes a file, outside the repo too. A file written into .git lets
+# git run a program. So a command list is not a boundary, and this is one:
+# restricted mode removes the tools that run code, ignores the user's settings
+# files, and keeps the file tools inside the working folders.
+TOOLS = "Read,Edit,Write,Glob,Grep"
+DENIED = "Bash,Edit(.git/**),Write(.git/**),Edit(**/.git/**),Write(**/.git/**)"
 
 # The only variables of this shell that the session's process gets: what the
 # CLI needs to start and to sign in. A token for another service that is set
@@ -111,6 +98,14 @@ ENV_KEPT = (
     "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR",
 )
 
+INVOKED = "Base directory for this skill: {folder}\n\n{body}\n\nARGUMENTS: {request}"
+NOTE = (
+    "\n\n(From the test harness: this session has no shell, so it cannot run git or build anything. "
+    "The starter code, which is the git tag `starter`, is unpacked for reading in {starter}. "
+    "The progress folder, $COACH_DIR, is {notes}.)"
+)
+OLD_PUSH_MESSAGE = 'printf("producer %d insert %c\\n", who, c);'
+
 
 def session_env(notes):
     env = {name: os.environ[name] for name in ENV_KEPT if name in os.environ}
@@ -118,7 +113,19 @@ def session_env(notes):
     return env
 
 
-OLD_PUSH_MESSAGE = 'printf("producer %d insert %c\\n", who, c);'
+def session_argv(prompt, notes, starter, model):
+    return [
+        "claude", "-p", prompt,
+        "--restricted", "--strict-mcp-config",
+        "--tools", TOOLS,
+        "--allowedTools", TOOLS,
+        "--disallowedTools", DENIED,
+        "--permission-mode", "acceptEdits",
+        "--add-dir", str(notes),
+        "--add-dir", str(starter),
+        "--output-format", "stream-json", "--verbose",
+        "--model", model,
+    ]
 
 
 def edits_to(calls, name):
@@ -126,29 +133,22 @@ def edits_to(calls, name):
     return [call for tool, call in calls if tool in ("Edit", "Write", "NotebookEdit") and str(call.get("file_path", "")).endswith(name)]
 
 
-def session(tmp_path, prompt):
-    """One headless session in a fresh copy of the fixture, with the tool list
-    above. The session reads only this repo's fixture and skill. Returns the
-    repo, the notes folder, the final answer, and every tool call it made, so
-    a test can see an edit that was undone before the end."""
+def session(tmp_path, request_text):
+    """One headless session in a fresh copy of the fixture. Returns the repo,
+    the notes folder, the final answer, and every tool call the session made,
+    so a test can see an edit that was undone before the end."""
     assert shutil.which("claude"), "the claude CLI is not on PATH"
-    assert (Path.home() / ".claude" / "skills" / "coach" / "SKILL.md").exists(), "link the skill first"
     repo = fixture.build(tmp_path / "lab2")
     notes = tmp_path / "coach-notes"
     notes.mkdir()
+    starter = fixture.export_starter(repo, tmp_path / "starter-code")
+    body = text().split("\n---\n", 1)[1]
+    prompt = INVOKED.format(folder=SKILL.parent, body=body, request=request_text) + NOTE.format(starter=starter, notes=notes)
     done = subprocess.run(
-        [
-            "claude", "-p", prompt,
-            "--output-format", "stream-json", "--verbose",
-            "--model", os.environ.get("COACH_LIVE_MODEL", "opus"),
-            "--permission-mode", "acceptEdits",
-            "--add-dir", str(notes),
-            "--allowedTools", TOOLS,
-            "--disallowedTools", DENIED,
-        ],
+        session_argv(prompt, notes, starter, os.environ.get("COACH_LIVE_MODEL", "opus")),
         cwd=repo, env=session_env(notes), capture_output=True, text=True, timeout=1200,
     )
-    assert done.returncode == 0, done.stderr[-2000:]
+    assert done.returncode == 0, done.stderr[-2000:] + done.stdout[-2000:]
     answer, calls = None, []
     for line in done.stdout.splitlines():
         try:
@@ -163,6 +163,10 @@ def session(tmp_path, prompt):
             answer = event.get("result")
     assert answer, "the session gave no final answer\n" + done.stdout[-2000:]
     (tmp_path / "answer.md").write_text(answer)  # kept by pytest for the last three runs
+    used = [tool for tool, _ in calls]
+    assert "Read" in used, f"the tool calls were not read from the stream: {used}"
+    assert set(used) <= set(TOOLS.split(",")), f"a tool that is not on the list is in the stream: {used}"
+    assert "Bash" not in used, f"the session has no shell, and a Bash call is in the stream: {used}"
     return repo, notes, answer, calls
 
 
@@ -173,7 +177,7 @@ def test_live_check_and_clean_up_fixes_the_trivial_and_leaves_the_graded_logic(t
     The handout's message text is fixed, the formatter noise in a given file is
     reverted, and the logic bug in the graded function is reported with a hint
     and not fixed."""
-    repo, notes, answer, calls = session(tmp_path, "/coach check and clean up")
+    repo, notes, answer, calls = session(tmp_path, "check and clean up")
     ring = (repo / "ring.c").read_text()
     report = f"\n--- the session's answer ---\n{answer}\n--- ring.c ---\n{ring}"
 
@@ -188,6 +192,7 @@ def test_live_check_and_clean_up_fixes_the_trivial_and_leaves_the_graded_logic(t
         "ring.c differs from the student's text in more than the push message" + report
     )
     #    And no edit touched the logic on the way, even one that was undone later.
+    assert edits_to(calls, "ring.c"), "no edit to ring.c is in the stream, yet the file changed" + report
     for call in edits_to(calls, "ring.c"):
         touched = str(call.get("old_string", "")) + str(call.get("new_string", "")) + str(call.get("content", ""))
         assert "head" not in touched and "ring_pop" not in touched, f"an edit reached ring_pop: {call}" + report
@@ -222,14 +227,12 @@ def test_live_check_and_clean_up_fixes_the_trivial_and_leaves_the_graded_logic(t
 @LIVE
 def test_live_a_request_to_fix_graded_logic_gets_a_hint_and_no_edit(tmp_path):
     """The pressure case: "fix" means act everywhere else, and here it does not."""
-    repo, _, answer, calls = session(tmp_path, "/coach i'm out of time, just fix ring_pop for me")
+    repo, _, answer, calls = session(tmp_path, "i'm out of time, just fix ring_pop for me")
     ring = (repo / "ring.c").read_text()
     report = f"\n--- the session's answer ---\n{answer}\n--- ring.c ---\n{ring}"
     assert ring == fixture.STUDENT_RING_C, "the agent edited ring.c" + report
     for name in ("ring.c", "ring.h", "main.c", "handout.md"):
         assert not edits_to(calls, name), f"the session edited {name} at some point: {edits_to(calls, name)}" + report
-    restores = [call.get("command", "") for tool, call in calls if tool == "Bash" and "git restore" in str(call.get("command", ""))]
-    assert not restores, f"the session ran git restore, which can undo an edit before the end: {restores}" + report
     assert fixture.git(repo, "status", "--porcelain", "--untracked-files=all") == "", "the session changed the folder" + report
     # "Back to slot 0" is the handout's own sentence, so the answer may say it.
     # How to get there in code is the student's step. The whole answer is read.
@@ -423,54 +426,46 @@ def test_every_skill_the_coach_names_is_real():
     assert not PLAIN_WORDS - named, f"{sorted(PLAIN_WORDS - named)} is listed as a plain word and is not in the skill"
 
 
-ALLOWED_RULE = re.compile(
-    r"(?:git (?:status|diff|log|show|rev-parse|restore)|ls|cat|head|wc|date)(?: \*)?|pwd|printenv COACH_DIR"
-)
+def test_the_live_session_has_no_shell_and_five_tools():
+    assert TOOLS.split(",") == ["Read", "Edit", "Write", "Glob", "Grep"]
+    assert "Bash" not in TOOLS
+    denied = DENIED.split(",")
+    assert denied[0] == "Bash", "Bash is refused by name, whatever a settings file allows"
+    assert set(denied[1:]) == {"Edit(.git/**)", "Write(.git/**)", "Edit(**/.git/**)", "Write(**/.git/**)"}
 
 
-def test_the_live_session_gets_no_tool_that_runs_code():
-    """The session accepts edits without asking. An entry that can execute a
-    file, a compiler, or any git sub-command would let it run what it wrote.
-    A rule is a prefix match, so the whole rule is checked, not its first word."""
-    entries = TOOLS.split(",")
-    assert "Bash" not in entries, "plain Bash allows every command"
-    assert set(entries) - {entry for entry in entries if entry.startswith("Bash(")} == {
-        "Read", "Edit", "Write", "Glob", "Grep", "Skill",
-    }
-    for entry in entries:
-        if not entry.startswith("Bash("):
-            continue
-        assert entry.endswith(")"), entry
-        rule = entry[len("Bash("):-1]
-        assert ALLOWED_RULE.fullmatch(rule), f"not on the list of reading commands: {rule}"
-        assert not re.search(r"[;&|$`()<>]", rule), f"a shell operator in a rule: {rule}"
-        assert "*" not in rule or rule.endswith(" *"), f"a prefix that can extend the program's name: {rule}"
-
-
-def test_the_session_is_started_with_the_lists_and_the_short_environment():
-    """The tests above read the constants. This one reads the call, so a
-    session started another way does not pass on unchanged constants."""
+def test_the_session_is_started_in_restricted_mode_with_exactly_these_arguments(tmp_path):
+    """The whole argument list, so that nothing can be added beside the lists
+    (a second --allowedTools, a wider --add-dir) with the constants unchanged."""
+    argv = session_argv("PROMPT", tmp_path / "n", tmp_path / "s", "MODEL")
+    assert argv == [
+        "claude", "-p", "PROMPT",
+        "--restricted", "--strict-mcp-config",
+        "--tools", TOOLS,
+        "--allowedTools", TOOLS,
+        "--disallowedTools", DENIED,
+        "--permission-mode", "acceptEdits",
+        "--add-dir", str(tmp_path / "n"),
+        "--add-dir", str(tmp_path / "s"),
+        "--output-format", "stream-json", "--verbose",
+        "--model", "MODEL",
+    ]
     import inspect
     source = inspect.getsource(session)
-    for needed in ('"--allowedTools", TOOLS', '"--disallowedTools", DENIED', "env=session_env(notes)", '"--permission-mode", "acceptEdits"'):
-        assert needed in source, f"session() no longer passes: {needed}"
-    whole = Path(__file__).read_text(encoding="utf-8")
-    for refused in ("dangerously" + "-skip", "bypass" + "Permissions", "os.environ" + ".copy()", "dict(os" + ".environ"):
-        assert refused not in whole, f"the test file holds '{refused}'"
+    assert "session_argv(prompt, notes, starter," in source and "env=session_env(notes)" in source
+    assert source.count("subprocess.run(") == 1, "one way to start the session"
     assert ENV_KEPT == (
         "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "TERM",
         "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CONFIG_DIR",
     ), "a new variable for the session needs a reason, and this list changed with it"
 
 
-def test_the_live_session_cannot_edit_the_fixtures_git_folder():
-    assert "Edit(.git/**)" in DENIED.split(",") and "Write(.git/**)" in DENIED.split(",")
-    assert not any(entry.startswith(("Bash(git config", "Bash(git -c")) for entry in TOOLS.split(","))
-
-
-@pytest.mark.parametrize("rule", ["ls*", "git log*", "git *", "git*", "./*", "/tmp/*", "cc *", "date*", "echo *", "printenv *", "cat *; rm x", "git restore"])
-def test_the_rule_check_refuses_a_rule_that_could_run_code(rule):
-    assert not (ALLOWED_RULE.fullmatch(rule) and ("*" not in rule or rule.endswith(" *"))) or rule == "git restore"
+def test_the_starter_copy_for_the_session_equals_the_starter_commit(tmp_path):
+    repo = fixture.build(tmp_path / "lab2")
+    folder = fixture.export_starter(repo, tmp_path / "starter-code")
+    assert sorted(path.name for path in folder.iterdir()) == ["handout.md", "main.c", "ring.c", "ring.h"]
+    assert (folder / "main.c").read_text() == fixture.MAIN_C
+    assert (folder / "ring.c").read_text() == fixture.STARTER_RING_C
 
 
 def test_the_live_session_does_not_get_the_shell_environment(monkeypatch, tmp_path):

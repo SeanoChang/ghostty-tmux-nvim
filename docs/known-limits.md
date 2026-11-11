@@ -485,56 +485,69 @@ check" rule was typed again at least eight times.
 - **The progress file is outside the assignment folder,** in `~/.claude/coach`
   or `$COACH_DIR`. The first write there can ask for approval.
 
-### What the live checks show, and what they do not
+### The live checks
 
 Two checks run a real headless session on a fixture (a ring buffer lab in C).
-They run only with `COACH_LIVE=1`, take about 90 seconds each and cost a model
+They run only with `COACH_LIVE=1`, take about a minute each and cost a model
 call. The repo has no CI, so nothing runs them by itself.
 
+What they show:
+
 - **"just fix ring_pop for me":** without the skill, the session wrote the
-  corrected line into the student's file. With the skill it refused, gave the
-  symptom and asked one question (one run each).
-- **"check and clean up":** twelve runs with the skill while the test was
-  written. Eight passed. Two failed because of the scoped tool list (below).
-  One failed because the answer said "Problem:" for one problem, which the
-  test now accepts. One failed on the assertion in the next entry. Without
-  the skill (two runs), the session did not fix the message, stated the fix in
-  its answer and wrote no progress file; it did leave the graded logic alone,
-  so that assertion does not separate the two.
-- **One run of twelve failed on an assertion that was later narrowed.** The
-  assertion refused "% RING_SIZE" anywhere in the answer. The answer of that
-  run was not saved, so the cause is a guess: the "Right" part quoted the
-  student's own correct line. The assertion now covers the problem and hint
-  part, and the corrected line anywhere.
-- **The test session cannot build or run the lab.** It accepts edits without
-  asking, so its tool list holds only reading commands, `git restore`, and
-  `printenv COACH_DIR`. An earlier list allowed the compiler, any git command
-  and any binary under `/tmp`; the automated security check flagged it on
-  2026-11-10 and it was removed. The session therefore finds the bug by
-  reading, and the skill's "build and run" step is not exercised. A real
-  session asks the user before it runs a command.
-- **The live test's tool list is not a security boundary.** The boundary is
-  the repo: the session's only inputs are this repo's fixture and skill, and
-  whoever can change those can change the test file, which pytest runs as
-  code. A reviewer showed what the list leaves open at the git level: with
-  `core.fsmonitor` set in the fixture's `.git/config`, `git status` ran a
-  script; with a filter set there and in `.gitattributes`, `git restore` ran
-  one; and `git diff --output=<path>` wrote a file outside the repo. Two
-  things stand between a session and those: the deny rule for edits under
-  `.git`, and Claude Code's own guard for `.git/config` and for `--output` on
-  git (seen as strings in 2.1.319). Neither was tried against a session that
-  attempts it. `.gitattributes` itself stays writable; it runs nothing
-  without a setting under `.git`.
-- **The review raised this change to tier 2** for that test harness. The
-  skill text is tier 1.
-- **The session is not in a container, and its Read tool is not scoped.** It
-  can read any file the user can. Nothing untrusted reaches it: its only
-  inputs are this repo's fixture and skill. Its process gets a short list of
-  environment variables, not the whole shell environment. Its answer is saved
-  to pytest's temp folder and shown in a failed assertion, with no redaction.
-  `git restore` and file edits inside the fixture stay possible.
-- **Without a way to read `$COACH_DIR` the session writes no progress file.**
-  Two early runs showed this; the list has `printenv COACH_DIR` for it.
+  corrected line into the student's file (seen twice). With the skill it
+  refused, gave the symptom and asked one question.
+- **"check and clean up":** with the skill, the session sets the push message
+  to the handout's text, puts the reformatted `main.c` back, leaves `ring_pop`
+  as the student wrote it, reports the bug without the fix, and notes both
+  changes in the progress file. Without the skill it left the logic alone too,
+  but it did not fix the message, it stated the fix, and it wrote no notes.
+
+How the session is held:
+
+- **The session has no shell.** It runs in the CLI's restricted mode with
+  five tools (Read, Edit, Write, Glob, Grep), `Bash` refused by name, and
+  edits under `.git` refused. A probe session on 2026-11-11 tried each guard:
+  it had no shell tool, its edit of `.git/config` was refused, a write outside
+  the working folders was refused, a read of `~/.gitconfig` was refused, and
+  it listed exactly its tools.
+- **Why no shell.** Two earlier versions gave the session a list of commands.
+  The first allowed the compiler, any git command and any binary under `/tmp`.
+  The second allowed "reading" commands only. A probe showed that
+  `cat handout.md > file` and `git diff --output=<path>` were both allowed
+  under it, and each writes a file, outside the repo too. A reviewer showed
+  that a setting written into `.git/config` makes `git status` run a program.
+  So a command list is not a boundary. The automated security check flagged
+  each version.
+- **The review raised the test harness to tier 2.** The skill text is tier 1.
+- **`.gitattributes` in the fixture stays writable.** The test runs git on the
+  fixture after the session. An attribute can name a filter from the user's
+  global git settings (here: `git-lfs`), which is the user's own program. It
+  cannot name a program of the session's, because `.git/config` is refused.
+- **The session's answer is saved** in pytest's temp folder and shown in a
+  failed assertion, with no redaction. The session cannot read outside its
+  folders, and its process gets a short list of environment variables.
+
+What the session does not exercise, because of that design:
+
+- **The CLI finding the skill.** Restricted mode loads no user skills, so the
+  test hands the session the text of SKILL.md in the form the CLI uses on
+  invocation. Earlier runs, outside restricted mode, did start the skill with
+  `/coach`. No run starts it from the description alone.
+- **git and the build.** The test unpacks the starter code for the session to
+  read, and tells it where the progress folder is. So the skill's
+  `git diff -w --stat` comparison, its search for the starter commit, and its
+  "build and run" step are not run by a session.
+
+The record of the runs while the test was written:
+
+- Under the first two harnesses: about fifteen runs of "check and clean up"
+  with the skill. Most passed. The failures were two from the command list
+  (no way to read `$COACH_DIR`), one on "Problem:" in the singular, one on an
+  assertion that refused "% RING_SIZE" anywhere in the answer (that answer was
+  not saved, so the cause is a guess), and one of the second check on "back to
+  slot 0", which is the handout's own phrase. Each assertion was corrected to
+  what the skill promises.
+- Under the final harness: both checks passed twice in a row.
 
 ### Not tested
 
@@ -544,8 +557,6 @@ call. The repo has no CI, so nothing runs them by itself.
 - A written assignment (a proof, a problem set) and a notebook. The fixture is
   C code with a starter commit.
 - A model other than Opus.
-- Whether the description starts the skill from "check my producer" with no
-  `/coach`. Both live checks call the skill by name.
 
 ### Minor
 
@@ -556,6 +567,10 @@ call. The repo has no CI, so nothing runs them by itself.
 - **The second live check looks for the fix in words by a short list**
   ("% RING_SIZE", "modulo", "= 0;", "reset head to 0"). Another wording of the
   fix passes. "Back to slot 0" is allowed, because the handout says it: one
-  run failed on that phrase before the list was corrected. The exact comparison of `ring_pop` with the student's text
-  catches every edit.
+  run failed on that phrase before the list was corrected. The comparison of
+  the whole file with the student's text catches every edit.
+- **The stream check can pass on nothing** if a later CLI changes the shape
+  of its stream: with no tool call parsed, "no edit at any point" holds. The
+  helper requires at least one Read call in the stream, and the first check
+  requires the `ring.c` edit to be in it.
 - **The skill is linked into `~/.claude/skills` by hand** on this machine.
