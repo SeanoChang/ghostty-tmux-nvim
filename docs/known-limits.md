@@ -323,8 +323,8 @@ lines in `config/claude/CLAUDE.md`. None is fixed.
   the file a milestone ends with the PR to the release branch. A short time box
   has no such milestones, and the rule does not ask for timed checkpoints in
   the plan, so "the clock against the plan" has little to measure against.
-- **"Cut from the list" does not say what happens when the must-haves alone
-  run over:** run past the time, or drop a must-have.
+- **The time box does not say what happens when the must-haves alone run
+  over:** run past the time, or drop a must-have.
 - **"First one end-to-end check" has two readings:** before the feature code,
   or first among the tests. The reason for the rule is the first reading.
 - **"Keep such checks few" can read as few checks of any kind.** It means few
@@ -369,3 +369,40 @@ lines in `config/claude/CLAUDE.md`. None is fixed.
   `second-brain-obsidian` skill, so it knows only `sb find`.
 - **"Read-only" for the verifier, adversary, planner and scout is a rule in
   their text.** They have no Edit or Write tool, but Bash can still write.
+- **`planner.md` uses "cut" in two senses:** where a task could be split, and
+  a step to drop under a time budget.
+- **"When the brief gives a time budget" in `planner.md` can also mean the
+  `Budget` line** that every brief has. On that reading every plan marks its
+  steps as must-have or cut, which is harmless.
+- **The builder has no "no second end-to-end check" line.** The planner has
+  one. A builder that reads the Features rule literally can add an end-to-end
+  check for its own piece: an extra check, not a wrong one.
+- **The planner test pins the limit, not the exclusions.** The description's
+  "not for a task the lead builds itself, not for a small task" can be removed
+  with no failing test.
+- **Bash is on every reporting worker's tool list, with no scope.** The
+  verifier and the adversary run tests and probes with it. A list of allowed
+  Bash commands per worker was suggested by the automated security check on
+  2026-11-10 and not built: it belongs in `settings.json.tmpl`, which is a
+  change of its own.
+- **The scout's WebFetch has no domain list.** It is the one worker that
+  reaches the web, and it runs as the user.
+- **The builder and the scribe keep every tool except Agent.** They write
+  files, so a list of allowed tools would have to name each one they may need.
+
+## Design skills (`premise-check`, `shape`, 2026-11-10)
+
+- **`shape` was checked by a dry run, not by a real session.** A fresh agent
+  followed steps 1 to 4 on a past assignment, with its own recommended option
+  in place of each answer. The clock, the dialog and the user's vetoes were not
+  exercised.
+- **`premise-check` was checked on one past case** whose outcome was known.
+- **The trigger words overlap.** "System design" also starts
+  `second-brain-obsidian` (recall), and "design doc" starts `visual-artifacts`
+  or `writing-markdown-docs`. `shape` is for the session with the user; the
+  others are for the document or for recall.
+- **The visual-artifacts Plan page has no clock or cut-list field.** Only the
+  markdown plan reference got them.
+- **Neither skill is in `manifest.txt` as its own line.** `merge
+  config/claude/skills` links new skill folders on install; on this machine
+  they are linked by hand.

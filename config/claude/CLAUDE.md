@@ -38,8 +38,8 @@
   session. Skip the blocked step, log it, and take the next task. End with
   Blocked on me, Changed, Found.
 - Time box: fixed time, variable scope. Before you start, list the must-haves
-  and an ordered cut list. At each milestone, report the clock against the
-  plan. When behind, cut from the list and tell me.
+  and a cut list, the first to drop at the top. At each milestone, report the
+  clock against the plan. When behind, cut from the top and tell me.
 
 ## Verification and review
 
