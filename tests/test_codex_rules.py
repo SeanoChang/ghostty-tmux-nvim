@@ -21,6 +21,7 @@ Run: python3 -m pytest tests/test_codex_rules.py -q -p no:cacheprovider
 """
 import importlib.util
 import random
+import re
 from pathlib import Path
 
 import pytest
@@ -153,6 +154,18 @@ def test_a_comment_that_is_not_a_rule_name_is_skipped_outside_rules():
     ("# R\n  <!-- rule: a -->\n- x\n", "not a rule name line"),
     ("# R\n<!-- rule: a -->\n- x\ntext <!-- rule: b -->\n- y\n", "comment inside the rule"),
     ("# R\n<!-- rule: a -->\n- x\n<!-- a note -->\n", "comment inside the rule"),
+    # Claude Code takes these lines as text, not as a heading: one to six # and then a blank make a heading.
+    ("# R\n\n## Safety\n#1 rule: never push with force.\n", "not a heading"),
+    ("# R\n<!-- rule: a -->\n- x\n#Also: never print a secret.\n\n## Next\n", "not a heading"),
+    ("# R\n\n## Safety\n####### Never delete a branch.\n", "not a heading"),
+    ("# R\n\n#\tA tab is not a blank\n", "not a heading"),
+    # A comment must end, and end its line.
+    ("# R\n<!-- rule: a -->\n- x\n\n## Extra\n<!-- TODO: decide\nNever merge on Fridays.\n", "never closed"),
+    ("# R\n\n<!-- note --> - Always push to main.\n", "after the end of a comment"),
+    ("# R\n\n<!-- a note\nover two lines --> - Always push to main.\n", "after the end of a comment"),
+    ("# R\n\n<!-- a --> b -->\n", "after the end of a comment"),
+    ("# R\n\n<!--> - a rule after the shortest comment\n", "after the end of a comment"),
+    ("# R\n\n<!---> - a rule after the next shortest\n", "after the end of a comment"),
 ])
 def test_a_root_the_build_cannot_trust_is_refused(src, word):
     with pytest.raises(bam.BuildError, match=word):
@@ -210,6 +223,60 @@ def test_all_problems_are_reported_in_one_run():
         bam.build(src, "# Codex\n\n{{rule: nope}}\n<!-- adapts: a@0000000000 -->\n- x\n")
     text = str(err.value)
     assert "no rule named 'nope'" in text and "'a' changed" in text and "'b' in CLAUDE.md has no decision" in text
+
+
+# ── what a Claude session is left with, against what the build carries ───────
+
+# The comment regex of Claude Code 2.1.319, without its last branch ("or the
+# end of the text"): here a comment that never ends is kept as text, so the
+# build must account for it or stop.
+A_COMMENT = re.compile(r"<!--(?:-?>|[\s\S]*?-->)")
+A_HEADING = re.compile(r"#{1,6}(?: .*)?")
+
+HOSTILE = ["#1 rule: never push with force", "#Also: x", "####### seven", "#\ttab", "#", "###### six", "# a real heading",
+           "<!-- open", "<!-- a --> - tail", "<!-->", "<!---> x", "<!---->", "--> stray", "  <!-- indented -->",
+           " ## indented heading", "plain text", "<!-- a --> <!-- b -->", "<!-- rule: zz --> tail", "```", "<!-- fine -->",
+           "- one more line", "<!-- two", "lines -->", "lines --> and a tail", "<!--", "-->"]
+
+
+def left_for_claude(text):
+    """The lines of a root file that are neither blank, nor a heading, nor in
+    a comment. This shares no code with the build: one regex takes the
+    comments out of the whole text, one decides what a heading is."""
+    return [line for line in A_COMMENT.sub("", text).splitlines() if line.strip() and not A_HEADING.fullmatch(line)]
+
+
+def test_every_line_a_session_is_left_with_is_in_a_rule_or_the_build_stops():
+    """Random root files with hostile lines put in at random places. When the
+    build takes a file, the lines its rules hold must be exactly the lines a
+    session is left with: no line may fall between the two readings."""
+    rng = random.Random(20261112)
+    taken = stopped = 0
+    for _ in range(3000):
+        lines = ["# Title", ""]
+        for n in range(rng.randint(1, 4)):
+            if rng.random() < 0.4:
+                lines += [rng.choice(["## Section", "### Sub"]), ""]
+            lines += [f"<!-- rule: r{n} -->"] + [rng.choice(["- a rule", "  more of it", "| a | b |"]) for _ in range(rng.randint(1, 3))]
+            lines += [""] * rng.randint(0, 2)
+        for _ in range(rng.randint(0, 3)):
+            lines.insert(rng.randint(1, len(lines)), rng.choice(HOSTILE))
+        text = "\n".join(lines) + "\n"
+        try:
+            found = bam.rules(text)
+        except bam.BuildError:
+            stopped += 1
+            continue
+        taken += 1
+        carried = [line for rule in found.values() for line in rule.splitlines() if line.strip()]
+        assert carried == left_for_claude(text), lines
+    assert taken > 300 and stopped > 300, (taken, stopped)
+
+
+def test_the_real_root_is_read_the_same_way():
+    text = bam.ROOT.read_text(encoding="utf-8")
+    carried = [line for rule in bam.rules(text).values() for line in rule.splitlines() if line.strip()]
+    assert carried == left_for_claude(text)
 
 
 # ── random roots against what was put into them ──────────────────────────────

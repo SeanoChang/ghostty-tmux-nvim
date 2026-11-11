@@ -560,11 +560,39 @@ the run may change.
   `model_reasoning_effort` in every codex argument, the prompt included. A
   brief that only names that word makes the role's effort go unsent, with no
   message (`codex-run`, the `has_effort` line; found by the verifier, a nit).
-- **Text after a comment's end, on the same line, is not a rule.** In
-  `CLAUDE.md`, outside a rule, `<!-- note --> - some rule` is loaded by Claude
-  Code, but the build drops the text and asks for no decision
-  (`build_agents_md.py`, the comment branch of `rules`; found by the verifier,
-  a nit). No such line is in the file today.
+- **The build takes only lines that it and Claude Code read the same way.**
+  The build reads `CLAUDE.md` line by line; Claude Code reads it as Markdown.
+  Up to `95252c9` the build dropped three kinds of text that Claude Code
+  loads, and asked for no decision: text after a comment's end on the same
+  line (found by the verifier), a line that starts with `#` and is not a
+  heading, such as `#1 rule: ...` (found by the adversary), and what follows
+  a comment that is never closed (the adversary). Each now stops the build. A
+  test checks random files against a reading that shares no code with the
+  build. It does not run Claude Code's own Markdown reader, so a line that
+  the two read differently in a way nobody has thought of is still possible.
+- **Small faults in `codex-run` that the adversary found at `95252c9`, not
+  changed:**
+  - `-Cx`, `-mfoo` and `-m=foo` in the codex args are not seen as a folder or
+    a model, so `--worktree` or the role adds its own; codex 0.167 then
+    refuses the repeated flag. A worktree is left behind.
+  - A model given as `-c model=...` or by `-p profile` loses to the role's
+    `-m`.
+  - An agent file with `model = ""` starts Codex, which refuses it. A DEL
+    character in the instructions is sent as it is and is not valid TOML.
+    Under a Latin-1 locale a character outside ASCII in the instructions
+    arrives changed.
+  - A `--worktree` path that ends in a line break is made without it. With
+    `--repo` set to a linked worktree, a `--worktree` path inside the main
+    checkout is accepted.
+  - A path deeper than 1,024 bytes gives exit 3 ("could not be read").
+  - The build joins two or more blank lines into one, inside a placed rule
+    too.
+- **Older faults in `codex-run`, there before this change (the adversary):**
+  - When `codex` is not on PATH, the exit code is 0 and the log is empty;
+    with `--worktree` it prints "0 file(s) changed".
+  - A `--idle` or `--max` value that is not a number (`5m`) turns that limit
+    off, with only a shell warning.
+  - Killing `codex-run` itself leaves Codex running with no watchdog.
 
 ### Tested (2026-11-11, codex-cli 0.167.0)
 

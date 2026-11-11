@@ -155,6 +155,12 @@ def test_the_exit_code_of_codex_passes_through(box):
     ["--log", "L", "--allow", "src/*", "--", "prompt"], # --allow with no worktree
     ["--log", "L", "--repo", ".", "--", "prompt"],
     ["--log", "L", "--role"],                           # an option with no value
+    # An empty value, as a shell variable that was never set gives it: not the same as "not given".
+    ["--log", "L", "--worktree", "", "--", "prompt"],
+    ["--log", "L", "--role", "", "--", "prompt"],
+    ["--log", "L", "--worktree", "wt", "--repo", "", "--", "prompt"],
+    ["--log", "L", "--worktree", "wt", "--allow", "", "--", "prompt"],
+    ["--log", "", "--", "prompt"],
 ], ids=lambda a: " ".join(a))
 def test_bad_usage_ends_with_2_and_starts_nothing(box, argv):
     done = box(*argv)

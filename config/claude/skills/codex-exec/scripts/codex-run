@@ -52,6 +52,9 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --log|--idle|--max|--role|--worktree|--repo|--allow)
       [ $# -ge 2 ] || usage
+      # An empty value is what a variable that was never set gives. Taking it
+      # as "not given" would run Codex with no worktree, in the caller's folder.
+      [ -n "$2" ] || fail "$1 needs a value that is not empty"
       case "$1" in
         --log)      log="$2" ;;
         --idle)     idle="$2" ;;

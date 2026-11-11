@@ -9,9 +9,16 @@ Why: the two rule files were kept in step by hand. Twelve commits changed
 CLAUDE.md in ten days and none of them changed AGENTS.md.
 
 In CLAUDE.md a line `<!-- rule: name -->` starts a named rule. The rule runs
-to the next such line, the next `## ` heading, or the end of the file. Claude
-Code leaves HTML comments out when it loads the file, so the names cost a
-session nothing.
+to the next such line, the next heading, or the end of the file. Claude Code
+leaves HTML comments out when it loads the file, so the names cost a session
+nothing.
+
+The build reads CLAUDE.md line by line; Claude Code reads it as Markdown. So
+the build takes only lines that both read the same way, and stops at any
+other. Outside a rule a line is blank, a heading (one to six `#`, then a
+blank or the line end), or part of a comment that ends, with nothing after
+its end on that line. A line that starts with `#` and is not such a heading
+stops the build, in a rule too: to Claude Code it is text.
 
 AGENTS.src.md must say what happens to every rule, in one of three ways:
 
@@ -44,6 +51,7 @@ BUILT = HERE / "AGENTS.md"
 
 NAME = r"[a-z0-9]+(?:[.-][a-z0-9]+)*"
 RULE = re.compile(rf"<!-- rule: ({NAME}) -->")
+HEADING = re.compile(r"#{1,6}(?: .*)?")
 PLACE = re.compile(rf"\{{\{{rule: ({NAME})\}}\}}")
 ADAPTS = re.compile(rf"<!-- adapts: ({NAME})@([0-9a-f]+) -->")
 CLAUDE_ONLY = re.compile(rf"<!-- claude-only: ({NAME}(?:, {NAME})*) -->")
@@ -64,7 +72,20 @@ def rules(root_text):
     Text that is in no rule may only be a heading, a blank line, or an HTML
     comment that is not a rule name: anything else would be a rule that the
     Codex file never has to account for."""
-    found, name, lines, in_comment = {}, None, [], False
+    found, name, lines, comment_from = {}, None, [], 0
+
+    def comment_end(number, line, start):
+        """Whether the comment ends on this line. Text after its end is text
+        to Claude Code, so there must be none."""
+        end = line.find("-->", start)
+        if end == -1:
+            return False
+        if line[end + 3:].strip():
+            raise BuildError(
+                f"CLAUDE.md:{number}: text after the end of a comment: {line[end + 3:].strip()[:60]!r}. "
+                "Claude Code loads it. Put it on a line of its own, under a rule name."
+            )
+        return True
 
     def close():
         if name is None:
@@ -76,8 +97,9 @@ def rules(root_text):
         found[name] = "\n".join(lines)
 
     for number, line in enumerate(root_text.splitlines(), 1):
-        if in_comment:
-            in_comment = "-->" not in line
+        if comment_from:
+            if comment_end(number, line, 0):
+                comment_from = 0
             continue
         start = RULE.fullmatch(line)
         if start:
@@ -89,9 +111,16 @@ def rules(root_text):
         if line.lstrip().startswith("<!-- rule"):
             raise BuildError(f"CLAUDE.md:{number}: not a rule name line: {line!r}")
         if line.startswith("<!--") and name is None:
-            in_comment = "-->" not in line
+            # `<!-->` and `<!--->` are whole comments to Claude Code: the end is looked for from the third character.
+            if not comment_end(number, line, 2):
+                comment_from = number
             continue
         if line.startswith("#"):
+            if not HEADING.fullmatch(line):
+                raise BuildError(
+                    f"CLAUDE.md:{number}: starts with # but is not a heading: {line[:60]!r}. A heading is one to "
+                    "six # and then a blank. Claude Code loads this line as text, so write it another way."
+                )
             close()
             name, lines = None, []
             continue
@@ -106,6 +135,10 @@ def rules(root_text):
         if "<!--" in line:
             raise BuildError(f"CLAUDE.md:{number}: an HTML comment inside the rule {name!r}")
         lines.append(line)
+    if comment_from:
+        raise BuildError(
+            f"CLAUDE.md:{comment_from}: a comment that is never closed. Claude Code loads what comes after it."
+        )
     close()
     return found
 
