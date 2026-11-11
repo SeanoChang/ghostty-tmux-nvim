@@ -452,3 +452,83 @@ first three are more cases of the cause named above, and each fails safe:
 - **Neither skill is in `manifest.txt` as its own line.** `merge
   config/claude/skills` links new skill folders on install; on this machine
   they are linked by hand.
+
+## Codex harness (`config/codex/`, `codex-exec`, 2026-11-11)
+
+Three changes: `config/codex/AGENTS.md` is built from `config/claude/CLAUDE.md`
+and `config/codex/AGENTS.src.md`; Codex has a builder, a verifier and an
+adversary agent; and `codex-run` takes a role, a worktree and a list of files
+the run may change.
+
+### By design
+
+- **`CLAUDE.md` is the root, and `AGENTS.md` is never edited by hand.** A hand
+  edit fails `tests/test_codex_rules.py`. What is only for Codex goes in
+  `AGENTS.src.md`.
+- **The rule names in `CLAUDE.md` are HTML comments.** Claude Code leaves them
+  out when it loads the file, so they cost a session nothing. The size test
+  leaves a name line out whole, line end included.
+- **Codex never merges.** `AGENTS.md` says so, and on this machine
+  `~/.codex/rules/default.rules` forbids `gh pr merge`. That rules file is not
+  tracked here.
+- **The Codex reviewers never write the merge gate's lines.** A Codex review is
+  a second opinion. The review for the tier runs on Claude.
+- **The builder runs on GPT-6.1 Sol at `high`.** The numbers are in the
+  `codex-exec` skill, under Evidence.
+
+### Not enforced
+
+- **Nothing runs the build or the tests by itself.** The repo has no CI and no
+  git hook. A change to `CLAUDE.md` that is committed without a build leaves
+  `AGENTS.md` stale until someone runs the tests.
+- **A hash forces a look, not agreement.** When a rule that Codex has in its
+  own wording changes in the root, the build stops and prints the new hash.
+  Setting the hash without reading both texts gets past it. The same holds for
+  the three agent files.
+- **`--allow` is checked after the run, and only on the worktree.** It does
+  not see a write outside the worktree; the sandbox (`-s workspace-write`) is
+  what keeps Codex inside. It does not see a file that git ignores.
+- **The merge rule sees the command words only.** `codex execpolicy check`
+  gives `forbidden` for `gh pr merge ...` and for `/opt/homebrew/bin/gh pr
+  merge ...`. It finds no rule for `env X=1 gh pr merge ...` and for `bash -lc
+  "gh pr merge ..."`. The Codex docs say the runtime splits a simple `bash
+  -lc` script; that was not tested. Branch protection on GitHub is the hard
+  stop.
+- **A Codex agent has the permissions of its session.** "Report, do not fix" is
+  an instruction to the Codex verifier and adversary, not a limit on them.
+  `codex-run --worktree` gives them a tree of their own.
+- **A worktree starts from HEAD.** Work that is not committed is not in it.
+- **`codex-run --role` needs `python3` 3.11 or later** on PATH, to read the
+  agent file.
+
+### Tested (2026-11-11, codex-cli 0.167.0)
+
+- The suite: 231 passed, 4 skipped. With `CODEX_PROMPT=1`, the three tests
+  that ask the real `codex` program to render a prompt also pass.
+- 42 deliberate breaks of `build_agents_md.py` and `codex-run`, one at a time:
+  the tests failed for each. The script that makes the breaks is not in the
+  repo.
+- Three live runs through `codex-run`, with the built rules in place as
+  `~/.codex/AGENTS.override.md` for the time of the runs:
+  - `--role builder --worktree --allow` on a cache with three bugs, of which
+    the given test shows one: the reply was "done", one file changed in the
+    worktree, the lead's tree stayed clean, and all hidden tests passed.
+  - A task whose fix sits in a file under "must not touch": the reply was
+    "blocked" and named the file; no file changed.
+  - `--role verifier` on a commit that passes its test and breaks its
+    contract: verdict fail, one Important finding with the line and the
+    sequence that shows it, "tier too low" raised, no file changed, and no
+    `review: pass` line.
+- Twelve graded runs for the choice of the builder's model: see the skill.
+
+### Not tested
+
+- **Codex spawning one of the agents itself** (`agent_type`) in a live
+  session. The prompt test shows only that Codex offers the three.
+- **The adversary role** in a live run.
+- **Main worker mode under the new rules:** the short prompts, the tiers, the
+  time box. Only the subagent path ran live.
+- **Several `codex-run` worktrees at one time.**
+- **Which model is better on hard work.** No graded task failed in either arm.
+- **The install step.** `./install.sh --dry-run --only codex` lists the three
+  agent links; the real run waits for the merge.

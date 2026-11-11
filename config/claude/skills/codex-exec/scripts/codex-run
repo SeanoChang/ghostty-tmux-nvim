@@ -2,33 +2,124 @@
 # Run `codex exec` under a watchdog. Kills the whole Codex process group when
 # the event log stops growing for --idle seconds or the run passes --max seconds.
 #
-# usage: codex-run --log <file> [--idle 300] [--max 1800] -- <codex exec args...>
-# exit:  Codex's own exit code, 124 when the watchdog killed it, 2 on bad usage.
+# usage: codex-run --log <file> [--idle 300] [--max 1800]
+#                  [--role <name>]
+#                  [--worktree <new-dir> [--repo <dir>] [--allow <pattern>]...]
+#                  -- <codex exec args...>
+#
+#   --role      run as the Codex agent of that name (builder, verifier,
+#               adversary): its instructions, model and effort come from
+#               ~/.codex/agents/<name>.toml. A model or an effort in the
+#               codex args wins over the file's.
+#   --worktree  make a new git worktree at <new-dir> from the HEAD of --repo
+#               (default: the current folder) and run Codex there. The lead's
+#               tree is never touched. Uncommitted work is not in it: commit
+#               what the run needs first. The worktree stays for review.
+#   --allow     with --worktree: a path pattern the run may change (`*` also
+#               crosses `/`). When a changed file fits no pattern, the files
+#               are listed and the exit code is 3. Give it once per pattern.
+#
+# exit: Codex's own exit code; 124 when the watchdog killed it; 3 when Codex
+#       ended well but changed a file outside --allow; 2 on bad usage.
 set -u
 
-idle=300 max=1800 log=""
+idle=300 max=1800 log="" role="" worktree="" repo="" allow=()
+poll="${CODEX_RUN_POLL:-5}"
+usage() {
+  echo "usage: codex-run --log <file> [--idle S] [--max S] [--role NAME] [--worktree DIR [--repo DIR] [--allow PATTERN]...] -- <codex exec args...>" >&2
+  exit 2
+}
+fail() { echo "codex-run: $1" >&2; exit 2; }
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    --log)  log="$2"; shift 2 ;;
-    --idle) idle="$2"; shift 2 ;;
-    --max)  max="$2"; shift 2 ;;
-    --)     shift; break ;;
-    *)      echo "codex-run: unknown option $1" >&2; exit 2 ;;
+    --log|--idle|--max|--role|--worktree|--repo|--allow)
+      [ $# -ge 2 ] || usage
+      case "$1" in
+        --log)      log="$2" ;;
+        --idle)     idle="$2" ;;
+        --max)      max="$2" ;;
+        --role)     role="$2" ;;
+        --worktree) worktree="$2" ;;
+        --repo)     repo="$2" ;;
+        --allow)    allow+=("$2") ;;
+      esac
+      shift 2 ;;
+    --) shift; break ;;
+    *)  echo "codex-run: unknown option $1" >&2; exit 2 ;;
   esac
 done
-if [ -z "$log" ] || [ $# -eq 0 ]; then
-  echo "usage: codex-run --log <file> [--idle S] [--max S] -- <codex exec args...>" >&2
-  exit 2
+if [ -z "$log" ] || [ $# -eq 0 ]; then usage; fi
+if [ -z "$worktree" ] && { [ -n "$repo" ] || [ ${#allow[@]} -gt 0 ]; }; then
+  fail "--repo and --allow need --worktree"
+fi
+
+# What the caller already chose in the codex args.
+has_model=0 has_effort=0 has_cd=0
+for arg in "$@"; do
+  case "$arg" in
+    -m|--model|--model=*)        has_model=1 ;;
+    *model_reasoning_effort*)    has_effort=1 ;;
+    -C|--cd|--cd=*)              has_cd=1 ;;
+  esac
+done
+
+extra=()
+
+if [ -n "$role" ]; then
+  # grep in the C locale: in other locales a bash range such as a-z also takes capitals.
+  printf '%s' "$role" | LC_ALL=C grep -q -x '[a-z0-9][a-z0-9-]*' || fail "bad role name: $role"
+  agents="${CODEX_AGENTS_DIR:-${CODEX_HOME:-$HOME/.codex}/agents}"
+  file="$agents/$role.toml"
+  [ -f "$file" ] || fail "no agent file for the role '$role': $file"
+  # One codex argument per line. A JSON string is also a TOML string, and it
+  # has no raw line end, so the instructions stay on one line.
+  role_lines=$(python3 - "$file" "$has_model" "$has_effort" <<'PY'
+import json, sys
+try:
+    import tomllib
+except ImportError:
+    sys.exit("python3 3.11 or later is needed to read an agent file")
+path, has_model, has_effort = sys.argv[1], sys.argv[2] == "1", sys.argv[3] == "1"
+with open(path, "rb") as fh:
+    agent = tomllib.load(fh)
+text = agent.get("developer_instructions")
+if not isinstance(text, str) or not text.strip():
+    sys.exit(f"{path}: no developer_instructions")
+for key in ("model", "model_reasoning_effort"):
+    if key in agent and (not isinstance(agent[key], str) or "\n" in agent[key]):
+        sys.exit(f"{path}: {key} must be one line of text")
+if "model" in agent and not has_model:
+    print("-m"); print(agent["model"])
+if "model_reasoning_effort" in agent and not has_effort:
+    print("-c"); print("model_reasoning_effort=" + json.dumps(agent["model_reasoning_effort"]))
+print("-c"); print("developer_instructions=" + json.dumps(text.strip("\n"), ensure_ascii=False))
+PY
+  ) || fail "cannot read the agent file $file"
+  while IFS= read -r line; do
+    [ -z "$line" ] || extra+=("$line")
+  done <<EOF
+$role_lines
+EOF
+fi
+
+if [ -n "$worktree" ]; then
+  [ "$has_cd" -eq 0 ] || fail "--worktree sets the folder; leave -C out of the codex args"
+  [ ! -e "$worktree" ] || fail "--worktree needs a path that does not exist yet: $worktree"
+  top=$(git -C "${repo:-.}" rev-parse --show-toplevel 2>/dev/null) || fail "not a git repository: ${repo:-.}"
+  git -C "$top" worktree add --quiet --detach "$worktree" HEAD >&2 || fail "git could not make the worktree $worktree"
+  worktree=$(cd "$worktree" && pwd -P)
+  extra+=("-C" "$worktree")
 fi
 
 : > "$log"
 # New session so the group id equals the pid and one kill reaches every child.
-perl -MPOSIX=setsid -e 'setsid; exec @ARGV' codex exec --json "$@" >> "$log" 2>&1 < /dev/null &
+perl -MPOSIX=setsid -e 'setsid; exec @ARGV' codex exec --json ${extra[@]+"${extra[@]}"} "$@" >> "$log" 2>&1 < /dev/null &
 pid=$!
 
 start=$(date +%s) last_size=0 last_change=$start reason=""
 while kill -0 "$pid" 2>/dev/null; do
-  sleep 5
+  sleep "$poll"
   now=$(date +%s)
   size=$(wc -c < "$log")
   if [ "$size" -ne "$last_size" ]; then last_size=$size; last_change=$now; fi
@@ -41,13 +132,42 @@ if [ -n "$reason" ]; then
   exec 3>&2
   {
     kill -TERM -- "-$pid"
-    sleep 5
+    sleep "$poll"
     kill -KILL -- "-$pid"
     wait "$pid"
     echo "codex-run: watchdog killed Codex: $reason. Last events:" >&3
     tail -n 5 "$log" | cut -c1-300 >&3
   } 2>/dev/null
+  [ -z "$worktree" ] || echo "codex-run: the worktree is still at $worktree" >&2
   exit 124
 fi
 
 wait "$pid"
+code=$?
+
+if [ -n "$worktree" ]; then
+  # Every file the run changed, made or removed. -z gives each path as it is,
+  # with no quoting, after a two-letter state and a blank. Caches do not count.
+  count=0 outside=""
+  while IFS= read -r -d '' entry; do
+    path="${entry:3}"
+    case "/$path" in
+      */__pycache__/*|*/.pytest_cache/*|*/.ruff_cache/*|*/.mypy_cache/*) continue ;;
+    esac
+    count=$((count + 1))
+    [ ${#allow[@]} -gt 0 ] || continue
+    ok=0
+    for pattern in "${allow[@]}"; do
+      # shellcheck disable=SC2053  # the right side is a pattern on purpose
+      if [[ "$path" == $pattern ]]; then ok=1; break; fi
+    done
+    [ "$ok" -eq 1 ] || outside="$outside  $path"$'\n'
+  done < <(git -C "$worktree" status --porcelain -z --untracked-files=all --no-renames)
+  echo "codex-run: worktree $worktree, $count file(s) changed" >&2
+  if [ -n "$outside" ]; then
+    echo "codex-run: changed outside the allowed files:" >&2
+    printf '%s' "$outside" >&2
+    [ "$code" -ne 0 ] || code=3
+  fi
+fi
+exit "$code"
