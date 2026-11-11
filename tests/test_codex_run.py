@@ -10,7 +10,8 @@ What this holds:
   - --role turns an agent file into a model, an effort and the instructions,
     and the caller's own model wins;
   - --worktree runs Codex in a new worktree and leaves the lead's tree alone,
-    and --allow reports every changed file that fits no pattern (exit 3);
+    and --allow reports every changed file that fits no pattern (exit 3),
+    a file under a cache folder too;
   - a silent run and a run past its time limit are killed, with their children.
 
 What it does not hold: that the real Codex accepts these arguments (the skill
@@ -267,8 +268,22 @@ def test_several_patterns_and_a_star_that_crosses_folders(box, lead):
     assert done.returncode == 0, done.stderr
 
 
-def test_caches_are_not_counted(box, lead):
-    done, _ = worktree_run(box, lead, "write:src/__pycache__/a.pyc;write:.pytest_cache/v/x;write:src/a.py", "src/a.py")
+@pytest.mark.parametrize("hidden", ["src/__pycache__/payload.py", "__pycache__/a.pyc", ".pytest_cache/v/x",
+                                    ".ruff_cache/x", "docs/.mypy_cache/x.json"])
+def test_a_file_under_a_cache_name_is_shown_like_any_other(box, lead, hidden):
+    """A cache folder is not a place to put a file unseen. (An earlier version
+    left four cache names out before the check.)"""
+    done, _ = worktree_run(box, lead, f"write:{hidden};write:src/a.py", "src/a.py")
+    assert done.returncode == 3, done.stderr
+    assert done.stderr.split("changed outside the allowed files:\n")[1].split() == [hidden]
+    assert "2 file(s) changed" in done.stderr
+
+
+def test_a_file_that_git_ignores_is_not_listed(box, lead):
+    (lead / ".gitignore").write_text("__pycache__/\n")
+    git(lead, "add", "-A")
+    git(lead, "commit", "-q", "-m", "ignore caches")
+    done, _ = worktree_run(box, lead, "write:src/__pycache__/a.pyc;write:src/a.py", "src/a.py")
     assert done.returncode == 0, done.stderr
     assert "1 file(s) changed" in done.stderr
 

@@ -70,6 +70,10 @@ native: the harness tracks them, so they need no watchdog.)
   crosses `/`). After the run, a changed file that fits no pattern is listed
   and the exit code is 3. Leave a locked test out of the patterns. This check
   reads the worktree only; the sandbox is what keeps Codex inside it.
+- Every changed file counts, a cache file too (`__pycache__`,
+  `.pytest_cache`), unless git ignores it. When a run ends with 3 for caches
+  only, put them in the repo's `.gitignore`; do not allow them by pattern, and
+  do not take them into the lead's tree.
 - Exit codes: Codex's own; 3 for a change outside `--allow`; 124 when the
   watchdog killed the run (the event log was silent for `--idle` seconds, or
   the run passed `--max` seconds; the last events are on stderr); 2 for bad

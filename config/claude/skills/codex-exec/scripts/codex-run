@@ -18,6 +18,8 @@
 #   --allow     with --worktree: a path pattern the run may change (`*` also
 #               crosses `/`). When a changed file fits no pattern, the files
 #               are listed and the exit code is 3. Give it once per pattern.
+#               A cache file (__pycache__, .pytest_cache) counts like any
+#               other file unless git ignores it.
 #
 # exit: Codex's own exit code; 124 when the watchdog killed it; 3 when Codex
 #       ended well but changed a file outside --allow; 2 on bad usage.
@@ -147,13 +149,13 @@ code=$?
 
 if [ -n "$worktree" ]; then
   # Every file the run changed, made or removed. -z gives each path as it is,
-  # with no quoting, after a two-letter state and a blank. Caches do not count.
+  # with no quoting, after a two-letter state and a blank. No path is left
+  # out, a cache folder neither: a name such as __pycache__ would else be a
+  # place to put a file that nobody is shown. What git ignores is not listed;
+  # `git add -A` leaves it behind too, so it does not reach the lead's tree.
   count=0 outside=""
   while IFS= read -r -d '' entry; do
     path="${entry:3}"
-    case "/$path" in
-      */__pycache__/*|*/.pytest_cache/*|*/.ruff_cache/*|*/.mypy_cache/*) continue ;;
-    esac
     count=$((count + 1))
     [ ${#allow[@]} -gt 0 ] || continue
     ok=0

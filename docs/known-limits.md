@@ -488,7 +488,12 @@ the run may change.
   the three agent files.
 - **`--allow` is checked after the run, and only on the worktree.** It does
   not see a write outside the worktree; the sandbox (`-s workspace-write`) is
-  what keeps Codex inside. It does not see a file that git ignores.
+  what keeps Codex inside. It does not see a file that git ignores; the step
+  that takes the change into the lead's tree (`git add -A`) leaves such a file
+  behind too. Every other changed file counts, a cache file included: an
+  earlier version left out `__pycache__` and three other cache folders before
+  the check, so a file put under such a name was not shown (found by the
+  automated security check on `f9adeb2`).
 - **The merge rule sees the command words only.** `codex execpolicy check`
   gives `forbidden` for `gh pr merge ...` and for `/opt/homebrew/bin/gh pr
   merge ...`. It finds no rule for `env X=1 gh pr merge ...` and for `bash -lc
