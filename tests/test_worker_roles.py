@@ -36,10 +36,19 @@ CAST = {
 }
 WORKERS = [role for role in CAST if role != "lead"]
 
-# Workers that report and never change the project tree, and the only tools
-# they may hold. An allowlist: a new edit tool is refused without being named.
-READ_ONLY = ["verifier", "adversary", "planner", "scout"]
-REPORTING_TOOLS = {"Read", "Bash", "WebFetch", "WebSearch"}
+# Workers that report, and the only tools each may hold. A list per role: a
+# tool that is not named for that role is refused, so only the scout reaches
+# the web. What this does not enforce: Bash is on every list, because these
+# workers run tests and probes, and Bash can write. "Never modify the project
+# tree" is a rule in their text, not a limit on the tool.
+REPORTING_TOOLS = {
+    "verifier": {"Read", "Bash"},
+    "adversary": {"Read", "Bash"},
+    "planner": {"Read", "Bash"},
+    "scout": {"Read", "Bash", "WebFetch", "WebSearch"},
+}
+READ_ONLY = sorted(REPORTING_TOOLS)
+WRITERS = sorted(set(WORKERS) - set(REPORTING_TOOLS))
 MODELS = {"opus", "sonnet", "haiku"}
 
 
@@ -84,8 +93,19 @@ def test_a_reporting_worker_holds_only_reading_tools(role):
     tools = raw if isinstance(raw, list) else [name.strip() for name in str(raw or "").split(",")]
     tools = [str(name) for name in tools if str(name)]
     assert tools, f"{role}.md: no tools list, so it inherits every tool"
-    assert set(tools) <= REPORTING_TOOLS, f"{role}.md: {sorted(set(tools) - REPORTING_TOOLS)}"
+    allowed = REPORTING_TOOLS[role]
+    assert set(tools) <= allowed, f"{role}.md: {sorted(set(tools) - allowed)} not allowed for this role"
     assert "disallowedTools" not in meta, f"{role}.md: name the tools it has, not the ones it lacks"
+
+
+@pytest.mark.parametrize("role", WRITERS)
+def test_a_writing_worker_cannot_start_agents(role):
+    """The builder and the scribe edit files, so they keep every tool but one."""
+    meta, _ = parts(role)
+    assert "tools" not in meta, f"{role}.md: a tools list would drop tools a writer needs"
+    denied = meta.get("disallowedTools")
+    denied = denied if isinstance(denied, list) else [name.strip() for name in str(denied or "").split(",")]
+    assert "Agent" in denied, f"{role}.md: disallowedTools must name Agent"
 
 
 def test_the_rules_file_routes_work_to_every_worker_and_names_the_lead():

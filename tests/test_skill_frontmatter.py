@@ -49,3 +49,17 @@ def test_a_colon_inside_a_plain_scalar_is_caught(tmp_path):
     bad.write_text("---\nname: x\ndescription:\n  Use for every note in the vault (Seano): writing and\n  updating notes.\n---\n\n# X\n")
     with pytest.raises(yaml.YAMLError):
         frontmatter(bad)
+
+
+DESCRIPTION_LIMIT = 1024  # the Agent Skills limit; the list can cut a longer one
+
+# Skills that were over the limit before this test existed, each held at its
+# size so that it cannot grow. Shorten one, then lower or remove its line.
+OVER_LIMIT = {"writing-markdown-docs": 1039, "visual-artifacts": 1565}
+
+
+@pytest.mark.parametrize("path", SKILLS, ids=lambda p: p.parent.name)
+def test_a_skill_description_fits_the_limit(path):
+    size = len(frontmatter(path)["description"])
+    cap = OVER_LIMIT.get(path.parent.name, DESCRIPTION_LIMIT)
+    assert size <= cap, f"{path.parent.name}: description is {size} characters, the cap is {cap}"
