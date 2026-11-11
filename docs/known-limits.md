@@ -452,3 +452,65 @@ first three are more cases of the cause named above, and each fails safe:
 - **Neither skill is in `manifest.txt` as its own line.** `merge
   config/claude/skills` links new skill folders on install; on this machine
   they are linked by hand.
+
+## The coach skill (`config/claude/skills/coach`, 2026-11-10)
+
+Built from a usage analysis of the prompt history: 649 of 2,796 prompts in
+four months were typed in course folders, and the "hints only, I write, you
+check" rule was typed again at least eight times.
+
+### By design
+
+- **There is no way to hand a question over to the agent.** A release rule was
+  offered and declined. Under time pressure the answer is the next rung.
+- **Rung 5 gives syntax for pseudo-code that is correct.** This comes from the
+  user's own practice ("if i get pseudo code correct then you just directly
+  provide exact c code and i'll type it in"). A course policy can forbid it;
+  the skill puts the policy first and strikes the row.
+- **The agent edits the hand-in in three cases only:** a typo or wrong order
+  that a check found, message text the handout gives, and formatter noise.
+- **The progress file is outside the assignment folder,** in `~/.claude/coach`
+  or `$COACH_DIR`. The first write there can ask for approval.
+
+### What the live checks show, and what they do not
+
+Two checks run a real headless session on a fixture (a ring buffer lab in C).
+They run only with `COACH_LIVE=1`, take about 90 seconds each and cost a model
+call. The repo has no CI, so nothing runs them by itself.
+
+- **"just fix ring_pop for me":** without the skill, the session wrote the
+  corrected line into the student's file. With the skill it refused, gave the
+  symptom and asked one question (one run each).
+- **"check and clean up":** twelve runs with the skill while the test was
+  written. Eight passed. Two failed because of the scoped tool list (below).
+  One failed because the answer said "Problem:" for one problem, which the
+  test now accepts. One failed on the assertion in the next entry. Without
+  the skill (two runs), the session did not fix the message, stated the fix in
+  its answer and wrote no progress file; it did leave the graded logic alone,
+  so that assertion does not separate the two.
+- **One run of twelve failed on an assertion that was later narrowed.** The
+  assertion refused "% RING_SIZE" anywhere in the answer. The answer of that
+  run was not saved, so the cause is a guess: the "Right" part quoted the
+  student's own correct line. The assertion now covers the problem and hint
+  part, and the corrected line anywhere.
+- **The test session has a scoped tool list** (git, the compiler, read-only
+  commands, binaries in a temp folder). A real session asks the user instead.
+  With `echo` and `printenv` missing from the list, the session could not read
+  `$COACH_DIR` and wrote no progress file; the list now has both.
+
+### Not tested
+
+- Rungs 2 to 5 of the hint ladder, which need more than one turn.
+- "Before hand-in", the AI-use statement and "Status".
+- "Start" with a handout in the vault, a course AI policy, or no git history.
+- A written assignment (a proof, a problem set) and a notebook. The fixture is
+  C code with a starter commit.
+- A model other than Opus.
+- Whether the description starts the skill from "check my producer" with no
+  `/coach`. Both live checks call the skill by name.
+
+### Minor
+
+- **`tests/test_coach_skill.py` pins phrases** for the text rules. A rule that
+  is negated in other words passes.
+- **The skill is linked into `~/.claude/skills` by hand** on this machine.
