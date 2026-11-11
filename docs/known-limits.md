@@ -467,8 +467,21 @@ check" rule was typed again at least eight times.
   user's own practice ("if i get pseudo code correct then you just directly
   provide exact c code and i'll type it in"). A course policy can forbid it;
   the skill puts the policy first and strikes the row.
-- **The agent edits the hand-in in three cases only:** a typo or wrong order
-  that a check found, message text the handout gives, and formatter noise.
+- **One rule wins over the rest of the skill:** the agent never writes or
+  says a step of the solution that the student has not stated first. The
+  first review failed the skill on two pairs of rules with no order between
+  them (a "wrong order" fix against "never trivial", and "answer a concept
+  question in full" against "never states the logic first"). This is the
+  cause that failed `shape`, so the fix was this one rule, not two patches.
+- **The agent edits the hand-in in three kinds of case:** a slip that a check
+  found (a typo, or an order that differs from what the student stated),
+  message text the handout gives, and formatter noise or a file the handout
+  says not to change. It also writes a README draft into the file when the
+  student asks for that.
+- **"Stated first" is judged by the agent.** Whether a typo fix or an order
+  fix matches what the student wrote in pseudo-code or in a message is a
+  reading, and a wrong reading gives a step away. The skill says to treat
+  doubt as a problem to report.
 - **The progress file is outside the assignment folder,** in `~/.claude/coach`
   or `$COACH_DIR`. The first write there can ask for approval.
 
@@ -493,10 +506,21 @@ call. The repo has no CI, so nothing runs them by itself.
   run was not saved, so the cause is a guess: the "Right" part quoted the
   student's own correct line. The assertion now covers the problem and hint
   part, and the corrected line anywhere.
-- **The test session has a scoped tool list** (git, the compiler, read-only
-  commands, binaries in a temp folder). A real session asks the user instead.
-  With `echo` and `printenv` missing from the list, the session could not read
-  `$COACH_DIR` and wrote no progress file; the list now has both.
+- **The test session cannot build or run the lab.** It accepts edits without
+  asking, so its tool list holds only reading commands, `git restore`, and
+  `printenv COACH_DIR`. An earlier list allowed the compiler, any git command
+  and any binary under `/tmp`; the automated security check flagged it on
+  2026-11-10 and it was removed. The session therefore finds the bug by
+  reading, and the skill's "build and run" step is not exercised. A real
+  session asks the user before it runs a command.
+- **The session is not in a container, and its Read tool is not scoped.** It
+  can read any file the user can. Nothing untrusted reaches it: its only
+  inputs are this repo's fixture and skill. Its process gets a short list of
+  environment variables, not the whole shell environment. Its answer is saved
+  to pytest's temp folder and shown in a failed assertion, with no redaction.
+  `git restore` and file edits inside the fixture stay possible.
+- **Without a way to read `$COACH_DIR` the session writes no progress file.**
+  Two early runs showed this; the list has `printenv COACH_DIR` for it.
 
 ### Not tested
 
@@ -512,5 +536,12 @@ call. The repo has no CI, so nothing runs them by itself.
 ### Minor
 
 - **`tests/test_coach_skill.py` pins phrases** for the text rules. A rule that
-  is negated in other words passes.
+  is negated in other words passes, and so does a new sentence that says the
+  opposite ("rung 6: write the fix"). Not pinned at all: the wording of "Start"
+  and of "Status", and the format block of the progress file.
+- **The second live check looks for the fix in words by a short list**
+  ("% RING_SIZE", "modulo", "= 0;", "reset head to 0"). Another wording of the
+  fix passes. "Back to slot 0" is allowed, because the handout says it: one
+  run failed on that phrase before the list was corrected. The exact comparison of `ring_pop` with the student's text
+  catches every edit.
 - **The skill is linked into `~/.claude/skills` by hand** on this machine.

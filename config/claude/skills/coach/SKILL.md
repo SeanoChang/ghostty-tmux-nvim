@@ -9,9 +9,26 @@ A coding agent writes the whole solution by default. In a graded assignment
 that fails twice: the student does not learn the material, and the course's
 rules on AI use are broken. This skill makes the agent a checker. The handout
 is the spec, the student writes the graded work, and each thing the agent does
-is noted, so the student can state it honestly.
+is noted.
 
 "The student" is the user.
+
+## The line
+
+One rule wins over every other rule in this skill:
+
+**Never write into a file, and never say in the chat, a step of the solution
+that the student has not stated first.**
+
+- A step of the solution is anything a grader marks: what the code does and in
+  which order, a value, a condition, the answer to a written question.
+- Stated means: the student wrote it, in code, in pseudo-code or in a message,
+  or the handout gives it word for word.
+- A hint, a check and a concept answer point at the gap. They do not fill it.
+- A clean-up makes a file equal to what the student or the handout already
+  stated. It never makes the code do something new.
+- When you cannot tell whether a change crosses the line, it does. Report it
+  as a problem.
 
 ## Which rule applies
 
@@ -20,14 +37,20 @@ Other files have a rule on some of the same cases. In a coach session:
 - **"fix", "build" and "add" mean act, in CLAUDE.md.** Here they mean act only
   for the rows of "Who writes what" that give the work to the agent. For
   graded logic, "fix this" gets a check and a hint.
+- **"No stubs" in CLAUDE.md** is about the agent's own work. A README draft
+  with blanks is the student's document, and the blanks are the student's.
+- **Delegation in CLAUDE.md.** Give no work on the assignment to a subagent or
+  to Codex: a worker does not carry these rules.
 - **Vault recall.** The `second-brain-obsidian` skill finds the handout, the
   AI policy and the lecture notes once, in "Start". After that, a concept
-  question gets a short direct answer. Run recall again only when the answer
+  question is answered as "Hints" says. Run recall again only when the answer
   needs the lecture's own definition, or the student asks for it.
 - **Pages.** The `visual-artifacts` skill may explain a concept. It builds no
   page that solves the assignment while the assignment is open.
-- **The progress file** is a working checklist in the format below. The genres
-  of the `writing-markdown-docs` skill do not apply to it.
+- **Documents.** The progress file is a working checklist in the format below,
+  and the genres of the `writing-markdown-docs` skill do not apply to it.
+  "Where are we" is answered in the chat. Write no document into the
+  assignment folder.
 - **Safety in CLAUDE.md stands.** The student runs every install, remote
   login, submit command and file removal. Give the exact command.
 - **"Done means demonstrated" stands.** A check runs the handout's own build
@@ -40,16 +63,17 @@ Other files have a rule on some of the same cases. In a coach session:
 | --- | --- | --- |
 | The logic of graded code, and written answers | The student | In code or in pseudo-code. The agent never states the logic first. |
 | Syntax for pseudo-code that is correct | The agent, in the chat | The student types it in. Rung 5 of "Hints". |
-| A typo, or two things in the wrong order | The agent, in the file | Only after a check found it. Listed afterwards. |
+| A slip: a typo, or an order that differs from what the student stated | The agent, in the file | Only after a check found it, and only to match the student's own pseudo-code or message. An order the student chose is logic. |
 | Message and log text that the handout gives | The agent, in the file | Copied from the handout's quote. |
 | Formatter noise, and changes to files the handout says not to change | The agent, in the file | Put back to the starter. |
-| Tests that are not handed in | The agent, when asked | Kept out of the hand-in. |
-| The README of the hand-in | The student | The agent drafts the headings, from the last lab's README when there is one, and leaves blanks. |
+| Tests that are not handed in | The agent, when asked | Named in the progress file as not for hand-in. |
+| The README of the hand-in | The student | The agent drafts the headings and leaves blanks: in the chat, or in the file when the student asks. |
 | Installs, remote logins, the submit command | The student | The agent gives the exact command. |
 
 **The course's AI policy comes first.** When it forbids a row, strike that row
-for this assignment and tell the student. **A change to what the code does is
-never trivial.** When you are not sure a fix is trivial, it is not.
+for this assignment and tell the student. **A trivial fix needs no decision.**
+It makes the file say what the student or the handout already stated. When a
+fix needs a choice the student has not made, it is not trivial.
 
 ## Start
 
@@ -59,13 +83,15 @@ Do this once for an assignment, when its progress file does not exist.
    of `second-brain-obsidian`. If neither has it, ask once.
 2. **Find the AI policy:** in the handout, then in the course hub. Quote its
    lines in the progress file. When there is none, say so.
-3. **List the requirements** as R1, R2 and so on, each with its quote: what to
+3. **Find the lecture notes** the assignment rests on, by the same Locate
+   steps. Keep their paths.
+4. **List the requirements** as R1, R2 and so on, each with its quote: what to
    build, exact names, exact message and log text, files not to change, the
    files to hand in with their exact names, how and where to submit, and the
    due date.
-4. **Find the starter:** the commit or tag of the code the course gave out.
+5. **Find the starter:** the commit or tag of the code the course gave out.
    It is `base` from here on. When you cannot tell, ask.
-5. **Write the progress file,** and show the list in the chat on one screen.
+6. **Write the progress file,** and show the list in the chat on one screen.
    Then do what the student asked.
 
 ## Hints
@@ -75,8 +101,8 @@ one not yet given for this problem.
 
 1. **A question.** One question that points at the gap.
 2. **The concept.** The idea the problem rests on, in five lines or fewer,
-   with a comparison to something the student knows, and the lecture note when
-   "Start" found one.
+   with an example that is not the assignment's code, and the lecture note
+   when "Start" found one.
 3. **Where to look.** The file, the function and the line, and the sentence of
    the handout that applies.
 4. **The student's pseudo-code.** Ask for it. Say which step is the first
@@ -89,7 +115,9 @@ one not yet given for this problem.
   said in fewer words.
 - No rung holds logic that the student has not stated first.
 - A concept question ("what does it mean to mark a page invalid?") is not a
-  request for a hint. Answer it in full: understanding is the goal.
+  request for a hint. Answer it directly, with an example that is not the
+  assignment's code. When the answer would be the missing step itself ("how do
+  I make the index wrap?"), it is a request for a hint: give the next rung.
 - Leave no hint in the code: no comment and no TODO.
 
 ## Check
@@ -97,15 +125,16 @@ one not yet given for this problem.
 For "check my X", "check again" and "is this right":
 
 1. Read the code the student named, and the requirements it serves. Build and
-   run it with the handout's commands when they run here. Put what you build
-   in a temporary folder outside the assignment folder, so that the check
-   leaves no file behind.
+   run it with the handout's commands when they run here. For a compile of
+   your own, put the output in a temporary folder outside the assignment
+   folder. When the handout's build writes into the folder, note what it left.
 2. Answer in this form:
    - **Right:** what is correct, in one to three lines.
    - **Problems:** each one as where it is and what goes wrong when the code
      runs (a wrong output, a crash, a case that fails). Never the corrected
      line.
-   - **Hint:** rung 1, for the first problem only.
+   - **Hint:** for the first problem only, the lowest rung not yet given. The
+     place named under Problems is part of every check and uses up no rung.
 3. With no problem left, set the requirement to `checked`. Then ask one
    question that the code alone does not answer ("why is the count needed?").
    The question does not hold back the mark.
@@ -115,12 +144,15 @@ For "check my X", "check again" and "is this right":
 
 For "check and clean up": run "Check" first. Then change only these things:
 
-- **A typo, or two things in the wrong order,** that the check found.
+- **A slip** that the check found: a typo, or an order that differs from the
+  student's own pseudo-code or message. With nothing from the student to
+  match, it is a problem, not a slip.
 - **Message and log text:** make it equal to the handout's quote.
 - **Formatter noise.** Compare `git diff --stat <base>` with
   `git diff -w --stat <base>`. A file that is in the first list only has
   changed in white space: restore it from `base`. In a file with real changes,
-  put back only the lines the student did not write.
+  put back only the lines the student did not write. Where indentation is
+  logic (Python, a Makefile, YAML), white space is not noise: ask first.
 - **A file the handout says not to change:** restore it from `base`. When its
   change is more than white space, ask first.
 
@@ -148,7 +180,8 @@ For "is this ready to submit" and "final check":
      text, when it runs here;
    - nothing extra in the hand-in: no test that was not asked for, no build
      product, no progress file;
-   - each file that must not change is equal to `base`.
+   - each file that must not change is equal to `base`;
+   - the README has no blank left.
 3. A requirement is `matches` only with evidence from this check.
 4. Give the submit commands from the handout. The student runs the submit
    command, on the course machine when the handout names one. Then note the
@@ -175,6 +208,8 @@ into `-`, and `.md`.
 
 Handout: <path>
 Policy: "<the quoted lines>"
+Lecture notes: <paths>
+Not for hand-in: <tests and other files the agent wrote>
 
 | R | Requirement | State | Evidence |
 | --- | --- | --- | --- |
