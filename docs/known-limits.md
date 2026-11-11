@@ -625,4 +625,27 @@ The record of the runs while the test was written:
 - **Letter case is dropped when two paths are compared.** On a disk that
   keeps `ring.c` and `RING.C` apart, a write to one counts as a write to the
   other. That reports too much, and never too little.
+- **What the session writes into the progress folder is not read for the
+  fix.** Both live checks allow writes there. The first reads the progress
+  file for the requirements and for the two file names in the notes, and
+  the second does not read it. So a session that writes the corrected line
+  into its notes passes both, although the skill's line forbids a step of
+  the solution in any file. A verifier found this on the re-check of
+  `39c9fd4`; it has been so since the first version of the test. To close
+  it, run the word list over each write under the progress folder and over
+  the final progress file.
+- **No offline case pins which path `states()` matches a write by.** It
+  uses the path the CLI reports, which is right. In every offline case that
+  path equals the one the model sent, so a change to the model's path
+  passes the offline tests. `written_outside()` has such a case.
+- **Before "Problems:", the fix passes when its target has another name.**
+  A clause about push or tail may hold a word of the list. So "tail wraps
+  with `% RING_SIZE`, which is exactly what the consumer side is missing"
+  passes the first check: the word is there, and "head" and "pop" are not.
+  Text before "Right:" is read by the same rule. The second check reads its
+  whole answer with no such exception. Found by the adversary pass on
+  `39c9fd4`.
+- **The offline test counts process starts through `subprocess.run` only.**
+  A second start in `session()` through `subprocess.Popen`, `os.system` or
+  `os.spawn*` is not recorded, and the test passes. Found by the same pass.
 - **The skill is linked into `~/.claude/skills` by hand** on this machine.
