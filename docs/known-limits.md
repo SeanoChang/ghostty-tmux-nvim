@@ -356,5 +356,16 @@ lines in `config/claude/CLAUDE.md`. None is fixed.
   so a fresh install gets none of them.
 - **The planner's model and effort are a choice, not a measurement:** Opus at
   medium effort, because a wrong step costs a builder round.
+- **The planner is limited to a task that a builder or Codex will take.** The
+  rules keep design and dependent work in the lead, so a planner for every
+  task would give them two readings. A wider planner needs that rule changed
+  first.
+- **The two new definitions are linked into `~/.claude/agents` by hand on this
+  machine** (2026-11-10), like the other four. A session loads agent types
+  when it starts.
+- **`tests/test_worker_roles.py` matches the job sentence as a phrase.** A
+  definition that quotes the job and then states another one still passes.
+- **The scout's vault rule is one line of text.** It cannot load the
+  `second-brain-obsidian` skill, so it knows only `sb find`.
 - **"Read-only" for the verifier, adversary, planner and scout is a rule in
   their text.** They have no Edit or Write tool, but Bash can still write.

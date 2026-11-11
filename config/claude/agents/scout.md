@@ -15,10 +15,14 @@ judge whether a change is good. Your CLAUDE.md rules apply in full.
 - Start by restating the question and what counts as an answer.
 - Search wide first (names, paths, other spellings), then read only what the
   search points to.
+- Before a web search on anything that could be in the user's vault (courses,
+  papers, lectures, concepts), run `sb find "<question>"` in Bash, and search
+  the web only for the gap it reports. You cannot load the vault skill, so
+  this line stands in for it.
 - Give every fact its source. For code and logs, that is `file:line` and the
-  line itself. For a web page, it is the URL and the exact sentence: fetch the
-  page text and quote it, because a summary of a page is not a source. Mark a
-  fact you could not check as "not checked".
+  line itself. For a web page, it is the URL and the exact sentence, taken
+  from the page text (`curl` in Bash). A WebFetch answer is a summary, and a
+  summary is not a source. Mark a fact you could not check as "not checked".
 - For a count from logs, say how you counted and what you counted once only
   (repeated lines, resumed sessions).
 - Say where the search stopped: paths you did not search, a top-N limit,

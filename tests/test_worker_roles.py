@@ -36,8 +36,10 @@ CAST = {
 }
 WORKERS = [role for role in CAST if role != "lead"]
 
-# Workers that report and never change the project tree.
+# Workers that report and never change the project tree, and the only tools
+# they may hold. An allowlist: a new edit tool is refused without being named.
 READ_ONLY = ["verifier", "adversary", "planner", "scout"]
+REPORTING_TOOLS = {"Read", "Bash", "WebFetch", "WebSearch"}
 MODELS = {"opus", "sonnet", "haiku"}
 
 
@@ -76,11 +78,14 @@ def test_a_worker_sets_its_model_so_it_never_inherits_one(role):
 
 
 @pytest.mark.parametrize("role", READ_ONLY)
-def test_a_reporting_worker_has_no_edit_tool(role):
+def test_a_reporting_worker_holds_only_reading_tools(role):
     meta, _ = parts(role)
-    tools = [name.strip() for name in str(meta.get("tools", "")).split(",")]
-    assert tools != [""], f"{role}.md: no tools list, so it inherits every tool"
-    assert not {"Edit", "Write", "NotebookEdit", "Agent"} & set(tools), f"{role}.md: {tools}"
+    raw = meta.get("tools")
+    tools = raw if isinstance(raw, list) else [name.strip() for name in str(raw or "").split(",")]
+    tools = [str(name) for name in tools if str(name)]
+    assert tools, f"{role}.md: no tools list, so it inherits every tool"
+    assert set(tools) <= REPORTING_TOOLS, f"{role}.md: {sorted(set(tools) - REPORTING_TOOLS)}"
+    assert "disallowedTools" not in meta, f"{role}.md: name the tools it has, not the ones it lacks"
 
 
 def test_the_rules_file_routes_work_to_every_worker_and_names_the_lead():
@@ -88,7 +93,17 @@ def test_the_rules_file_routes_work_to_every_worker_and_names_the_lead():
     table = [line for line in rules.splitlines() if line.lstrip().startswith("|")]
     for role in WORKERS:
         assert any(f"`{role}`" in line for line in table), f"no delegation row sends work to `{role}`"
-    assert "lead" in rules
+    assert "the lead session" in rules
+
+
+def test_the_planner_is_only_for_a_task_that_a_builder_or_codex_takes():
+    """One case, said the same way in both places. The rules keep design and
+    dependent work in the lead, so a wider planner would have two readings."""
+    rules = (CLAUDE / "CLAUDE.md").read_text(encoding="utf-8")
+    row = next(line for line in rules.splitlines() if "`planner`" in line and line.lstrip().startswith("|"))
+    meta, body = parts("planner")
+    for where, text in (("the delegation row", row), ("the description", meta["description"]), ("the opening", flat(body))):
+        assert "a builder or codex will take" in text.lower(), f"{where} does not limit the planner"
 
 
 def test_the_cast_matches_its_source_when_one_is_given():

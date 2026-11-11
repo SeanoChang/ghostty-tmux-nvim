@@ -72,11 +72,12 @@
 ## Review and merge
 
 - Set the tier when you write the task, from what the change touches, and write
-  it on the task. Give tier 2 work its own task and PR, so lower-tier work does
-  not wait for its review. Unknown is tier 1. A repo's `REVIEW.md` can name
-  paths that are always tier 2. The diff decides: when a change comes to touch
-  a higher tier than its task says, raise the tier on the task and run that
-  tier's review. A verifier that reports "tier too low" has raised it.
+  it on the task. At that time, give tier 2 work its own task and PR, so
+  lower-tier work does not wait for its review. Unknown is tier 1. A repo's
+  `REVIEW.md` can name paths that are always tier 2. The diff decides: when a
+  change comes to touch a higher tier than its task says, raise the tier on the
+  task and run that tier's review. A verifier that reports "tier too low" has
+  raised it.
 
   | Tier | The change touches                                                                                                             | Review                                             |
   | ---- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------- |
@@ -135,7 +136,7 @@
   | an independent component: its own files, its own check | `builder`, in a worktree             |
   | work a command can fully grade                         | Codex first (skill `codex-exec`)     |
   | review of a change, refuting a finding list            | `verifier`, then `adversary` by tier |
-  | the steps of one task, from reading its code           | `planner`                            |
+  | the steps of a task a builder or Codex will take       | `planner`                            |
   | logs, long output, wide search                         | `scout`                              |
   | a document from handed-over material                   | `scribe`                             |
   | work that needs this conversation's context            | `fork`                               |
