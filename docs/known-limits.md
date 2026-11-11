@@ -465,9 +465,10 @@ the run may change.
 - **`CLAUDE.md` is the root, and `AGENTS.md` is never edited by hand.** A hand
   edit fails `tests/test_codex_rules.py`. What is only for Codex goes in
   `AGENTS.src.md`.
-- **The rule names in `CLAUDE.md` are HTML comments.** Claude Code leaves them
-  out when it loads the file, so they cost a session nothing. The size test
-  leaves a name line out whole, line end included.
+- **The rule names in `CLAUDE.md` are HTML comments.** Claude Code leaves HTML
+  comments out when it loads the file (seen in 2.1.319; see
+  `tests/test_global_rules.py`), so the names cost a session nothing. The size
+  test leaves a name line out whole, line end included.
 - **Codex never merges.** `AGENTS.md` says so, and on this machine
   `~/.codex/rules/default.rules` forbids `gh pr merge`. That rules file is not
   tracked here.
@@ -503,8 +504,8 @@ the run may change.
 
 ### Tested (2026-11-11, codex-cli 0.167.0)
 
-- The suite: 231 passed, 4 skipped. With `CODEX_PROMPT=1`, the three tests
-  that ask the real `codex` program to render a prompt also pass.
+- The suite: 252 passed, 4 skipped. Three of the skipped tests ask the real
+  `codex` program to render a prompt; with `CODEX_PROMPT=1` they pass.
 - 42 deliberate breaks of `build_agents_md.py` and `codex-run`, one at a time:
   the tests failed for each. The script that makes the breaks is not in the
   repo.

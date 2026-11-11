@@ -19,8 +19,10 @@ allow list is checked after the run, on the worktree only.
 
 Run: python3 -m pytest tests/test_codex_run.py -q -p no:cacheprovider
 """
+import fnmatch
 import json
 import os
+import random
 import subprocess
 import time
 import tomllib
@@ -291,6 +293,29 @@ def test_a_worktree_needs_a_new_path_a_repository_and_no_folder_argument(box, le
     assert box("--log", box.log, "--worktree", str(box.tmp / "wt"), "--repo", str(not_a_repo), "--", "p").returncode == 2
     done = box("--log", box.log, "--worktree", str(box.tmp / "wt"), "--repo", str(lead), "--", "-C", "/tmp", "p")
     assert done.returncode == 2 and box.args() is None and not (box.tmp / "wt").exists()
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_random_changes_and_patterns_against_a_reference_matcher(box, lead, seed):
+    """The files a run changed and the patterns it may change are random. The
+    list codex-run prints must be the one Python's own matcher gives: in both,
+    `*` is any run of characters, `/` included, and `?` is one character."""
+    rng = random.Random(seed)
+    folders = ["src", "tests", "docs", "a b", "é", "deep"]                 # src/ is in the lead's tree already
+    names = ["x.py", "test_x.py", "NOTES.md", "notes.txt", "é.txt", "a.py"]
+    files = sorted({"/".join([rng.choice(folders) for _ in range(rng.randint(0, 2))] + [rng.choice(names)])
+                    for _ in range(rng.randint(1, 6))})
+    shapes = ["src/*", "tests/test_*.py", "*.md", "*/x.py", "docs/*", "?.py", "*", "src/deep/*", "a b/*", "*.t?t", "é/*", "NOTES.md"]
+    patterns = rng.sample(shapes, rng.randint(1, 3))
+    want = [f for f in files if not any(fnmatch.fnmatchcase(f, p) for p in patterns)]
+    done, _ = worktree_run(box, lead, ";".join(f"write:{f}" for f in files), *patterns)
+    if not want:
+        assert done.returncode == 0, (files, patterns, done.stderr)
+    else:
+        assert done.returncode == 3, (files, patterns, done.stderr)
+        listed = done.stderr.split("changed outside the allowed files:\n")[1].splitlines()
+        assert sorted(line.strip() for line in listed) == sorted(want), (files, patterns)
+    assert f"{len(files)} file(s) changed" in done.stderr
 
 
 # ── the watchdog ─────────────────────────────────────────────────────────────

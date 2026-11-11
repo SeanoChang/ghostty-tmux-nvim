@@ -20,6 +20,7 @@ hash only forces a person or an agent to read both when the root changes.
 Run: python3 -m pytest tests/test_codex_rules.py -q -p no:cacheprovider
 """
 import importlib.util
+import random
 from pathlib import Path
 
 import pytest
@@ -209,3 +210,33 @@ def test_all_problems_are_reported_in_one_run():
         bam.build(src, "# Codex\n\n{{rule: nope}}\n<!-- adapts: a@0000000000 -->\n- x\n")
     text = str(err.value)
     assert "no rule named 'nope'" in text and "'a' changed" in text and "'b' in CLAUDE.md has no decision" in text
+
+
+# ── random roots against what was put into them ──────────────────────────────
+
+def test_random_roots_give_back_the_rules_that_were_put_in():
+    """Build a root file from random pieces and keep a record of the rules in
+    it. rules() must return exactly that record."""
+    rng = random.Random(20261111)
+    words = ["- a rule", "  more of it", "| a | table |", "text with `code`", "    deep indent", "1. numbered"]
+    for _ in range(400):
+        lines, want, used, in_rule = ["# Title", ""], {}, 0, False
+        for _ in range(rng.randint(1, 6)):
+            kind = rng.random()
+            if kind < 0.25:
+                lines += [rng.choice(["## Section", "### Sub", "# Top"]), ""]
+                in_rule = False
+            elif kind < 0.45 and not in_rule:      # a note may stand only where no rule is open
+                lines += rng.choice([["<!-- a note -->"], ["<!-- a note that", "     runs on -->"]]) + [""]
+            else:
+                used += 1
+                name = f"r{used}" + rng.choice(["", ".x", "-y", ".a-b"])
+                body = [rng.choice(words) for _ in range(rng.randint(1, 4))]
+                for _ in range(rng.randint(0, 2)):          # blank lines inside the rule
+                    body.insert(rng.randint(1, len(body)), "")
+                while not body[-1].strip():
+                    body.pop()
+                want[name] = "\n".join(body)
+                lines += [f"<!-- rule: {name} -->"] + body + [""] * rng.randint(0, 2)
+                in_rule = True
+        assert bam.rules("\n".join(lines) + "\n") == want, lines
