@@ -631,6 +631,27 @@ The record of the runs while the test was written:
   caught by the snapshot, because a session cannot remove a file. On this
   machine the disk ignores letter case, so the comparison is exact here.
   The automated security check flagged this on `39c9fd4`.
+- **The offline case for a call with no usable id pins the old key form
+  only.** Its real id is `call-2`, the form the made-up keys had before. The
+  key is now a tuple, which no id read from JSON can equal. A later change to
+  a text key of another form (say `no-usable-id-<n>`) would bring the
+  collision back for a real id of that form, and the case would still pass.
+  A verifier found this on the re-check of the fix.
+- **A second result for one id replaces the first** in `parse_stream`. With
+  a first result that worked and a second one marked as an error, the call
+  counts as failed, its `tool_use_result` is dropped, and `stream_faults`
+  reports nothing. So a check that reads what a write held before does not
+  get it for that call. The CLI sends one result for each id. To close it,
+  report a second result for one id as a fault. Found by the adversary pass
+  on the same fix; the lines are older than the fix.
+- **A stream in another shape can end a test with an exception, and not
+  with a stated reason.** A tool call whose `input` is text passes
+  `stream_faults`; `written_outside` then raises `AttributeError` where it
+  reads the path from the input. A tool `name`
+  that is a list raises `TypeError` in `stream_faults`. One line of 100,000
+  `[` raises `RecursionError` in `parse_stream`, which catches `ValueError`
+  only. Each still fails the test. Found by the same pass; the CLI sends
+  none of these shapes.
 - **What the session writes into the progress folder is not read for the
   fix.** Both live checks allow writes there. The first reads the progress
   file for the requirements and for the two file names in the notes, and
