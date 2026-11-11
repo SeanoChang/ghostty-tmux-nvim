@@ -111,7 +111,8 @@ def rules(root_text):
         if line.lstrip().startswith("<!-- rule"):
             raise BuildError(f"CLAUDE.md:{number}: not a rule name line: {line!r}")
         if line.startswith("<!--") and name is None:
-            # `<!-->` and `<!--->` are whole comments to Claude Code: the end is looked for from the third character.
+            # The end is looked for from the third character, so `<!-->` and `<!--->` end at once, as in the
+            # Markdown reader of Claude Code. (Its stripping step keeps a line that is only that: docs/known-limits.md.)
             if not comment_end(number, line, 2):
                 comment_from = number
             continue

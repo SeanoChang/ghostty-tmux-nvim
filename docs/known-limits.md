@@ -570,6 +570,35 @@ the run may change.
   test checks random files against a reading that shares no code with the
   build. It does not run Claude Code's own Markdown reader, so a line that
   the two read differently in a way nobody has thought of is still possible.
+- **Where the build and Claude Code still read `CLAUDE.md` differently**
+  (found at `6220dc9` by the adversary, with marked 4.3.0, and by the
+  verifier, with marked 17; each used the comment stripping of Claude Code
+  2.1.319; all nits, not changed). The first three need Markdown that is
+  broken or characters nobody types, and the repo's own test cannot catch
+  them: it knows no code fences and no HTML blocks, and it parts lines the
+  way the build does.
+  - A code fence that is still open at the next heading or rule name line. A
+    `# ...` line in it is code to Claude Code; the build takes it as a
+    heading and drops it. A fence that closes inside its rule, or outside
+    any rule, stops the build.
+  - An HTML block that is not closed (`<details>` with no end), in the same
+    way.
+  - A line separator other than a line feed: U+2028, U+2029, form feed,
+    `\x1c` to `\x1e`, `\x85`. The build parts the line there; Claude Code
+    does not.
+  - A line that is only `<!-->` or `<!--->`. The build takes it as a comment.
+    Claude Code 2.1.319 keeps it as text, because its stripping step finds no
+    match in it. The line holds no instruction.
+  - A heading can hold an instruction (`## Never push to main`) and needs no
+    decision. This is by design: a heading is not a rule.
+  - Whether a rule name line reaches a session depends on the Markdown
+    reader. With marked 17 all 26 comments of the file were taken out (the
+    verifier, in its first round; the file is as it was at `81d8e8e`). With
+    marked 4.3.0, ten name lines
+    that follow rule text with no blank line between stay as text (the
+    adversary). In random files of the verifier, a name line after an open
+    code fence, a `<div>` line or a `>` quote also stayed. No rule text is
+    lost by this; a session reads a few more words.
 - **Small faults in `codex-run` that the adversary found at `95252c9`, not
   changed:**
   - `-Cx`, `-mfoo` and `-m=foo` in the codex args are not seen as a folder or
