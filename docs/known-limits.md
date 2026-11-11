@@ -622,9 +622,21 @@ The record of the runs while the test was written:
   depend on the stream.
 - **Only the last content of `main.c` is compared.** A write to it that was
   undone later is allowed. It is a file the student does not hand in.
-- **Letter case is dropped when two paths are compared.** On a disk that
-  keeps `ring.c` and `RING.C` apart, a write to one counts as a write to the
-  other. That reports too much, and never too little.
+- **Letter case is dropped when two paths are compared,** on every disk. On
+  a disk that keeps `ring.c` and `RING.C` apart, the two then count as one
+  file. For the contents of `ring.c` that reports too much. For the list of
+  places a session may write it allows too much: a write to `RING.C`, or to
+  a folder that differs from the progress folder in letter case only, is
+  not in the list of writes elsewhere. A new file in the fixture is still
+  caught by the snapshot, because a session cannot remove a file. On this
+  machine the disk ignores letter case, so the comparison is exact here.
+  The automated security check flagged this on `39c9fd4`.
+- **A tool call with no id, or with an id seen before, gets a made-up key**
+  (`call-<n>`), and that key can replace an earlier call whose real id has
+  the same form. The same check flagged it as a call that is lost unseen.
+  It is not unseen: a call with a made-up key can never get a result,
+  because results are matched by id, and a call with no result fails the
+  run. The ids come from the API, not from the model.
 - **What the session writes into the progress folder is not read for the
   fix.** Both live checks allow writes there. The first reads the progress
   file for the requirements and for the two file names in the notes, and
