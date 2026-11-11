@@ -421,6 +421,27 @@ lines in `config/claude/CLAUDE.md`. None is fixed.
 - **The tests for the two skills are pinned phrases, plus four comparisons
   with other files.** A rule that is reworded with the same meaning fails a
   test; a rule that is negated in other words passes.
+
+Minor findings from the re-check of the fix (commit `2d7f2c0`, pass). The
+first three are more cases of the cause named above, and each fails safe:
+
+- **"Step 5 says only what goes into each section" is not exact.** Step 5
+  also adds two sections that the design genre's outline does not have: Build
+  order and Open items.
+- **"Never dropped" does not say that the two stop rules give way to it.** A
+  step that runs out of time "opens nothing new", and step 1 can run out
+  before the "Done when" commands are written. The whole box can end in step
+  5 before the fresh reader's check is started.
+- **A doc written when the whole box is up has no `> [!tldr]`.** The genre
+  puts it first, and the skill writes only Decisions, Failure modes and Open
+  items at that point. The missing summary is listed under Open items.
+- **"The third approach" is not defined.** When the session cut list drops
+  one approach of three, nothing says that the smallest one that meets every
+  P0 is kept.
+- **Three changes pass the tests:** "the reverse of build order" turned into
+  "build order"; "start it before you write" turned into "after the doc is
+  written"; and "this skill starts no other agent" replaced by a line that
+  allows one.
 - **`premise-check` was checked on one past case** whose outcome was known.
 - **The trigger words overlap.** "System design" also starts
   `second-brain-obsidian` (recall), and "design doc" starts `visual-artifacts`
