@@ -894,8 +894,6 @@ the run may change.
   - The build joins two or more blank lines into one, inside a placed rule
     too.
 - **Older faults in `codex-run`, there before this change (the adversary):**
-  - When `codex` is not on PATH, the exit code is 0 and the log is empty;
-    with `--worktree` it prints "0 file(s) changed".
   - A `--idle` or `--max` value that is not a number (`5m`) turns that limit
     off, with only a shell warning.
   - Killing `codex-run` itself leaves Codex running with no watchdog.

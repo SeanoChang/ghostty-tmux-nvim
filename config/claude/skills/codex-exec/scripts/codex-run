@@ -28,7 +28,8 @@
 # exit: Codex's own exit code; 124 when the watchdog killed it; 3 when Codex
 #       ended well but changed a file outside --allow, changed the worktree's
 #       .git entry, left a folder that cannot be read, or the files could not
-#       be compared; 2 on bad usage.
+#       be compared; 127 when codex is not on PATH or cannot be started;
+#       2 on bad usage.
 set -u
 
 idle=300 max=1800 log="" role="" worktree="" repo="" allow=()
@@ -72,6 +73,11 @@ done
 if [ -z "$log" ] || [ $# -eq 0 ]; then usage; fi
 if [ -z "$worktree" ] && { [ -n "$repo" ] || [ ${#allow[@]} -gt 0 ]; }; then
   fail "--repo and --allow need --worktree"
+fi
+# Before a log or a worktree is made: a run that cannot start leaves nothing.
+if ! command -v codex >/dev/null 2>&1; then
+  echo "codex-run: codex is not on PATH" >&2
+  exit 127
 fi
 
 # What the caller already chose in the codex args.
@@ -260,7 +266,9 @@ fi
 
 : > "$log"
 # New session so the group id equals the pid and one kill reaches every child.
-perl -MPOSIX=setsid -e 'setsid; exec @ARGV' codex exec --json ${extra[@]+"${extra[@]}"} "$@" >> "$log" 2>&1 < /dev/null &
+# When exec fails, perl goes on to the next statement. Without the exit there,
+# the starter would end with 0 and the run would look clean.
+perl -MPOSIX=setsid -e 'setsid; exec @ARGV; print STDERR "codex-run: cannot start codex: $!\n"; exit 127' codex exec --json ${extra[@]+"${extra[@]}"} "$@" >> "$log" 2>&1 < /dev/null &
 pid=$!
 
 start=$(date +%s) last_size=0 last_change=$start reason=""
@@ -290,6 +298,9 @@ fi
 
 wait "$pid"
 code=$?
+if [ "$code" -eq 127 ]; then
+  echo "codex-run: codex did not start, or ended with 127 itself. See the end of $log" >&2
+fi
 
 # Codex has ended. A process it left behind could still write into the
 # worktree after the files are compared, so what is left of its group ends

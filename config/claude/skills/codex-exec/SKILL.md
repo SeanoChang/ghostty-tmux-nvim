@@ -89,9 +89,10 @@ native: the harness tracks them, so they need no watchdog.)
   from such a worktree; remove it by hand and run again.
 - Exit codes: Codex's own; 3 for a change outside `--allow`; 124 when the
   watchdog killed the run (the event log was silent for `--idle` seconds, or
-  the run passed `--max` seconds; the last events are on stderr); 2 for bad
-  usage. Raise `--idle` when the brief runs a slow test suite that prints
-  nothing for minutes.
+  the run passed `--max` seconds; the last events are on stderr); 127 when
+  `codex` is not on PATH or cannot be started (no worktree and no log are
+  made when it is not on PATH); 2 for bad usage. Raise `--idle` when the
+  brief runs a slow test suite that prints nothing for minutes.
 - On exit 124: read the last events, then retry once with a narrower brief or
   take the task back to Claude. A stall counts as a failed attempt.
 - Run it with `run_in_background` when it runs beside other work; the harness
