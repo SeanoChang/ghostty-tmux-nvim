@@ -488,12 +488,29 @@ the run may change.
   the three agent files.
 - **`--allow` is checked after the run, and only on the worktree.** It does
   not see a write outside the worktree; the sandbox (`-s workspace-write`) is
-  what keeps Codex inside. It does not see a file that git ignores; the step
-  that takes the change into the lead's tree (`git add -A`) leaves such a file
-  behind too. Every other changed file counts, a cache file included: an
-  earlier version left out `__pycache__` and three other cache folders before
-  the check, so a file put under such a name was not shown (found by the
-  automated security check on `f9adeb2`).
+  what keeps Codex inside. A process the run left behind can still write
+  after the check.
+- **The check reads the disk, not git.** `codex-run` records each file's kind,
+  size and content hash before Codex starts, keeps the record in its own
+  memory, and compares after the run. Two earlier versions asked git, and git
+  reads what the run can write. The first left out four cache folder names
+  (found by the automated security check on `f9adeb2`). The second trusted
+  ignore rules, so a run could add an ignore file and hide what it made
+  (the same check, on `bd5bf1f`), and a run that committed its change showed
+  "0 file(s) changed" (the verifier, on `bd5bf1f`). What the compare does not
+  count: a new folder with no file in it, and a change of mode other than the
+  executable bit.
+- **An allowed file is not checked, and an ignored file stays in the
+  worktree.** `git add -A` in the take-in step leaves an ignored file behind.
+  Such a file can still sway a check that is rerun in the worktree, so the
+  full check in the lead's tree is the last word.
+- **A Python run leaves cache files, and they count.** A builder that runs
+  `pytest` without `PYTHONDONTWRITEBYTECODE=1` and `-p no:cacheprovider` ends
+  with exit 3 and a list of cache files. The lead reads the list.
+- **The record costs time on a large repository.** Every file of the new
+  worktree is hashed once before the run. After the run, a file is hashed
+  only when it was there before with the same size. Not measured on a
+  repository over 1,000 files.
 - **The merge rule sees the command words only.** `codex execpolicy check`
   gives `forbidden` for `gh pr merge ...` and for `/opt/homebrew/bin/gh pr
   merge ...`. It finds no rule for `env X=1 gh pr merge ...` and for `bash -lc
@@ -505,22 +522,38 @@ the run may change.
   `codex-run --worktree` gives them a tree of their own.
 - **A worktree starts from HEAD.** Work that is not committed is not in it.
 - **`codex-run --role` needs `python3` 3.11 or later** on PATH, to read the
-  agent file.
+  agent file. `--worktree` needs `python3` too (3.9 was tested).
+- **A word in the prompt can drop the role's effort.** `codex-run` looks for
+  `model_reasoning_effort` in every codex argument, the prompt included. A
+  brief that only names that word makes the role's effort go unsent, with no
+  message (`codex-run`, the `has_effort` line; found by the verifier, a nit).
+- **Text after a comment's end, on the same line, is not a rule.** In
+  `CLAUDE.md`, outside a rule, `<!-- note --> - some rule` is loaded by Claude
+  Code, but the build drops the text and asks for no decision
+  (`build_agents_md.py`, the comment branch of `rules`; found by the verifier,
+  a nit). No such line is in the file today.
 
 ### Tested (2026-11-11, codex-cli 0.167.0)
 
-- The suite: 252 passed, 4 skipped. Three of the skipped tests ask the real
+- The suite passes at each commit of the branch; the commit messages give the
+  counts. Four tests are skipped by default. Three of them ask the real
   `codex` program to render a prompt; with `CODEX_PROMPT=1` they pass.
-- 42 deliberate breaks of `build_agents_md.py` and `codex-run`, one at a time:
-  the tests failed for each. The script that makes the breaks is not in the
-  repo.
-- Three live runs through `codex-run`, with the built rules in place as
-  `~/.codex/AGENTS.override.md` for the time of the runs:
+- Deliberate breaks of `build_agents_md.py` and `codex-run`, one at a time:
+  the tests failed for each (the last commit message gives the count). The
+  script that makes the breaks is not in the repo.
+- The `--worktree` tests also pass under macOS `/bin/bash` 3.2 with
+  `python3` 3.9.
+- Three live runs through `codex-run` as it was at `f9adeb2`, which asked git
+  and left cache folders out, with the built rules in place as
+  `~/.codex/AGENTS.override.md` for the time of the runs. They were not run
+  again with the check that reads the disk:
   - `--role builder --worktree --allow` on a cache with three bugs, of which
-    the given test shows one: the reply was "done", one file changed in the
-    worktree, the lead's tree stayed clean, and all hidden tests passed.
+    the given test shows one: the reply was "done", one source file changed
+    in the worktree, the lead's tree stayed clean, and all hidden tests
+    passed.
   - A task whose fix sits in a file under "must not touch": the reply was
-    "blocked" and named the file; no file changed.
+    "blocked" and named the file; no source file changed. The run's `pytest`
+    left nine `__pycache__` files, which today's check would list (exit 3).
   - `--role verifier` on a commit that passes its test and breaks its
     contract: verdict fail, one Important finding with the line and the
     sequence that shows it, "tier too low" raised, no file changed, and no

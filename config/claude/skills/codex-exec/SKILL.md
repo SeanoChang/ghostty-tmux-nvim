@@ -65,15 +65,24 @@ native: the harness tracks them, so they need no watchdog.)
 
 - `--worktree` makes a new git worktree from the HEAD of `--repo` and runs
   Codex there, so the lead's tree is never touched and several runs can go at
-  one time. Uncommitted work is not in it: commit what the run needs first.
+  one time. Give a path outside the repo (the scratchpad); a path inside it is
+  refused. Uncommitted work is not in it: commit what the run needs first.
 - `--allow` is the "may edit" list of the brief as path patterns (`*` also
   crosses `/`). After the run, a changed file that fits no pattern is listed
   and the exit code is 3. Leave a locked test out of the patterns. This check
   reads the worktree only; the sandbox is what keeps Codex inside it.
-- Every changed file counts, a cache file too (`__pycache__`,
-  `.pytest_cache`), unless git ignores it. When a run ends with 3 for caches
-  only, put them in the repo's `.gitignore`; do not allow them by pattern, and
-  do not take them into the lead's tree.
+- "Changed" is read from the disk, not from git: `codex-run` records every
+  file before the run and compares after it. So a cache file, a file that git
+  ignores, a build folder and a file the run committed all count.
+- A Python check writes `__pycache__` and `.pytest_cache`. Write the Done
+  command with `PYTHONDONTWRITEBYTECODE=1` and `-p no:cacheprovider`. When a
+  run still ends with 3 and the list holds caches only, the run stayed in
+  scope: read the list, then go on. Allow a build folder by pattern
+  (`--allow 'target/*'`) only when the task must build. An allowed file is
+  not checked at all.
+- Exit 3 with "changed the worktree's .git entry" means git in that worktree
+  cannot be trusted. Do not take a change from it; remove the worktree by hand
+  and run again.
 - Exit codes: Codex's own; 3 for a change outside `--allow`; 124 when the
   watchdog killed the run (the event log was silent for `--idle` seconds, or
   the run passed `--max` seconds; the last events are on stderr); 2 for bad
@@ -145,7 +154,9 @@ Return:   Reply in five short lines: Result, Changes, Evidence (the check
   git -C <worktree> diff --cached --binary HEAD | git -C <repo> apply --3way
   ```
 
-  Then review, run the full checks and commit in the lead's tree, and remove
+  A file that git ignores stays behind in the worktree. Then review, run the
+  full checks and commit in the lead's tree: that run is the last word, since
+  an allowed or ignored file in the worktree can sway a check there. Remove
   the worktree with `git -C <repo> worktree remove --force <worktree>`.
 - If Codex fails the check twice, take the task back to Claude.
 - Codex runs count toward the workflow agent count in CLAUDE.md.
@@ -174,8 +185,10 @@ saw.
 | `gpt-6-astra` at `low`  | 6 of 6       | 197 of 197   | 422 s          | $2.04                |
 | `gpt-6.1-sol` at `high` | 6 of 6       | 197 of 197   | 737 s          | $0.58                |
 
-- Both models stayed inside the allowed files and replied in the five-line
-  form in every run. On the tier 2 task, both wrote their own random tests
+- Both models changed only the source files the brief allowed, and replied
+  in the five-line form in every run. Each run also left `__pycache__` files
+  from its own test runs; the check of that day did not count cache files,
+  and today's does. On the tier 2 task, both wrote their own random tests
   against git.
 - So the builder runs on Sol at `high`: the same result at about 0.3 of the
   price and 1.75 times the wall time. Use Astra at `low` when the wait matters.

@@ -9,14 +9,17 @@ What this holds:
   - the codex arguments and the exit code pass through;
   - --role turns an agent file into a model, an effort and the instructions,
     and the caller's own model wins;
-  - --worktree runs Codex in a new worktree and leaves the lead's tree alone,
-    and --allow reports every changed file that fits no pattern (exit 3),
-    a file under a cache folder too;
+  - --worktree runs Codex in a new worktree outside the lead's tree and leaves
+    the lead's tree alone;
+  - --allow reports every file that fits no pattern (exit 3). "Changed" means
+    the bytes on disk differ from the bytes before the run: a cache folder, an
+    ignore rule, a commit by the run or a changed .git entry hides nothing;
   - a silent run and a run past its time limit are killed, with their children.
 
 What it does not hold: that the real Codex accepts these arguments (the skill
 records live runs for that), and that Codex stays inside the worktree. The
-allow list is checked after the run, on the worktree only.
+allow list is checked after the run, on the worktree only. A new folder with
+no file in it is not a change.
 
 Run: python3 -m pytest tests/test_codex_run.py -q -p no:cacheprovider
 """
@@ -24,7 +27,9 @@ import fnmatch
 import json
 import os
 import random
+import shlex
 import subprocess
+import sys
 import time
 import tomllib
 from pathlib import Path
@@ -51,6 +56,13 @@ for step in do.split(";"):
         path = os.path.join(work, arg)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         open(path, "a").write("changed\n")
+    elif kind == "put":                       # put:<path>=<the content, in hex>
+        name, _, content = arg.partition("=")
+        path = os.path.join(work, name)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        open(path, "wb").write(bytes.fromhex(content))
+    elif kind == "sh":                        # a shell command, run in the work folder
+        subprocess.run(arg, shell=True, cwd=work, check=True, stdout=subprocess.DEVNULL)
     elif kind == "delete":
         os.remove(os.path.join(work, arg))
     elif kind == "gitmv":
@@ -275,17 +287,166 @@ def test_a_file_under_a_cache_name_is_shown_like_any_other(box, lead, hidden):
     left four cache names out before the check.)"""
     done, _ = worktree_run(box, lead, f"write:{hidden};write:src/a.py", "src/a.py")
     assert done.returncode == 3, done.stderr
-    assert done.stderr.split("changed outside the allowed files:\n")[1].split() == [hidden]
+    assert outside(done) == [hidden]
     assert "2 file(s) changed" in done.stderr
 
 
-def test_a_file_that_git_ignores_is_not_listed(box, lead):
-    (lead / ".gitignore").write_text("__pycache__/\n")
+def outside(done):
+    """The paths codex-run listed as outside the allowed files."""
+    assert "changed outside the allowed files:\n" in done.stderr, done.stderr
+    block = done.stderr.split("changed outside the allowed files:\n")[1]
+    return [line[2:] for line in block.splitlines() if line.startswith("  ")]
+
+
+def put(path, text):
+    return f"put:{path}={text.encode().hex()}"
+
+
+GIT_T = "git -c user.name=t -c user.email=t@example.invalid"
+
+# What a run can do to keep a file out of a list that git makes. Each case is
+# (what the repository ignores, what the run does, the files that must be listed).
+HIDING = {
+    "the repository ignores the folder":
+        ("__pycache__/\n", "write:src/__pycache__/a.pyc", ["src/__pycache__/a.pyc"]),
+    "the run adds an ignore file that also ignores itself":
+        ("", put("lib/.gitignore", "*\n") + ";write:lib/payload.py", ["lib/.gitignore", "lib/payload.py"]),
+    "the run adds a rule to the top ignore file":
+        ("*.log\n", put(".gitignore", "*.log\n*.py\n") + ";write:new.py", [".gitignore", "new.py"]),
+    "the run commits its change":
+        ("", f"write:README.md;write:new.txt;sh:{GIT_T} add -A && {GIT_T} commit -q -m hidden", ["README.md", "new.txt"]),
+    "the run tells git to take a file as unchanged":
+        ("", "sh:git update-index --assume-unchanged README.md;write:README.md", ["README.md"]),
+    "the run tells git to skip a file":
+        ("", "sh:git update-index --skip-worktree README.md;delete:README.md", ["README.md"]),
+    "the run makes a repository inside the worktree":
+        ("", "sh:git init -q vendor;write:vendor/payload.py", None),      # checked below: more than one file
+    "a new file with the old file's size and time":
+        ("", "sh:touch -r README.md stamp && printf 'READ ME\\n' > README.md && touch -r stamp README.md && rm stamp",
+         ["README.md"]),
+    "a file made executable":
+        ("", "sh:chmod +x README.md", ["README.md"]),
+    "a new link":
+        ("", "sh:ln -s /etc/hosts link-out", ["link-out"]),
+    "a file replaced by a link to a file with the same content":
+        ("", "sh:cp README.md src/copy.md && rm README.md && ln -s src/copy.md README.md", ["README.md", "src/copy.md"]),
+    "a run that only reads":
+        ("", "sh:cat README.md && git status", []),
+}
+
+
+@pytest.mark.parametrize("case", sorted(HIDING))
+def test_nothing_the_run_does_keeps_a_file_out_of_the_list(box, lead, case):
+    ignores, do, want = HIDING[case]
+    if ignores:
+        (lead / ".gitignore").write_text(ignores)
+        git(lead, "add", "-A")
+        git(lead, "commit", "-q", "-m", "ignore rules")
+    done, _ = worktree_run(box, lead, f"{do};write:src/a.py", "src/a.py")
+    if want == []:
+        assert done.returncode == 0 and "1 file(s) changed" in done.stderr, done.stderr
+        return
+    assert done.returncode == 3, done.stderr
+    if want is None:
+        listed = outside(done)
+        assert "vendor/payload.py" in listed and any(p.startswith("vendor/.git/") for p in listed), listed
+    else:
+        assert outside(done) == want
+        assert f"{len(want) + 1} file(s) changed" in done.stderr
+
+
+def test_a_link_that_points_somewhere_new_is_a_change(box, lead):
+    (lead / "link").symlink_to("README.md")
     git(lead, "add", "-A")
-    git(lead, "commit", "-q", "-m", "ignore caches")
-    done, _ = worktree_run(box, lead, "write:src/__pycache__/a.pyc;write:src/a.py", "src/a.py")
+    git(lead, "commit", "-q", "-m", "a link")
+    done, _ = worktree_run(box, lead, "sh:ln -sfn src/a.py link", "src/*")
+    assert done.returncode == 3, done.stderr
+    assert outside(done) == ["link"]
+
+
+def test_a_long_list_names_the_first_50_and_counts_the_rest(box, lead):
+    done, _ = worktree_run(box, lead, "sh:mkdir build && cd build && touch $(seq -w 1 60)", "src/*")
+    assert done.returncode == 3, done.stderr
+    assert outside(done) == [f"build/{n:02d}" for n in range(1, 51)]
+    assert "and 10 more, 60 in all" in done.stderr and "60 file(s) changed" in done.stderr
+
+
+def test_a_file_put_back_as_it_was_is_not_a_change(box, lead):
+    do = put("README.md", "other\n") + ";" + put("README.md", "read me\n") + ";write:src/a.py"
+    done, _ = worktree_run(box, lead, do, "src/a.py")
+    assert done.returncode == 0 and "1 file(s) changed" in done.stderr, done.stderr
+
+
+def test_a_folder_the_check_cannot_read_is_listed(box, lead):
+    done, wt = worktree_run(box, lead, "write:locked/payload.py;sh:chmod 000 locked", "src/*")
+    try:
+        assert done.returncode == 3, done.stderr
+        assert outside(done) == ["locked"]
+    finally:
+        (wt / "locked").chmod(0o755)
+
+
+@pytest.mark.parametrize("do", [
+    "sh:rm .git && printf 'gitdir: /nowhere\\n' > .git",
+    "sh:rm .git && mkdir .git && touch .git/HEAD",
+    "sh:rm .git",
+])
+def test_a_changed_git_entry_ends_with_3_whatever_is_allowed(box, lead, do):
+    """The worktree's .git file says which repository git reads there. A run
+    that changes it decides what the lead's next git command shows."""
+    done, _ = worktree_run(box, lead, do, "*")
+    assert done.returncode == 3, done.stderr
+    assert "changed the worktree's .git entry" in done.stderr
+
+
+def test_a_compare_that_does_not_finish_ends_with_3(box, lead):
+    """When the pass after the run breaks, no file was checked: that is not a pass."""
+    wrapper = box.tmp / "bin" / "python3"
+    wrapper.write_text(f'#!/bin/sh\n[ "$3" = after ] && exit 1\nexec {shlex.quote(sys.executable)} "$@"\n')
+    wrapper.chmod(0o755)
+    done, _ = worktree_run(box, lead, "write:README.md", "*")
+    assert done.returncode == 3, done.stderr
+    assert "could not compare" in done.stderr and "file(s) changed" not in done.stderr
+
+
+# ── where the worktree goes ──────────────────────────────────────────────────
+
+def test_a_worktree_path_that_is_a_link_to_nowhere_is_refused(box, lead):
+    (box.tmp / "wt").symlink_to(box.tmp / "not-there")
+    done, _ = worktree_run(box, lead, "ok")
+    assert done.returncode == 2 and box.args() is None and not (box.tmp / "not-there").exists()
+
+
+def test_a_relative_worktree_path_is_read_from_the_callers_folder(box, lead):
+    """git reads a relative path from the repository top. The caller means its
+    own folder. (An earlier version made the worktree in the wrong place and
+    started Codex with an empty folder argument.)"""
+    here = box.tmp / "elsewhere"
+    here.mkdir()
+    done = box("--log", box.log, "--worktree", "wt-rel", "--repo", str(lead), "--allow", "src/*", "--", "p",
+               do="write:src/a.py", cwd=here)
     assert done.returncode == 0, done.stderr
-    assert "1 file(s) changed" in done.stderr
+    args = box.args()
+    assert Path(args[args.index("-C") + 1]) == (here / "wt-rel").resolve()
+    assert (here / "wt-rel" / "src" / "a.py").read_text() == "a = 1\nchanged\n"
+    assert git(lead, "status", "--porcelain") == "" and "1 file(s) changed" in done.stderr
+
+
+def test_a_relative_path_from_inside_the_repository_that_leaves_it(box, lead):
+    done = box("--log", box.log, "--worktree", "../../wt-up", "--", "p", do="write:src/a.py", cwd=lead / "src")
+    assert done.returncode == 0, done.stderr
+    args = box.args()
+    assert Path(args[args.index("-C") + 1]) == (box.tmp / "wt-up").resolve()
+    assert git(lead, "status", "--porcelain") == ""
+
+
+@pytest.mark.parametrize("where", ["inside", "src/inside", "../lead/inside", "link/inside"])
+def test_a_worktree_inside_the_repository_is_refused(box, lead, where):
+    (box.tmp / "link").symlink_to(lead, target_is_directory=True)
+    cwd = box.tmp if where.startswith("link") else lead
+    done = box("--log", box.log, "--worktree", where, "--repo", str(lead), "--", "p", cwd=cwd)
+    assert done.returncode == 2 and box.args() is None, done.stderr
+    assert git(lead, "status", "--porcelain") == "" and "worktree" not in git(lead, "worktree", "list").split("\n", 1)[1]
 
 
 def test_with_no_allow_list_every_change_is_fine(box, lead):
@@ -331,6 +492,61 @@ def test_random_changes_and_patterns_against_a_reference_matcher(box, lead, seed
         listed = done.stderr.split("changed outside the allowed files:\n")[1].splitlines()
         assert sorted(line.strip() for line in listed) == sorted(want), (files, patterns)
     assert f"{len(files)} file(s) changed" in done.stderr
+
+
+@pytest.mark.parametrize("seed", range(30))
+def test_random_runs_against_a_model_of_the_files(box, lead, seed):
+    """The run does random things to random files: makes, rewrites, puts back,
+    removes, changes the mode, adds ignore rules, commits. The test keeps its
+    own record of each file's content and mode. The list codex-run prints
+    must be exactly the files whose record differs from the start."""
+    rng = random.Random(1000 + seed)
+    (lead / ".gitignore").write_text("ignored/\n*.pyc\n")
+    (lead / "docs").mkdir()
+    (lead / "docs" / "guide.md").write_text("guide\n")
+    git(lead, "add", "-A")
+    git(lead, "commit", "-q", "-m", "more files")
+    start = {"src/a.py": ("a = 1\n", False), "README.md": ("read me\n", False),
+             "docs/guide.md": ("guide\n", False), ".gitignore": ("ignored/\n*.pyc\n", False)}
+    now, steps = dict(start), []
+    folders = ["", "src/", "docs/", "ignored/", "src/__pycache__/", "new dir/", "é/"]
+    names = ["a.py", "x.py", "x.pyc", "notes.md", ".gitignore", "é.txt"]
+    for _ in range(rng.randint(1, 10)):
+        kind = rng.choice(["make", "make", "rewrite", "back", "remove", "mode", "commit"])
+        if kind == "make":
+            path = rng.choice(folders) + rng.choice(names)
+            text = "*\n" if path.endswith(".gitignore") and rng.random() < 0.7 else f"v{rng.randint(0, 3)}\n"
+            now[path] = (text, now.get(path, ("", False))[1])
+            steps.append(put(path, text))
+        elif kind == "commit":
+            steps.append(f"sh:{GIT_T} add -A && {GIT_T} commit -q --allow-empty -m step")
+        elif now:
+            path = rng.choice(sorted(now))
+            text, mode = now[path]
+            if kind == "rewrite":
+                now[path] = (text[::-1] if text[::-1] != text else text + "x", mode)   # the same size, where it can be
+                steps.append(put(path, now[path][0]))
+            elif kind == "back" and path in start:
+                now[path] = start[path]
+                steps.append(put(path, start[path][0]))
+                steps.append(f"sh:chmod -x {shlex.quote(path)}")
+            elif kind == "remove":
+                del now[path]
+                steps.append(f"delete:{path}")
+            elif kind == "mode":
+                now[path] = (text, not mode)
+                steps.append(f"sh:chmod {'+x' if not mode else '-x'} {shlex.quote(path)}")
+    changed = sorted(p for p in set(start) | set(now) if start.get(p) != now.get(p))
+    shapes = ["src/*", "*.md", "docs/*", "*", "ignored/*", "*.pyc", "*/.gitignore", "new dir/*", "?.py", "README.md"]
+    patterns = rng.sample(shapes, rng.randint(1, 3))
+    want = [p for p in changed if not any(fnmatch.fnmatchcase(p, q) for q in patterns)]
+    done, _ = worktree_run(box, lead, ";".join(steps) or "ok", *patterns)
+    assert f"{len(changed)} file(s) changed" in done.stderr, (steps, changed, done.stderr)
+    if want:
+        assert done.returncode == 3, (steps, patterns, done.stderr)
+        assert sorted(outside(done)) == want, (steps, patterns)
+    else:
+        assert done.returncode == 0, (steps, patterns, done.stderr)
 
 
 # ── the watchdog ─────────────────────────────────────────────────────────────
