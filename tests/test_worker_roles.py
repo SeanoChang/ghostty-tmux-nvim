@@ -48,7 +48,9 @@ REPORTING_TOOLS = {
     "scout": {"Read", "Bash", "WebFetch", "WebSearch"},
 }
 READ_ONLY = sorted(REPORTING_TOOLS)
-WRITERS = sorted(set(WORKERS) - set(REPORTING_TOOLS))
+# Workers that edit files. Named here, not worked out as "the rest": a new
+# worker then fails the test below until someone puts it in one class.
+WRITERS = ["builder", "scribe"]
 MODELS = {"opus", "sonnet", "haiku"}
 
 
@@ -67,6 +69,10 @@ def flat(text):
 def test_the_agents_folder_holds_the_six_workers_and_nothing_else():
     found = sorted(path.stem for path in AGENTS.glob("*.md"))
     assert found == sorted(WORKERS)
+
+
+def test_every_worker_is_a_reporter_or_a_writer_and_not_both():
+    assert sorted(READ_ONLY + WRITERS) == sorted(WORKERS)
 
 
 @pytest.mark.parametrize("role", WORKERS)

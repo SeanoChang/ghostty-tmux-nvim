@@ -395,7 +395,32 @@ lines in `config/claude/CLAUDE.md`. None is fixed.
 - **`shape` was checked by a dry run, not by a real session.** A fresh agent
   followed steps 1 to 4 on a past assignment, with its own recommended option
   in place of each answer. The clock, the dialog and the user's vetoes were not
-  exercised.
+  exercised. The dry run read the first text of the skill. It asked 14
+  questions against a budget of ten, because that text did not say which
+  questions count. The rules that came after it have not been run at all:
+  which questions count, what happens when a step's time or the whole box is
+  up, and the session's cut list.
+- **The first review failed `shape` for one cause, three times over:** a rule
+  in the skill met a rule in another file (the time box in CLAUDE.md, the
+  first task in the plan genre, the fresh reader against "stop when the time
+  is up") with nothing to say which applied. The skill now has a "Which rule
+  applies" section, and `tests/test_design_skills.py` compares the two sides
+  for the cut direction, the decision columns, the doc sections and the first
+  task. A new rule in another file on one of these cases is not seen by the
+  tests.
+- **The size cap for the two skills was raised from 9,000 to 12,000
+  characters** to hold that section and the clock rules. `shape` is about 11,600.
+- **The session's cut list has three items.** When all three are dropped and
+  the session is still behind, only the step rule is left: a step closes when
+  its time is up, and what was not asked becomes a default.
+- **The fresh reader's check has no time limit of its own.** It starts before
+  the doc is written. When the box ends first, the check is listed under Open
+  items and its result arrives after the session.
+- **"Which rule applies" names the other files by their rule, not by line.**
+  A reader must find "the time box" in CLAUDE.md by its name.
+- **The tests for the two skills are pinned phrases, plus four comparisons
+  with other files.** A rule that is reworded with the same meaning fails a
+  test; a rule that is negated in other words passes.
 - **`premise-check` was checked on one past case** whose outcome was known.
 - **The trigger words overlap.** "System design" also starts
   `second-brain-obsidian` (recall), and "design doc" starts `visual-artifacts`

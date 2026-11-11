@@ -82,7 +82,8 @@ to count, a ten-minute spike, or a question to a named person.
 
 One of these, with one sentence of reason:
 
-- **Build as given.** Every part is P0.
+- **Build as given.** Every part is P0, and the idea leaves out nothing that
+  the source asks for.
 - **Build P0, keep P1 in order.**
 - **Hold.** Nothing shows the need yet. Name what would show it.
 
@@ -94,8 +95,8 @@ The call does not repeat the sorting. Keep the text outside the tables under
 - **Quote it, or it is not asked.** A requirement you cannot quote is `wanted`
   or `borrowed`. Say "the source does not ask for this" when it does not.
 - **Look before you mark.** When the user's notes or the repo could hold the
-  proof, look there first (`sb find` for the vault). When you cannot look, say
-  so in the Proof cell.
+  proof, look there first. For the vault, that is the `second-brain-obsidian`
+  skill and its `sb find`. When you cannot look, say so in the Proof cell.
 - **`borrowed` is not wrong.** Say what the user liked in the other tool, and
   whether the need here calls for that.
 - **Do not design.** Name the parts in the user's words. No components, no
