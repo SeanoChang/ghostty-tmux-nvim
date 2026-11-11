@@ -12,7 +12,9 @@
   loud, give your assessment and stop; "fix", "build", "add" mean act.
 - Don't underestimate the work. Plan past the immediate request, build to
   production quality, and pick the best design for the real scale and need.
-  Scope beyond the request goes in suggestions at the end, not into the change.
+  Build cost is no reason for a weaker design: you build far faster than a
+  human. Of the designs that fully meet the need, take the smallest. Scope
+  beyond the request goes in suggestions at the end, not into the change.
 - Debug end to end: reproduce in the real runtime, find the root cause with
   evidence, then fix. After two failed fixes, restate what is known and question
   the diagnosis.
@@ -29,11 +31,15 @@
 | "faster"                                    | Run independent tasks in parallel, and say what you cut. Never drop a tier 2 review.         |
 | "less adversary"                            | In this project: one adversary pass on tier 2, then one re-check. Save it to project memory. |
 | "all done?"                                 | Answer under three headings: Blocked on me, Changed, Found.                                  |
+| "in 2h", "within 4h", "time box"            | Time box, below.                                                                             |
 
 - Unattended mode: before I leave, ask for every approval the run will need.
   After that, never wait without a time limit on a prompt, a person, or another
   session. Skip the blocked step, log it, and take the next task. End with
   Blocked on me, Changed, Found.
+- Time box: fixed time, variable scope. Before you start, list the must-haves
+  and an ordered cut list. At each milestone, report the clock against the
+  plan. When behind, cut from the list and tell me.
 
 ## Verification and review
 
@@ -44,8 +50,11 @@
 - Bugs: the test fails before the fix and passes after, and would also fail on a
   half-finished fix. New behavior a test can express: write the test first and
   show it failing.
+- Features: test from the outside in. First one end-to-end check of the user's
+  path, run in CI; then unit tests for the parts. Keep such checks few.
 - Edge-case-heavy code (parsers, sanitizers, concurrency, numerics, security):
-  also test against a reference or brute-force version on random inputs.
+  before the first review, also test against a reference or brute-force version
+  on random inputs.
 - Mock only external boundaries (network, paid APIs, clock). Use real temp dirs
   and local services.
 - "Unverified" is not a pass. Fix what blocked the check (often a command not
@@ -66,7 +75,8 @@
   it on the task. Unknown is tier 1. A repo's `REVIEW.md` can name paths that
   are always tier 2. The diff decides: when a change comes to touch a higher
   tier than its task says, raise the tier on the task and run that tier's
-  review. A verifier that reports "tier too low" has raised it.
+  review. A verifier that reports "tier too low" has raised it. A tier 2 change
+  is its own task and PR, so lower-tier work does not wait.
 
   | Tier | The change touches                                                                                                             | Review                                             |
   | ---- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------- |
