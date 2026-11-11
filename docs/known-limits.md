@@ -526,9 +526,32 @@ How the session is held:
   `git status`, so a file with the corrected line passed as "folder
   unchanged". The same pass found that a path spelled `RING.C` escaped the
   check for edits, that an edit with neither "head" nor "ring_pop" in it
-  escaped, and that the fix stated before "Problems:" passed. The test now
-  replays every edit in the stream by file identity, and reads the whole
-  answer.
+  escaped, and that the fix stated before "Problems:" passed.
+- **The test rebuilds no edit.** The version after that pass replayed each
+  Edit from what the model sent. The next adversary pass held it, and named
+  three classes with two or three findings each, so the helpers were written
+  again and not patched:
+  - *Edits the stream check missed.* The replay was not the Edit tool: the
+    tool takes a relative path, matches curly quotes as straight ones, trims
+    the ends of lines and refuses some calls. A recorded run changed
+    `ring_pop` four times, undid each change, and passed. The test now reads
+    each content of `ring.c` from the stream: the result of a write that
+    worked holds the file as the CLI read it just before, and the last
+    content is the one on disk. On that recorded run the new check reports
+    both changes.
+  - *Where the session wrote.* The test names the places a session may write
+    (the progress folder, and in the first check `ring.c` and `main.c`), and
+    reports every other Edit and Write: a call that failed, a relative path,
+    a file one folder down, and a call with no path.
+  - *The fix in words.* A check's answer may name the wrap in one place only:
+    before "Problems:", in a clause about push or tail and not about head or
+    pop. An earlier rewrite had dropped "nothing after Problems:" and a
+    verifier caught it; both rules are now one function.
+  - *The helper loosened while the text tests pass.* The offline test records
+    every process that `session()` starts and requires exactly one. Each
+    decision above is in a helper with its own offline test. A hand-run
+    script broke the helpers in 41 ways, one at a time, and the offline tests
+    failed for each. The script is not in the repo.
 - **What restricted mode itself refused in that pass:** writes to
   `.gitmodules`, to a `sub/.git` file and to `.claude/settings.json`. A
   `sub/.git` file written by hand did not make git read a planted setting.
@@ -563,7 +586,10 @@ The record of the runs while the test was written:
   what the skill promises.
 - Under the no-shell harness, before the snapshot and with no rules file in
   the prompt: both checks passed twice in a row.
-- Under the final harness: both checks passed twice in a row.
+- Under the snapshot harness, with the edits replayed: both checks passed
+  twice in a row.
+- Under the harness that reads each content from the stream: both checks
+  passed twice in a row.
 
 ### Not tested
 
@@ -580,18 +606,23 @@ The record of the runs while the test was written:
   is negated in other words passes, and so does a new sentence that says the
   opposite ("rung 6: write the fix"). Not pinned at all: the wording of "Start"
   and of "Status", and the format block of the progress file.
-- **The second live check looks for the fix in words by a short list**
-  ("% RING_SIZE", "modulo", "= 0;", "reset head to 0"). Another wording of the
-  fix passes. "Back to slot 0" is allowed, because the handout says it: one
-  run failed on that phrase before the list was corrected. The comparison of
-  the whole file with the student's text catches every edit.
-- **The stream check can pass on nothing** if a later CLI changes the shape
-  of its stream: with no tool call parsed, "no edit at any point" holds. The
-  helper requires at least one Read call in the stream, and the first check
-  requires that the edits in the stream add up to the `ring.c` on disk. The
-  snapshot does not depend on the stream.
 - **The fix in words is found by a short list** in both checks ("% RING_SIZE",
-  "%=", "modulo", and in the second check "= 0;" and "reset head to 0"). In
-  the first check the list applies to a clause that also names head or pop,
-  so the student's own `tail` line can be quoted.
+  "%=", "modulo", and in the second check "= 0;" and "reset head to 0"). The
+  fix in other words passes: "do for head what line 9 does for tail" names no
+  word on the list. "Back to slot 0" is allowed, because the handout says it:
+  one run failed on that phrase before the list was corrected.
+- **A fair answer can fail the first check.** Under "Right:", a sentence that
+  quotes the push line's wrap and also names pop is reported, because one
+  clause cannot be split by meaning. The failed assertion prints the answer.
+- **The contents of `ring.c` come from a field of the CLI's stream**
+  (`tool_use_result.originalFile`) that no document promises. When a later
+  CLI drops or renames it, the helper fails the run: a write with no such
+  field, a call with no result, a changed file that no write names, and a
+  stream with no Read are each a failure, not a pass. The snapshot does not
+  depend on the stream.
+- **Only the last content of `main.c` is compared.** A write to it that was
+  undone later is allowed. It is a file the student does not hand in.
+- **Letter case is dropped when two paths are compared.** On a disk that
+  keeps `ring.c` and `RING.C` apart, a write to one counts as a write to the
+  other. That reports too much, and never too little.
 - **The skill is linked into `~/.claude/skills` by hand** on this machine.
