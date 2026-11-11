@@ -467,14 +467,20 @@ THEMATIC_BREAK = re.compile(r"([-*_])(?: *\1){2,} *")
 
 
 def _units(text):
-    """Cut prose where markdown ends a paragraph without a full stop: before a
-    list item, at an empty quote line, after a callout title, and around an
-    image line. Image lines and empty lines hold no prose and are dropped.
+    """Cut prose where a sentence ends without a full stop: before a list item,
+    at an empty quote line, after the title line of a callout, and at an image
+    line. Image lines and empty lines hold no prose and are dropped.
 
     The two ways to be wrong are not equal. A wrong join gives a warning the
     writer can read and dismiss. A wrong cut hides a long sentence. So a cut is
-    made only where CommonMark certainly ends the paragraph, and never from how
-    a line ends: prose is wrapped at 80 columns, so a line end says nothing.
+    made only where the paragraph certainly ends, and never from how a line
+    ends: prose is wrapped at 80 columns, so a line end says nothing.
+
+    Two cuts are this validator's own and not CommonMark's. The first line of
+    a callout is its title, a unit by itself. An image on a line of its own is
+    followed by its caption, not by the rest of a sentence. Neither one ends
+    the paragraph for the list rules below: to markdown both are text, and an
+    image line under an empty line opens a paragraph as any text line does.
 
     `items` holds the list items that are open, as (marker indent, content
     indent). With `blk` the content indent of the innermost one (0 for none):
@@ -484,18 +490,23 @@ def _units(text):
       (CommonMark: only "1." may interrupt a paragraph);
     - a line to the left of `blk` ends the item with any marker, any number,
       unless it is 4 or more past the item that holds the list;
-    - after an empty line no paragraph is open, so any marker starts an item.
+    - when no paragraph is open, any marker starts an item.
 
-    Whenever the state is in doubt (a line that falls back to the left with no
-    marker, a change of quote depth), `items` is emptied. An empty state can
-    only join; it never cuts where markdown continues."""
+    `opened` says a paragraph is open. It is False only after a line that ends
+    a paragraph in CommonMark itself: an empty line or a thematic break. It
+    starts True, because the block may continue a paragraph above it (a line
+    with no `>` right under a quote). Whenever the list state is in doubt (a
+    line that falls back to the left with no marker, a change of quote depth),
+    `items` is emptied. Believing a paragraph is open, or that no list is,
+    can only join; it never cuts where markdown continues."""
     unit = []
     items = []  # open list items, outermost first: (marker indent, content indent)
     depth = None  # quote depth of the line above
-    opened = False  # a paragraph is open: the line above is prose
-    for line in text.split("\n"):
+    opened = True  # a paragraph is open; see the docstring for when it is not
+    for number, line in enumerate(text.split("\n")):
         image = IMAGE_LINE.fullmatch(line)
-        title = CALLOUT_TITLE.match(line)
+        # Only the first line of a callout is its title; further down it is text.
+        title = number == 0 and CALLOUT_TITLE.match(line)
         quote, pad = QUOTE_LEAD.match(line).groups()
         rest = line[len(quote) + len(pad):]
         # A row of ---, *** or ___ ends a paragraph only when it is indented less
@@ -505,16 +516,20 @@ def _units(text):
         if rule and len(pad) >= 4:
             items, rule = [], None
             rest = ""
-        if image or title or rule or QUOTE_ONLY.fullmatch(line):
+        if title or rule or QUOTE_ONLY.fullmatch(line):
             if unit:
                 yield "\n".join(unit)
                 unit = []
             if title:
                 yield line
-            if title or rule:
-                items = []
-            opened = False
+            else:
+                opened = False  # an empty line or a thematic break
+                if rule:
+                    items = []
             continue
+        # From here on the line is text to markdown. That includes an image
+        # line: it moves the list state as any text line does, and opens a
+        # paragraph. It is cut out of the prose at the end of the loop.
         indent = len(pad)
         if depth is not None and quote.count(">") != depth:
             items = []
@@ -546,10 +561,11 @@ def _units(text):
                 items = []
         else:
             items = []
-        if cut and unit:
+        if (cut or image) and unit:
             yield "\n".join(unit)
             unit = []
-        unit.append(line)
+        if not image:
+            unit.append(line)
         opened = True
     if unit:
         yield "\n".join(unit)

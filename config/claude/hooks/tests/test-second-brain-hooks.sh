@@ -158,6 +158,9 @@ out=$(bash "$SWEEP" --days 000007 --all 2>&1); rc=$?
 # A log path that exists and is not a folder is a mistake, never an empty log.
 out=$(SB_QUESTION_LOG_DIR="$SB_QUESTION_LOG_DIR/a.jsonl" bash "$SWEEP" 2>&1); rc=$?
 { [ "$rc" = "2" ] && ! echo "$out" | grep -q "shown of"; } && ok "refuses a log path that is a file" || no "refuses a log path that is a file" "rc=$rc out=$out"
+ln -s "$TD/nowhere" "$TD/dangling"
+out=$(SB_QUESTION_LOG_DIR="$TD/dangling" bash "$SWEEP" 2>&1); rc=$?
+{ [ "$rc" = "2" ] && ! echo "$out" | grep -q "shown of"; } && ok "refuses a log path that is a dangling symlink" || no "refuses a log path that is a dangling symlink" "rc=$rc out=$out"
 out=$(bash "$SWEEP" --days 36500 --all 2>&1); rc=$?
 { [ "$rc" = "0" ] && echo "$out" | head -1 | grep -q "3 shown of 3"; } && ok "accepts --days 36500" || no "accepts --days 36500" "rc=$rc out=$out"
 teardown

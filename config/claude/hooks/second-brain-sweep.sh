@@ -41,7 +41,7 @@ fi
 
 dir="${SB_QUESTION_LOG_DIR:-$HOME/.claude/second-brain/questions}"
 # No log folder yet is an empty log. A path that is something else is a mistake.
-if [ -e "$dir" ] && [ ! -d "$dir" ]; then
+if { [ -e "$dir" ] || [ -L "$dir" ]; } && [ ! -d "$dir" ]; then
   echo "second-brain-sweep: $dir is not a folder; nothing reported" >&2; exit 2
 fi
 # BSD date (macOS) first, GNU date second.

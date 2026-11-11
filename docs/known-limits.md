@@ -260,6 +260,20 @@ was made. None blocks the change.
   Against markdown-it-py on 400,000 hostile random blocks it loses no long
   sentence and joins in 4% of blocks; the splitter before this change joined
   in 30%.
+- **A list that starts past 1 right under a callout title, an image line or
+  the first line of a block is joined.** The splitter takes a paragraph to be
+  open unless the line above is empty or a thematic break, and only "1." may
+  start a list in an open paragraph. A list that starts at 1, or sits under an
+  empty quote line, is cut at each item.
+- **Two cuts are the validator's own, not markdown's:** the title line of a
+  callout, and an image on a line of its own. A sentence that runs across an
+  image line is read as two. The parser comparison is told about both.
+- **Only the first line of a callout block is a title.** Two callouts stacked
+  with no empty line between them read as one, so the second title joins the
+  first body.
+- **The parser comparison is skipped where markdown-it-py is not installed.**
+  It is installed for `python3` on this machine; nothing installs it for a
+  fresh checkout.
 - **A bare marker line (`+` or `1.` alone) above another marker line** makes
   `_plain` eat the line break and read the second marker as a word, which can
   end a sentence early. Pre-existing in `_plain`; the comparison with the

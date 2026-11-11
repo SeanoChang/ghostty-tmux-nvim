@@ -821,8 +821,9 @@ def test_text_with_no_structural_line_splits_exactly_as_before():
 
 def test_cuts_match_a_reference_built_from_the_known_structure():
     """Random blocks made of units whose kind the generator knows. The expected
-    result cuts before a list item, before and after a callout title, and at an
-    image line, and nowhere else; each group is then split as plain prose."""
+    result cuts before a list item, after a callout title on the first line,
+    and at an image line, and nowhere else; each group is then split as plain
+    prose."""
     import random
     from check_doc import _sentences
 
@@ -849,6 +850,8 @@ def test_cuts_match_a_reference_built_from_the_known_structure():
         number, ordered_seen, prev = 0, False, None
         for _ in range(rng.randint(1, 8)):
             kind = rng.choice(["para", "para", "quote", "bullet", "ordered", "quote_bullet", "title", "image"])
+            if kind == "title" and lines:
+                kind = "quote"  # only the first line of a block is a callout title
             if kind == "image":
                 lines.append(rng.choice(images))
                 groups.append([])
@@ -921,60 +924,145 @@ def test_any_numbered_line_at_the_list_level_ends_the_item_above_it():
     assert "prose-long" not in codes(doc("Short lead.\n\n## S\n\n" + body))
 
 
-def test_no_long_sentence_is_lost_against_a_commonmark_parser():
-    """Random hostile blocks, read by markdown-it-py. A sentence over 30 words
-    in one of the parser's paragraphs must sit inside one sentence of the
-    validator. Skipped where markdown-it-py is not installed."""
+def parser_losses(sentences, seeds, show=0):
+    """Seeds of random hostile blocks on which `sentences` loses a long sentence
+    that markdown-it-py keeps. Used by the test below and by mutation runs.
+
+    The reference is CommonMark plus the two things this validator adds on
+    purpose: a callout title is its own unit with the body read alone under it,
+    and an image on a line of its own is a cut. For the parser the image line
+    stays in place as one word, because in markdown it is text: it does not end
+    a paragraph, so the list rules must see straight through it.
+
+    A parser sentence over 30 words is kept when some sentence of the validator
+    holds all its words in order inside a window at most 3 words longer. Sixty
+    distinct words make a chance match of 31 words in a row impossible."""
     import random
     import re
-    import pytest
-    markdown_it = pytest.importorskip("markdown_it")
-    from check_doc import _plain, _sentences
+    import markdown_it
+    from check_doc import _plain
 
     md = markdown_it.MarkdownIt("commonmark")
+    image = re.compile(r"!(?:\[\[[^\]]*\]\]|\[[^\]]*\]\([^)]*\))")
 
-    def wordy(s):
-        return [w for w in s.split() if re.search(r"\w", w)]
+    def wordy(text):
+        return [w for w in text.split() if re.search(r"\w", w)]
 
     def split(text):
         flat = " ".join(_plain(text).split())
         return [wordy(x) for x in re.split(r"(?<=[.!?])\s+", flat) if x.strip()]
 
-    def inside(big, small):
-        """small's words all appear in big, in order. Not required to be side
-        by side: a marker inside a paragraph is a word to one reader and not
-        to the other, which shifts a count by one without hiding anything."""
-        rest = iter(big)
-        return all(w in rest for w in small)
+    def kept(got, want):
+        for i, w in enumerate(got):
+            if w == want[0]:
+                window = iter(got[i:i + len(want) + 3])
+                if all(x in window for x in want):
+                    return True
+        return False
 
-    vocab = ["alpha", "beta", "gamma", "delta", "the", "and", "of"] * 6 + ["cost:", "end.", "done?"]
-    markers = [""] * 5 + ["- ", "* ", "+ ", "1. ", "1) ", "2. ", "3) ", "8) ", "2019. ", "7. ", "-  ", "1.   ",
-                          "- - ", "+ 1. ", "1. - ", "-      "]
+    vocab = [f"w{i:02d}" for i in range(60)]
+    markers = [""] * 6 + ["- ", "* ", "+ ", "1. ", "1) ", "2. ", "3) ", "8) ", "2019. ", "7. ", "-  ", "1.   ",
+                          "- - ", "+ 1. ", "1. - ", "-      ", "[!tip] "]
+    numbered = ["2. ", "3) ", "8) ", "2019. ", "7. ", "1. ", "1) "]
     # No line that is a bare marker ("+" or "1." alone): `_plain` then eats the
     # line break after it and reads the next marker as a word, in this reader
     # and not in the parser. That is a quirk of `_plain`, older than the split.
     whole = ["***", "- - -", "---", "===", "* * *", "_ _ _", "+ + +"]
+    images = ["![[fig-1.png]]", "![alt text](a/b.png)"]
+
+    def prose(rng, n):
+        out = []
+        for _ in range(n):
+            r = rng.random()
+            out.append(rng.choice(vocab) + ("." if r < 0.03 else ":" if r < 0.07 else "?" if r < 0.08 else ""))
+        return " ".join(out)
+
     lost = []
-    for seed in range(6000):
+    for seed in range(seeds):
         rng = random.Random(seed)
         quoted = rng.random() < 0.6
-        lines = []
+        titled = quoted and rng.random() < 0.3
+        lines = ["> [!note] " + prose(rng, rng.randint(0, 4))] if titled else []
+        after_image = False
         for _ in range(rng.randint(2, 11)):
             if quoted and lines and rng.random() < 0.15:
                 lines.append(">")
                 continue
-            q = ("> " if rng.random() < 0.93 else ">> ") if quoted else ""
+            q = rng.choice(["> "] * 10 + [">> ", "> > "]) if quoted else ""
             pad = " " * rng.choice([0, 0, 0, 0, 1, 2, 2, 3, 3, 4, 4, 5, 6])
             if not lines and not quoted:
                 pad = pad[:3]  # four spaces at the start of a block is code, not prose
-            if lines and rng.random() < 0.04:
+            r = rng.random()
+            if lines and r < 0.04:
                 lines.append(q + pad + rng.choice(whole))
+            elif lines and r < 0.12:
+                lines.append(q + pad + rng.choice(images))
+                after_image = True
                 continue
-            lines.append(q + pad + rng.choice(markers) + " ".join(rng.choice(vocab) for _ in range(rng.randint(2, 13))))
-        body = [re.sub(r"^\s*> ?", "", ln, count=1) for ln in lines] if quoted else lines
+            else:
+                # A numbered line right under an image or a title is the shape
+                # that a wrong "no paragraph is open" turns into a lost sentence.
+                under = after_image or (titled and len(lines) == 1)
+                mark = rng.choice(numbered) if under and rng.random() < 0.6 else rng.choice(markers)
+                if not lines and mark == "[!tip] ":
+                    mark = ""  # on the first line it would be a real title
+                lines.append(q + pad + mark + prose(rng, rng.randint(2, 13)))
+            after_image = False
+        body = lines[1:] if titled else lines
+        if quoted:
+            body = [re.sub(r"^\s*> ?", "", ln, count=1) for ln in body]
+        body = [image.sub("ZZIMG", ln) for ln in body]
         toks = md.parse("\n".join(body))
-        ref = [s for i, t in enumerate(toks) if t.type == "inline" and toks[i - 1].type == "paragraph_open" for s in split(t.content)]
-        got = [wordy(s) for s in _sentences("\n".join(lines))]
-        if any(len(r) > 30 and not any(inside(g, r) for g in got) for r in ref):
+        want = []
+        for i, t in enumerate(toks):
+            if t.type == "inline" and toks[i - 1].type == "paragraph_open":
+                for part in re.split(r"(?m)^\s*ZZIMG\s*$", t.content):
+                    want += split(part)
+        got = [wordy(x) for x in sentences("\n".join(lines))]
+        miss = [w for w in want if len(w) > 30 and not any(kept(g, w) for g in got)]
+        if miss:
             lost.append(seed)
-    assert not lost, f"{len(lost)} of 6000 blocks lose a long sentence; first seeds {lost[:5]}"
+            if len(lost) <= show:
+                print(f"--- seed {seed}: parser {[len(w) for w in want]} validator {[len(g) for g in got]}")
+                print("\n".join(lines))
+    return lost
+
+
+def test_no_long_sentence_is_lost_against_a_commonmark_parser():
+    """Skipped where markdown-it-py is not installed."""
+    import pytest
+    pytest.importorskip("markdown_it")
+    from check_doc import _sentences
+
+    lost = parser_losses(_sentences, 20000)
+    assert not lost, f"{len(lost)} of 20000 blocks lose a long sentence; first seeds {lost[:5]}"
+
+
+def test_an_image_line_under_an_empty_line_opens_a_paragraph():
+    # Seed 14750 of the comparison above. After the empty line no paragraph is
+    # open, but the image line is text and opens one, so "3)" cannot start a list.
+    body = ("> [!note] Title\n>\n> ![alt text](a/b.png)\n> 3) " + words(12) + "\n"
+            ">       1.   " + words(13) + "\n>      2. " + words(8) + ".\n")
+    assert "prose-long" in codes(doc("Short lead.\n\n## S\n\n" + body))
+
+
+def test_an_image_line_does_not_open_a_list_under_it():
+    # Found by the verifier, 2026-11-10. An image line is text to markdown, so
+    # the paragraph is still open and only "1." may start a list under it.
+    body = "Intro text here\n![[fig.png]]\n2. " + words(20) + "\n3. " + words(15) + ".\n"
+    assert "prose-long" in codes(doc("Short lead.\n\n## S\n\n" + body))
+
+
+def test_a_numbered_line_right_under_a_callout_title_joins_when_in_doubt():
+    body = "> [!note] Title\n> 2019. " + words(20) + "\n> 3) " + words(15) + ".\n"
+    assert "prose-long" in codes(doc("Short lead.\n\n## S\n\n" + body))
+    # A list that starts at 1 under the title is certain, and is cut at each item.
+    body = "> [!note] Steps\n" + "".join(f"> {i}. {words(9)}\n" for i in range(1, 6))
+    assert "prose-long" not in codes(doc("Short lead.\n\n## S\n\n" + body))
+
+
+def test_a_callout_marker_in_the_middle_of_a_callout_is_text():
+    # Found by the adversary, 2026-11-10. Only the first line is a title.
+    body = ("> [!note] Setup\n>\n> " + words(12) + "\n> " + words(8) + " and\n"
+            "> [!tip] marks the next part, " + words(8) + ".\n")
+    assert "prose-long" in codes(doc("Short lead.\n\n## S\n\n" + body))
