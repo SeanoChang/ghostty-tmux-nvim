@@ -27,7 +27,8 @@
 #
 # exit: Codex's own exit code; 124 when the watchdog killed it; 3 when Codex
 #       ended well but changed a file outside --allow, changed the worktree's
-#       .git entry, or the files could not be compared; 2 on bad usage.
+#       .git entry, left a folder that cannot be read, or the files could not
+#       be compared; 2 on bad usage.
 set -u
 
 idle=300 max=1800 log="" role="" worktree="" repo="" allow=()
@@ -37,6 +38,15 @@ usage() {
   exit 2
 }
 fail() { echo "codex-run: $1" >&2; exit 2; }
+# A path for the report. The lead reads the report, so a name with a line
+# break or another control character is printed in bash's quoted form
+# ($'a\nb'): it cannot add a line that looks like one of this script's own.
+shown() {
+  case "$1" in
+    *[[:cntrl:]]*) printf '%q' "$1" ;;
+    *)             printf '%s' "$1" ;;
+  esac
+}
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -113,7 +123,9 @@ fi
 # The files of a folder, as they are on the disk. `before` prints one line for
 # each: the path in hex, its kind, its size, and a hash of its content. `after`
 # reads those lines and prints each path that is not as it was, new or gone,
-# with a NUL after each and the record //end last.
+# with a NUL after each and the record //end last. A path that cannot be read
+# is printed as //noread/<path>: what is under it was not seen, so it is not
+# one changed file that a pattern could allow.
 #
 # It reads no git state, because the run can write all of it: ignore rules,
 # the index, HEAD, the .git entry. For the same reason the caller keeps the
@@ -184,9 +196,12 @@ else:
         if line.strip():
             path, kind, size, text = line.split()
             was[bytes.fromhex(path)] = (kind, int(size), text)
-    changed, seen = [], set()
+    changed, unread, seen = [], [], set()
     for rel, st in walk(root):
         seen.add(rel)
+        if st is None:
+            unread.append(rel)
+            continue
         kind, size = shape(st)
         old = was.get(rel)
         # A new size is a change with no read: the hash is for the same size only.
@@ -196,6 +211,8 @@ else:
     out = sys.stdout.buffer
     for rel in sorted(changed):
         out.write(rel + b"\0")
+    for rel in sorted(unread):
+        out.write(b"//noread/" + rel + b"\0")
     out.write(b"//end\0")
 PY
 
@@ -254,15 +271,25 @@ fi
 wait "$pid"
 code=$?
 
+# Codex has ended. A process it left behind could still write into the
+# worktree after the files are compared, so what is left of its group ends
+# here too. (A process that made a session of its own is not reached.)
+if kill -0 -- "-$pid" 2>/dev/null; then
+  kill -TERM -- "-$pid" 2>/dev/null
+  sleep "$poll"
+  kill -KILL -- "-$pid" 2>/dev/null
+fi
+
 if [ -n "$worktree" ]; then
   # Every file that is not as it was before the run, new or gone: the disk
   # against the record from before. No path is left out by its name, by an
   # ignore rule or by what git holds. The last record must be //end: a compare
   # that broke on the way has checked nothing, and that is not a pass.
-  count=0 outside="" n_outside=0 ended=0 git_entry=0
+  count=0 outside="" n_outside=0 ended=0 git_entry=0 unread=""
   while IFS= read -r -d '' path; do
     if [ "$path" = "//end" ]; then ended=1; continue; fi
     if [ "$path" = ".git" ]; then git_entry=1; continue; fi
+    case "$path" in //noread/*) unread="$unread  $(shown "${path#//noread/}")"$'\n'; continue ;; esac
     count=$((count + 1))
     [ ${#allow[@]} -gt 0 ] || continue
     ok=0
@@ -273,7 +300,7 @@ if [ -n "$worktree" ]; then
     if [ "$ok" -ne 1 ]; then
       n_outside=$((n_outside + 1))
       # A build folder can hold tens of thousands of files: name the first 50, count the rest.
-      [ "$n_outside" -gt 50 ] || outside="$outside  $path"$'\n'
+      [ "$n_outside" -gt 50 ] || outside="$outside  $(shown "$path")"$'\n'
     fi
   done < <(printf '%s\n' "$before" | python3 -c "$files_py" after "$worktree")
   if [ "$ended" -ne 1 ]; then
@@ -285,6 +312,12 @@ if [ -n "$worktree" ]; then
   if [ "$git_entry" -eq 1 ]; then
     # No pattern allows this: the entry says which repository git reads here.
     echo "codex-run: the run changed the worktree's .git entry. Do not trust a git command in $worktree." >&2
+    [ "$code" -ne 0 ] || code=3
+  fi
+  if [ -n "$unread" ]; then
+    # No pattern allows this either: the name of a folder says nothing of what is in it.
+    echo "codex-run: could not be read, so what is under them was not checked:" >&2
+    printf '%s' "$unread" >&2
     [ "$code" -ne 0 ] || code=3
   fi
   if [ -n "$outside" ]; then

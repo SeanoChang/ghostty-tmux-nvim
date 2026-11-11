@@ -488,8 +488,9 @@ the run may change.
   the three agent files.
 - **`--allow` is checked after the run, and only on the worktree.** It does
   not see a write outside the worktree; the sandbox (`-s workspace-write`) is
-  what keeps Codex inside. A process the run left behind can still write
-  after the check.
+  what keeps Codex inside. When Codex ends, `codex-run` kills what is left of
+  its process group before it compares the files; a process that made a
+  session of its own is not reached and can still write after the check.
 - **The check reads the disk, not git.** `codex-run` records each file's kind,
   size and content hash before Codex starts, keeps the record in its own
   memory, and compares after the run. Two earlier versions asked git, and git
@@ -500,6 +501,14 @@ the run may change.
   "0 file(s) changed" (the verifier, on `bd5bf1f`). What the compare does not
   count: a new folder with no file in it, and a change of mode other than the
   executable bit.
+- **Two things end with exit 3 whatever `--allow` says:** a changed `.git`
+  entry of the worktree, and a path that cannot be read. Each stands for more
+  than one file. In `c42069b` a folder that could not be read was one record
+  that a pattern could allow, with what is under it unseen (found by the
+  automated security check).
+- **A file name with a control character is printed in quoted form**
+  (`$'a\nb'`), so a name cannot add a line to the report that the lead reads.
+  The names in the event log and in git's own output are not changed by this.
 - **An allowed file is not checked, and an ignored file stays in the
   worktree.** `git add -A` in the take-in step leaves an ignored file behind.
   Such a file can still sway a check that is rerun in the worktree, so the

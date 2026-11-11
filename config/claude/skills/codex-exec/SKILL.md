@@ -81,8 +81,9 @@ native: the harness tracks them, so they need no watchdog.)
   (`--allow 'target/*'`) only when the task must build. An allowed file is
   not checked at all.
 - Exit 3 with "changed the worktree's .git entry" means git in that worktree
-  cannot be trusted. Do not take a change from it; remove the worktree by hand
-  and run again.
+  cannot be trusted. Exit 3 with "could not be read" means part of the
+  worktree was not checked. No pattern allows either. Do not take a change
+  from such a worktree; remove it by hand and run again.
 - Exit codes: Codex's own; 3 for a change outside `--allow`; 124 when the
   watchdog killed the run (the event log was silent for `--idle` seconds, or
   the run passed `--max` seconds; the last events are on stderr); 2 for bad
