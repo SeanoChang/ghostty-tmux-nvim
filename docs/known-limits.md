@@ -513,6 +513,20 @@ call. The repo has no CI, so nothing runs them by itself.
   2026-11-10 and it was removed. The session therefore finds the bug by
   reading, and the skill's "build and run" step is not exercised. A real
   session asks the user before it runs a command.
+- **The live test's tool list is not a security boundary.** The boundary is
+  the repo: the session's only inputs are this repo's fixture and skill, and
+  whoever can change those can change the test file, which pytest runs as
+  code. A reviewer showed what the list leaves open at the git level: with
+  `core.fsmonitor` set in the fixture's `.git/config`, `git status` ran a
+  script; with a filter set there and in `.gitattributes`, `git restore` ran
+  one; and `git diff --output=<path>` wrote a file outside the repo. Two
+  things stand between a session and those: the deny rule for edits under
+  `.git`, and Claude Code's own guard for `.git/config` and for `--output` on
+  git (seen as strings in 2.1.319). Neither was tried against a session that
+  attempts it. `.gitattributes` itself stays writable; it runs nothing
+  without a setting under `.git`.
+- **The review raised this change to tier 2** for that test harness. The
+  skill text is tier 1.
 - **The session is not in a container, and its Read tool is not scoped.** It
   can read any file the user can. Nothing untrusted reaches it: its only
   inputs are this repo's fixture and skill. Its process gets a short list of

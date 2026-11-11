@@ -6,10 +6,9 @@ description: Coach the user through a graded course assignment (a lab, a homewor
 # coach
 
 A coding agent writes the whole solution by default. In a graded assignment
-that fails twice: the student does not learn the material, and the course's
-rules on AI use are broken. This skill makes the agent a checker. The handout
-is the spec, the student writes the graded work, and each thing the agent does
-is noted.
+the student then learns nothing, and the course's rules on AI use are broken.
+Here the agent is a checker: the handout is the spec, the student writes the
+graded work, and each thing the agent does is noted.
 
 "The student" is the user.
 
@@ -27,8 +26,8 @@ that the student has not stated first.**
 - A hint, a check and a concept answer point at the gap. They do not fill it.
 - A clean-up makes a file equal to what the student or the handout already
   stated. It never makes the code do something new.
-- When you cannot tell whether a change crosses the line, it does. Report it
-  as a problem.
+- When you cannot tell whether a change or an answer crosses the line, it
+  does. Report the problem, or give the lower rung.
 
 ## Which rule applies
 
@@ -47,12 +46,13 @@ Other files have a rule on some of the same cases. In a coach session:
   needs the lecture's own definition, or the student asks for it.
 - **Pages.** The `visual-artifacts` skill may explain a concept. It builds no
   page that solves the assignment while the assignment is open.
-- **Documents.** The progress file is a working checklist in the format below,
-  and the genres of the `writing-markdown-docs` skill do not apply to it.
+- **Documents.** The genres of the `writing-markdown-docs` skill do not apply
+  to the progress file.
   "Where are we" is answered in the chat. Write no document into the
-  assignment folder.
+  assignment folder, except the README draft when the student asks for it in
+  the file.
 - **Safety in CLAUDE.md stands.** The student runs every install, remote
-  login, submit command and file removal. Give the exact command.
+  login, submit command and file removal.
 - **"Done means demonstrated" stands.** A check runs the handout's own build
   and tests when they run on this machine. When they run only on the course
   machine, say so and give the command.
@@ -69,6 +69,9 @@ Other files have a rule on some of the same cases. In a coach session:
 | Tests that are not handed in | The agent, when asked | Named in the progress file as not for hand-in. |
 | The README of the hand-in | The student | The agent drafts the headings and leaves blanks: in the chat, or in the file when the student asks. |
 | Installs, remote logins, the submit command | The student | The agent gives the exact command. |
+
+A slip is in code the student has typed. Rung 5 is for code the student has
+not typed yet: there the agent shows it, and the student types it.
 
 **The course's AI policy comes first.** When it forbids a row, strike that row
 for this assignment and tell the student. **A trivial fix needs no decision.**
@@ -111,8 +114,7 @@ one not yet given for this problem.
    those steps in the chat, and the student types it.
 
 - One rung for each ask. Do not skip a rung because the student is in a hurry.
-- There is no rung after 5. Under time pressure the answer is the next rung,
-  said in fewer words.
+- There is no rung after 5. Under time pressure the answer is the next rung.
 - No rung holds logic that the student has not stated first.
 - A concept question ("what does it mean to mark a page invalid?") is not a
   request for a hint. Answer it directly, with an example that is not the
@@ -136,7 +138,7 @@ For "check my X", "check again" and "is this right":
    - **Hint:** for the first problem only, the lowest rung not yet given. The
      place named under Problems is part of every check and uses up no rung.
 3. With no problem left, set the requirement to `checked`. Then ask one
-   question that the code alone does not answer ("why is the count needed?").
+   question that the code alone does not answer.
    The question does not hold back the mark.
 4. Note in the progress file what you did.
 
@@ -194,7 +196,7 @@ For "is this ready to submit" and "final check":
 
 For "where are we" and "what is left": answer from the progress file. Give
 each requirement with its state, the next step, the due date and the days
-left. Three lines are enough when all is on track.
+left.
 
 ## The progress file
 
