@@ -108,6 +108,24 @@ workflow file.
   gate that compares the base commit of the run with the base of the pull
   request.
 
+Two wording points from the adversary's pass on the workflow (2026-11-11,
+at `d76ffa2`). Neither lets a bad merge through.
+
+- **"It gets no secret and no write token" (a comment in `ci.yml`) is too
+  short.** The job gets GitHub's automatic token, and both actions receive
+  it. The log of run 43111198048 gives its rights as `Contents: read` and
+  `Metadata: read`, and then the line `Cache mode: write`. So the token
+  cannot write to the repo. No step of the workflow uses the Actions cache,
+  and no `run:` step names the token. A truer comment: "a read-only token
+  and no other secret".
+- **"A bad merge shows after it" (the point above) can be one commit
+  late.** The push runs on `dev` share one group with `cancel-in-progress`.
+  A second push to `dev` while the first run is in progress cancels that
+  run. The first commit then has a cancelled run and no result. The run for
+  the second push tests a tree that holds both merges, so the bad merge
+  still turns CI red, on the later commit. This is read from the workflow
+  file; it was not tried.
+
 ### Not tested
 
 - A real merge on GitHub. The first one is the remaining check.
