@@ -583,9 +583,9 @@ the run may change.
     any rule, stops the build.
   - An HTML block that is not closed (`<details>` with no end), in the same
     way.
-  - A line separator other than a line feed: U+2028, U+2029, form feed,
-    `\x1c` to `\x1e`, `\x85`. The build parts the line there; Claude Code
-    does not.
+  - A line separator other than a line feed: U+2028, U+2029, vertical tab
+    (`\x0b`), form feed, `\x1c` to `\x1e`, `\x85`. The build parts the line
+    there; Claude Code does not.
   - A line that is only `<!-->` or `<!--->`. The build takes it as a comment.
     Claude Code 2.1.319 keeps it as text, because its stripping step finds no
     match in it. The line holds no instruction.
@@ -594,9 +594,13 @@ the run may change.
   - Whether a rule name line reaches a session depends on the Markdown
     reader. With marked 17 all 26 comments of the file were taken out (the
     verifier, in its first round; the file is as it was at `81d8e8e`). With
-    marked 4.3.0, ten name lines
-    that follow rule text with no blank line between stay as text (the
-    adversary). In random files of the verifier, a name line after an open
+    marked 4.3.0, 13 of the 25 name lines are not a comment at the top level
+    of the file: each follows rule text with no blank line between, and that
+    version keeps it inside the list above it. A reader that takes out only
+    top-level comments leaves those 13 as text (the adversary named the
+    case; the count is from `marked.lexer` on the same file, which gives 12
+    name lines in top-level comments). In random files of the verifier, a
+    name line after an open
     code fence, a `<div>` line or a `>` quote also stayed. No rule text is
     lost by this; a session reads a few more words.
 - **Small faults in `codex-run` that the adversary found at `95252c9`, not
