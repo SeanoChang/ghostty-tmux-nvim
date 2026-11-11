@@ -631,12 +631,6 @@ The record of the runs while the test was written:
   caught by the snapshot, because a session cannot remove a file. On this
   machine the disk ignores letter case, so the comparison is exact here.
   The automated security check flagged this on `39c9fd4`.
-- **A tool call with no id, or with an id seen before, gets a made-up key**
-  (`call-<n>`), and that key can replace an earlier call whose real id has
-  the same form. The same check flagged it as a call that is lost unseen.
-  It is not unseen: a call with a made-up key can never get a result,
-  because results are matched by id, and a call with no result fails the
-  run. The ids come from the API, not from the model.
 - **What the session writes into the progress folder is not read for the
   fix.** Both live checks allow writes there. The first reads the progress
   file for the requirements and for the two file names in the notes, and

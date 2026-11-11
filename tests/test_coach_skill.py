@@ -338,15 +338,19 @@ def parse_stream(stdout):
                 if block.get("type") != "tool_use":
                     continue
                 key = block.get("id")
-                if not key or key in calls:
-                    key = f"call-{len(order)}"
+                if not isinstance(key, str) or not key or key in calls:
+                    # No id that a result can name. An id in the stream is
+                    # JSON and so never a tuple: this key equals none of
+                    # them, the call gets no result, and stream_faults
+                    # fails the run.
+                    key = ("no usable id", len(order))
                 order.append(key)
                 calls[key] = Call(block.get("name"), block.get("input") or {}, None, None)
         elif event.get("type") == "user":
             results = [block for block in blocks if block.get("type") == "tool_result"]
             for block in results:
                 key = block.get("tool_use_id")
-                if key in calls:
+                if isinstance(key, str) and key in calls:
                     # The event's `tool_use_result` belongs to its one result.
                     # With two results in one event it cannot be assigned, so
                     # it is left out, and stream_faults reports the write.
@@ -818,6 +822,25 @@ def test_a_run_that_cannot_be_trusted_fails_in_the_helper(tmp_path, monkeypatch,
     fake_claude(monkeypatch, events, touch, code)
     with pytest.raises(AssertionError, match=message):
         session(tmp_path, "REQUEST")
+
+
+def test_a_call_with_no_usable_id_keeps_its_place_and_gets_no_result():
+    """A call with no id, with an id seen before, or with an id that is not
+    text gets a key that no id in the stream can equal. So it cannot take the
+    place of another call, no result can reach it, and stream_faults fails
+    the run. The real id here has the form the made-up keys once had."""
+    write, result = wrote("call-2", "sub/new.c")
+    no_id = used(None, "Read", file_path="ring.c")
+    answer, calls = parse_stream(stream(*READ, write, no_id, result, ANSWER))
+    assert [(call.tool, call.done) for call in calls] == [("Read", True), ("Write", True), ("Read", None)]
+    assert calls[1].result["filePath"] == "sub/new.c", "the Write keeps its own result"
+    assert stream_faults(calls) == ["a Read call has no result in the stream"]
+
+    seen_before = used("read-1", "Glob", pattern="*")
+    not_text = used(["read-1"], "Grep", pattern="x")
+    results = (came_back(["read-1"]), came_back("call-1"), came_back("call-2"), came_back(None))
+    answer, calls = parse_stream(stream(*READ, seen_before, not_text, *results, ANSWER))
+    assert [(call.tool, call.done) for call in calls] == [("Read", True), ("Glob", None), ("Grep", None)]
 
 
 def test_a_result_for_two_calls_in_one_event_is_given_to_neither():
