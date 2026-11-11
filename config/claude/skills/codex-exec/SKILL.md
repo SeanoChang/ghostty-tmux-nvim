@@ -71,6 +71,9 @@ native: the harness tracks them, so they need no watchdog.)
   crosses `/`). After the run, a changed file that fits no pattern is listed
   and the exit code is 3. Leave a locked test out of the patterns. This check
   reads the worktree only; the sandbox is what keeps Codex inside it.
+- The check is there to catch a run that strays from its files. It is not a
+  wall against a run that tries to hide a change: the sandbox is, together
+  with your review of the diff in your own tree.
 - "Changed" is read from the disk, not from git: `codex-run` records every
   file before the run and compares after it. So a cache file, a file that git
   ignores, a build folder and a file the run committed all count.
@@ -187,10 +190,11 @@ saw.
 | `gpt-6.1-sol` at `high` | 6 of 6       | 197 of 197   | 737 s          | $0.58                |
 
 - Both models changed only the source files the brief allowed, and replied
-  in the five-line form in every run. Each run also left `__pycache__` files
-  from its own test runs; the check of that day did not count cache files,
-  and today's does. On the tier 2 task, both wrote their own random tests
-  against git.
+  in the five-line form in every run. The bench's scope check read
+  `git status` and left cache names out. All twelve runs left a
+  `.pytest_cache` folder and ten left `__pycache__` files; today's
+  `codex-run` check would list them. On the tier 2 task, both wrote their own
+  random tests against git.
 - So the builder runs on Sol at `high`: the same result at about 0.3 of the
   price and 1.75 times the wall time. Use Astra at `low` when the wait matters.
 - What this does not show: which model is better on hard work. No task

@@ -488,14 +488,26 @@ the run may change.
   the three agent files.
 - **`--allow` is checked after the run, and only on the worktree.** It does
   not see a write outside the worktree; the sandbox (`-s workspace-write`) is
-  what keeps Codex inside. When Codex ends, `codex-run` kills what is left of
-  its process group before it compares the files; a process that made a
-  session of its own is not reached and can still write after the check.
+  what keeps Codex inside.
+- **`--allow` catches a run that strays; it is not a wall against a run that
+  tries to hide a change.** The cheap cases fail closed: a changed `.git`
+  entry, a path that cannot be read, a compare that did not finish. The wall
+  is the sandbox, together with the lead's review of the
+  diff in its own tree, which a process of the run cannot write. A stronger
+  check would compare what is taken in with the allowed files at the take-in
+  step; that is not built.
+- **A process the run left behind can write after the compare.** When Codex
+  ends, `codex-run` kills what is left of its process group first. A process
+  that left that group (a new group, or a new session) is not reached.
+  Whether `codex exec` runs its tool commands in groups of their own was not
+  tested; if it does, this kill reaches few of them. The kill comes after
+  bash has collected Codex's exit, so it trusts that the group's number was
+  not given to another group in between.
 - **The check reads the disk, not git.** `codex-run` records each file's kind,
   size and content hash before Codex starts, keeps the record in its own
   memory, and compares after the run. Two earlier versions asked git, and git
-  reads what the run can write. The first left out four cache folder names
-  (found by the automated security check on `f9adeb2`). The second trusted
+  reads what the run can write. The first, in `f9adeb2`, left out four cache
+  folder names (found by the automated security check). The second trusted
   ignore rules, so a run could add an ignore file and hide what it made
   (the same check, on `bd5bf1f`), and a run that committed its change showed
   "0 file(s) changed" (the verifier, on `bd5bf1f`). What the compare does not
@@ -505,10 +517,21 @@ the run may change.
   entry of the worktree, and a path that cannot be read. Each stands for more
   than one file. In `c42069b` a folder that could not be read was one record
   that a pattern could allow, with what is under it unseen (found by the
-  automated security check).
+  automated security check). A long list of either kind names the first 50
+  and counts the rest.
 - **A file name with a control character is printed in quoted form**
   (`$'a\nb'`), so a name cannot add a line to the report that the lead reads.
   The names in the event log and in git's own output are not changed by this.
+  U+2028 and U+0085, which some readers take as line breaks, are not control
+  characters to bash: U+2028 is printed as it is, and U+0085 comes out only
+  half quoted (found by the verifier, a nit).
+- **A run that commits is listed but not taken in.** The check lists the
+  files it changed. The take-in recipe of the skill compares with the
+  worktree's HEAD, which the run moved, so it takes nothing in.
+- **`codex-run` does not stop when `setsid` fails.** The line that starts
+  Codex in a session of its own is older than this change; were `setsid` to
+  fail, the kills of the process group would reach nothing (found by the
+  automated security check, older code).
 - **An allowed file is not checked, and an ignored file stays in the
   worktree.** `git add -A` in the take-in step leaves an ignored file behind.
   Such a file can still sway a check that is rerun in the worktree, so the
@@ -518,8 +541,9 @@ the run may change.
   with exit 3 and a list of cache files. The lead reads the list.
 - **The record costs time on a large repository.** Every file of the new
   worktree is hashed once before the run. After the run, a file is hashed
-  only when it was there before with the same size. Not measured on a
-  repository over 1,000 files.
+  only when it was there before with the same size. One measurement: a tree
+  of 31,438 files, most of them build output that a new worktree does not
+  hold, took 10 seconds to record on this machine.
 - **The merge rule sees the command words only.** `codex execpolicy check`
   gives `forbidden` for `gh pr merge ...` and for `/opt/homebrew/bin/gh pr
   merge ...`. It finds no rule for `env X=1 gh pr merge ...` and for `bash -lc
@@ -544,25 +568,36 @@ the run may change.
 
 ### Tested (2026-11-11, codex-cli 0.167.0)
 
-- The suite passes at each commit of the branch; the commit messages give the
-  counts. Four tests are skipped by default. Three of them ask the real
-  `codex` program to render a prompt; with `CODEX_PROMPT=1` they pass.
-- Deliberate breaks of `build_agents_md.py` and `codex-run`, one at a time:
-  the tests failed for each (the last commit message gives the count). The
-  script that makes the breaks is not in the repo.
-- The `--worktree` tests also pass under macOS `/bin/bash` 3.2 with
-  `python3` 3.9.
-- Three live runs through `codex-run` as it was at `f9adeb2`, which asked git
-  and left cache folders out, with the built rules in place as
-  `~/.codex/AGENTS.override.md` for the time of the runs. They were not run
-  again with the check that reads the disk:
+The commit names in this section are on the branch `claude/codex-harness`.
+A number here names the commit it was measured at, because the next commit
+changes it.
+
+- The suite (`python3 -m pytest tests -q -p no:cacheprovider`) passed at each
+  of the seven commits up to `f16b180`, where it gave 319 passed, 4 skipped.
+  Three of the skipped tests ask the real `codex` program to render a prompt;
+  with `CODEX_PROMPT=1` they pass.
+- Deliberate breaks of `build_agents_md.py` and `codex-run`, one at a time,
+  made by a script that is not in the repo. At `f16b180`: 62 breaks, and the
+  tests failed for 61 of them. The one they passed took out the second, hard
+  kill of a process the run left behind. The commit after `f16b180` adds the
+  test for it: a child that does not end when it is asked to.
+- At `f16b180` the `--worktree` tests also pass under macOS `/bin/bash` 3.2
+  with `python3` 3.9.
+- The message of `c42069b` says 31 of its new cases failed before the change.
+  A rerun gives 32 (found by the verifier).
+- Three live runs through the `codex-run` of that hour, which asked git and
+  left cache folders out (the check that is in `f9adeb2`), with the built
+  rules in place as `~/.codex/AGENTS.override.md` for the time of the runs.
+  They were not run again with the check that reads the disk:
   - `--role builder --worktree --allow` on a cache with three bugs, of which
-    the given test shows one: the reply was "done", one source file changed
-    in the worktree, the lead's tree stayed clean, and all hidden tests
-    passed.
+    the given test shows one: the reply was "done", `codex-run` printed
+    "1 file(s) changed", the lead's tree stayed clean during the run, and
+    all 12 tests of the grading folder passed (the given test and the hidden
+    ones).
   - A task whose fix sits in a file under "must not touch": the reply was
-    "blocked" and named the file; no source file changed. The run's `pytest`
-    left nine `__pycache__` files, which today's check would list (exit 3).
+    "blocked" and named the file; `codex-run` printed "0 file(s) changed".
+    The run's `pytest` left nine `__pycache__` files, which today's check
+    would list (exit 3).
   - `--role verifier` on a commit that passes its test and breaks its
     contract: verdict fail, one Important finding with the line and the
     sequence that shows it, "tier too low" raised, no file changed, and no

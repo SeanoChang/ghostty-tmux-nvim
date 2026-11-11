@@ -73,8 +73,9 @@ for step in do.split(";"):
         while time.time() < end:
             print('{"type":"item.completed"}', flush=True)
             time.sleep(0.2)
-    elif kind == "leave":                     # end well, with a child still running
-        child = subprocess.Popen(["sh", "-c", "sleep 2; echo late > '%s/late.txt'; sleep 300" % work])
+    elif kind in ("leave", "leave-deaf"):     # end well, with a child still running
+        deaf = "trap '' TERM; " if kind == "leave-deaf" else ""     # deaf: it does not end when asked to
+        child = subprocess.Popen(["sh", "-c", deaf + "sleep 2; echo late > '%s/late.txt'; sleep 300" % work])
         open(os.environ["FAKE_CODEX_CHILD"], "w").write(str(child.pid))
     elif kind == "hang":
         child = subprocess.Popen(["sleep", "300"])
@@ -367,6 +368,43 @@ def test_a_link_that_points_somewhere_new_is_a_change(box, lead):
     assert outside(done) == ["link"]
 
 
+def test_a_long_list_of_unread_folders_is_cut_too_and_comes_after_the_files(box, lead):
+    do = "write:README.md;sh:seq -w 1 60 | xargs -I{} sh -c 'mkdir d{} && chmod 000 d{}'"     # no `;`: it parts the steps
+    done, wt = worktree_run(box, lead, do, "src/*")
+    try:
+        assert done.returncode == 3, done.stderr
+        assert outside(done)[:1] == ["README.md"]
+        tail = done.stderr.split("could not be read, so what is under them was not checked:\n")[1]
+        assert [line[2:] for line in tail.splitlines() if line.startswith("  ")] == [f"d{n:02d}" for n in range(1, 51)]
+        assert "and 10 more, 60 in all" in tail
+        assert done.stderr.index("changed outside the allowed files:") < done.stderr.index("could not be read")
+    finally:
+        for folder in wt.glob("d[0-9][0-9]"):
+            folder.chmod(0o755)
+
+
+@pytest.mark.parametrize("module", ["hashlib", "os", "stat"])
+def test_a_python_file_in_the_callers_folder_does_not_take_over_the_compare(box, lead, module):
+    """`python3 -c` looks in the current folder first for what it imports. A
+    file there with the name of a module must not be the code that compares."""
+    here = box.tmp / "callers-folder"
+    here.mkdir()
+    (here / f"{module}.py").write_text("import sys\nsys.stdout.write('//end\\0')\nsys.stdout.flush()\nimport os\nos._exit(0)\n")
+    done = box("--log", box.log, "--worktree", str(box.tmp / "wt"), "--repo", str(lead), "--allow", "src/*", "--", "p",
+               do="write:README.md", cwd=here)
+    assert done.returncode == 3, done.stderr
+    assert outside(done) == ["README.md"]
+
+
+def test_a_python_file_in_the_callers_folder_does_not_take_over_the_role(box):
+    here = box.tmp / "callers-folder"
+    here.mkdir()
+    (here / "json.py").write_text("def dumps(*a, **k):\n    return '\"taken over\"'\n")
+    done = box("--log", box.log, "--role", "builder", "--", "prompt", agents=agent_dir(box.tmp), cwd=here)
+    assert done.returncode == 0, done.stderr
+    assert config_values(box.args())["developer_instructions"] == TRICKY
+
+
 def test_a_name_with_a_line_break_cannot_write_a_line_of_the_report(box, lead):
     """The lead reads this report. A file name must not be able to add a line
     to it that looks like one of codex-run's own."""
@@ -426,7 +464,7 @@ def test_a_changed_git_entry_ends_with_3_whatever_is_allowed(box, lead, do):
 def test_a_compare_that_does_not_finish_ends_with_3(box, lead):
     """When the pass after the run breaks, no file was checked: that is not a pass."""
     wrapper = box.tmp / "bin" / "python3"
-    wrapper.write_text(f'#!/bin/sh\n[ "$3" = after ] && exit 1\nexec {shlex.quote(sys.executable)} "$@"\n')
+    wrapper.write_text(f'#!/bin/sh\nfor a; do [ "$a" = after ] && exit 1; done\nexec {shlex.quote(sys.executable)} "$@"\n')
     wrapper.chmod(0o755)
     done, _ = worktree_run(box, lead, "write:README.md", "*")
     assert done.returncode == 3, done.stderr
@@ -464,12 +502,17 @@ def test_a_relative_path_from_inside_the_repository_that_leaves_it(box, lead):
     assert git(lead, "status", "--porcelain") == ""
 
 
-@pytest.mark.parametrize("where", ["inside", "src/inside", "../lead/inside", "link/inside"])
+@pytest.mark.parametrize("where", ["inside", "src/inside", "../lead/inside", "link/inside", "LEAD/inside", "LEAD/SRC/in/side"])
 def test_a_worktree_inside_the_repository_is_refused(box, lead, where):
+    """"Inside" is asked of the disk, not of the spelling: on a disk that
+    takes LEAD and lead as one folder, LEAD/inside is inside."""
+    if where.startswith("LEAD") and not (box.tmp / "LEAD").exists():
+        pytest.skip("this disk tells capitals from small letters")
     (box.tmp / "link").symlink_to(lead, target_is_directory=True)
-    cwd = box.tmp if where.startswith("link") else lead
+    cwd = lead if where.startswith(("inside", "src", "..")) else box.tmp
     done = box("--log", box.log, "--worktree", where, "--repo", str(lead), "--", "p", cwd=cwd)
     assert done.returncode == 2 and box.args() is None, done.stderr
+    assert "must be outside the repository" in done.stderr
     assert git(lead, "status", "--porcelain") == "" and "worktree" not in git(lead, "worktree", "list").split("\n", 1)[1]
 
 
@@ -575,10 +618,12 @@ def test_random_runs_against_a_model_of_the_files(box, lead, seed):
 
 # ── the watchdog ─────────────────────────────────────────────────────────────
 
-def test_a_child_the_run_left_behind_is_killed_before_the_files_are_compared(box, lead):
+@pytest.mark.parametrize("how", ["leave", "leave-deaf"])
+def test_a_child_the_run_left_behind_is_killed_before_the_files_are_compared(box, lead, how):
     """A process that outlives Codex could write after the check. The child
-    here writes a file two seconds after Codex ends."""
-    done, wt = worktree_run(box, lead, "write:src/a.py;leave", "src/*")
+    here writes a file two seconds after Codex ends. The deaf one does not
+    end when it is asked to, so it must be killed."""
+    done, wt = worktree_run(box, lead, f"write:src/a.py;{how}", "src/*")
     assert done.returncode == 0, done.stderr
     assert not alive(box.child()), "the child of the stand-in codex is still running"
     time.sleep(2.5)
