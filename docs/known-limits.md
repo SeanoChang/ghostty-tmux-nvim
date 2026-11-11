@@ -77,6 +77,35 @@ not a git repo:
 - `gh pr checks 12` and `cd . && gh pr merge …` got no decision from the hook
   and were stopped by the normal approval.
 
+### What the gate takes from CI (2026-11-11, with the first workflow)
+
+The automated security check raised these when `.github/workflows/ci.yml`
+was added. Both are in the gate and in GitHub's defaults, not in the
+workflow file.
+
+- **The gate takes any green check, not the check `checks` of the workflow
+  `ci`.** `ci_problem()` wants every check on the head commit green and at
+  least one that succeeded. It does not ask for a check by name. A
+  `pull_request` run uses the pull request's own version of the workflow
+  file. So a pull request that takes a test step out of the workflow is
+  still green. What stands against this: a change under `.github/` is
+  tier 2, so a verifier and an adversary read the diff before the review
+  line is written. To close it further: name `checks` as a required status
+  check in the branch protection of `dev` and `main` (a setting of the
+  owner), and let the gate ask for that check by name. A required name
+  stops a pull request that drops or renames the job. It does not stop one
+  that keeps the name and weakens the steps; only the review does.
+- **A green result is for the base as it was when CI ran.** A
+  `pull_request` run tests the merge of the head commit with the base
+  branch at that time. The gate binds CI and the review to the head commit
+  only, and `--match-head-commit` checks the head only. When `dev` moves
+  after the run, the head stays green for a merge that CI did not test.
+  What stands against this: the workflow also runs on each push to `dev`,
+  so a bad merge shows after it, not before. To close it: "Require
+  branches to be up to date before merging" in the branch protection, or a
+  gate that compares the base commit of the run with the base of the pull
+  request.
+
 ### Not tested
 
 - A real merge on GitHub. The first one is the remaining check.
