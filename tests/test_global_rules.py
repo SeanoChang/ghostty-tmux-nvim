@@ -11,8 +11,15 @@ So this file pins the rules that must survive a rewrite, by a short phrase
 each, and caps the size. To add a rule when the cap is reached, cut another
 line first, or raise the cap on purpose in the same commit.
 
+Both checks read the text as a session gets it: Claude Code leaves HTML
+comments out of the file when it loads it (seen in 2.1.319), so a comment
+costs no attention, and a rule that sits only in a comment is not a rule.
+A pin catches a deleted phrase. It does not catch a rule that was negated or
+moved into another rule.
+
 Run: python3 -m pytest tests/test_global_rules.py -q -p no:cacheprovider
 """
+import re
 from pathlib import Path
 
 import pytest
@@ -37,7 +44,8 @@ BRIEF_LINES = ["Goal:", "Tier:", "Files:", "Done:", "Context:", "Budget:", "Do n
 
 
 def text():
-    return RULES.read_text(encoding="utf-8")
+    """The rules as a session loads them: the file without its HTML comments."""
+    return re.sub(r"<!--.*?-->", "", RULES.read_text(encoding="utf-8"), flags=re.S)
 
 
 def flat():

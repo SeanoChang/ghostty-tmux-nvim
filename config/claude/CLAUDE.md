@@ -124,7 +124,7 @@
 ## Delegation
 
 - Build dependent work in the lead session: design, code, and every fix after
-  a review. The session that wrote the plan carries it out.
+  a review. The lead carries out its own plan.
 - Split by context, not by role. Delegate only a piece with its own context:
   parallel independent paths (3+), reading too much for the lead's context
   (10+ files), or a check that needs a fresh context. Never delegate dependent
@@ -135,7 +135,8 @@
   | an independent component: its own files, its own check | `builder`, in a worktree             |
   | work a command can fully grade                         | Codex first (skill `codex-exec`)     |
   | review of a change, refuting a finding list            | `verifier`, then `adversary` by tier |
-  | logs, long output, wide search                         | `Explore`, or a Sonnet reader        |
+  | the steps of one task, from reading its code           | `planner`                            |
+  | logs, long output, wide search                         | `scout`                              |
   | a document from handed-over material                   | `scribe`                             |
   | work that needs this conversation's context            | `fork`                               |
 

@@ -338,8 +338,23 @@ lines in `config/claude/CLAUDE.md`. None is fixed.
   2h"), and the row does not say whether "in 3h" counts. The "faster" and
   "continue" rows have the same weakness.
 - **`tests/test_global_rules.py` catches a deleted phrase only.** It misses a
-  negated rule, a phrase moved into another rule or into the HTML comment, and
-  the parts it does not pin (the table row, the clock report, "run in CI").
-  The repo has no CI, so the test runs only when someone runs it.
-- **The size cap leaves under 30 characters of room.** The next added sentence
-  fails the test on purpose: cut a line, or raise the cap in the same commit.
+  negated rule, a phrase moved into another rule, and the parts it does not
+  pin (the table row, the clock report, "run in CI"). The repo has no CI, so
+  the test runs only when someone runs it.
+- **The size cap counts the file without its HTML comments.** Claude Code
+  2.1.319 leaves them out when it loads the file. If a later version loads
+  them, the cap undercounts by the size of the comment (302 characters today).
+
+## Worker definitions (`config/claude/agents/`, 2026-11-10)
+
+- **The cast is checked against its source only on request.** The seven role
+  names and jobs are copied into `tests/test_worker_roles.py`. The test that
+  compares them with the source file runs only when `WORKER_CAST_SOURCE` is
+  set; without it, a change in the source goes unseen here.
+- **`manifest.txt` has no line for `config/claude/agents`.** Pre-existing: the
+  six definitions are linked into `~/.claude/agents` by hand, one file each,
+  so a fresh install gets none of them.
+- **The planner's model and effort are a choice, not a measurement:** Opus at
+  medium effort, because a wrong step costs a builder round.
+- **"Read-only" for the verifier, adversary, planner and scout is a rule in
+  their text.** They have no Edit or Write tool, but Bash can still write.
