@@ -488,8 +488,8 @@ check" rule was typed again at least eight times.
 ### The live checks
 
 Two checks run a real headless session on a fixture (a ring buffer lab in C).
-They run only with `COACH_LIVE=1`, take about a minute each and cost a model
-call. The repo has no CI, so nothing runs them by itself.
+They run only with `COACH_LIVE=1`. The pair takes about a minute and a half
+and costs two model calls. The repo has no CI, so nothing runs them by itself.
 
 What they show:
 
@@ -519,16 +519,30 @@ How the session is held:
   So a command list is not a boundary. The automated security check flagged
   each version.
 - **The review raised the test harness to tier 2.** The skill text is tier 1.
-- **`.gitattributes` in the fixture stays writable.** The test runs git on the
-  fixture after the session. An attribute can name a filter from the user's
-  global git settings (here: `git-lfs`), which is the user's own program. It
-  cannot name a program of the session's, because `.git/config` is refused.
+- **The test asks git nothing after the session.** It compares every file in
+  the fixture, `.git` included, with a snapshot taken before. An adversary
+  pass broke the version before this one: the session may write `.gitignore`,
+  and a `.gitignore` that holds `*` hides itself and every new file from
+  `git status`, so a file with the corrected line passed as "folder
+  unchanged". The same pass found that a path spelled `RING.C` escaped the
+  check for edits, that an edit with neither "head" nor "ring_pop" in it
+  escaped, and that the fix stated before "Problems:" passed. The test now
+  replays every edit in the stream by file identity, and reads the whole
+  answer.
+- **What restricted mode itself refused in that pass:** writes to
+  `.gitmodules`, to a `sub/.git` file and to `.claude/settings.json`. A
+  `sub/.git` file written by hand did not make git read a planted setting.
 - **The session's answer is saved** in pytest's temp folder and shown in a
   failed assertion, with no redaction. The session cannot read outside its
   folders, and its process gets a short list of environment variables.
 
 What the session does not exercise, because of that design:
 
+- **The CLI loading the user's rules.** Restricted mode does not load
+  `~/.claude/CLAUDE.md` (a probe asked for two lines that exist only there,
+  and got neither). The test puts this repo's `config/claude/CLAUDE.md` into
+  the prompt, so the "fix means act" rule is in context beside the skill. It
+  arrives as prompt text, not the way the CLI delivers it.
 - **The CLI finding the skill.** Restricted mode loads no user skills, so the
   test hands the session the text of SKILL.md in the form the CLI uses on
   invocation. Earlier runs, outside restricted mode, did start the skill with
@@ -547,6 +561,8 @@ The record of the runs while the test was written:
   not saved, so the cause is a guess), and one of the second check on "back to
   slot 0", which is the handout's own phrase. Each assertion was corrected to
   what the skill promises.
+- Under the no-shell harness, before the snapshot and with no rules file in
+  the prompt: both checks passed twice in a row.
 - Under the final harness: both checks passed twice in a row.
 
 ### Not tested
@@ -572,5 +588,10 @@ The record of the runs while the test was written:
 - **The stream check can pass on nothing** if a later CLI changes the shape
   of its stream: with no tool call parsed, "no edit at any point" holds. The
   helper requires at least one Read call in the stream, and the first check
-  requires the `ring.c` edit to be in it.
+  requires that the edits in the stream add up to the `ring.c` on disk. The
+  snapshot does not depend on the stream.
+- **The fix in words is found by a short list** in both checks ("% RING_SIZE",
+  "%=", "modulo", and in the second check "= 0;" and "reset head to 0"). In
+  the first check the list applies to a clause that also names head or pop,
+  so the student's own `tail` line can be quoted.
 - **The skill is linked into `~/.claude/skills` by hand** on this machine.
