@@ -72,11 +72,11 @@
 ## Review and merge
 
 - Set the tier when you write the task, from what the change touches, and write
-  it on the task. Unknown is tier 1. A repo's `REVIEW.md` can name paths that
-  are always tier 2. The diff decides: when a change comes to touch a higher
-  tier than its task says, raise the tier on the task and run that tier's
-  review. A verifier that reports "tier too low" has raised it. A tier 2 change
-  is its own task and PR, so lower-tier work does not wait.
+  it on the task. Give tier 2 work its own task and PR, so lower-tier work does
+  not wait for its review. Unknown is tier 1. A repo's `REVIEW.md` can name
+  paths that are always tier 2. The diff decides: when a change comes to touch
+  a higher tier than its task says, raise the tier on the task and run that
+  tier's review. A verifier that reports "tier too low" has raised it.
 
   | Tier | The change touches                                                                                                             | Review                                             |
   | ---- | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------- |

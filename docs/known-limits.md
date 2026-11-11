@@ -313,3 +313,33 @@ was made. None blocks the change.
 - **The builder rule to load the markdown skill is text only.** Nothing checks
   that a subagent ran `check_doc.py`. A hook that runs it after each write was
   offered on 2026-11-10 and declined.
+
+## Global rules additions (2026-11-10)
+
+Minor findings from the review of the design, time-box, outside-in and tier 2
+lines in `config/claude/CLAUDE.md`. None is fixed.
+
+- **"At each milestone" in the time box reuses a defined word.** Elsewhere in
+  the file a milestone ends with the PR to the release branch. A short time box
+  has no such milestones, and the rule does not ask for timed checkpoints in
+  the plan, so "the clock against the plan" has little to measure against.
+- **"Cut from the list" does not say what happens when the must-haves alone
+  run over:** run past the time, or drop a must-have.
+- **"First one end-to-end check" has two readings:** before the feature code,
+  or first among the tests. The reason for the rule is the first reading.
+- **"Keep such checks few" can read as few checks of any kind.** It means few
+  end-to-end checks.
+- **"Run in CI" has a side effect.** Adding the check to a workflow is a CI
+  change, so it is tier 2 and its own PR. A repo with no CI cannot meet the
+  rule until its first workflow is merged.
+- **"Take the smallest" does not say smallest in what.** It means the fewest
+  parts, not the least build effort.
+- **The time-box trigger phrases can fire by accident** ("the cron runs in
+  2h"), and the row does not say whether "in 3h" counts. The "faster" and
+  "continue" rows have the same weakness.
+- **`tests/test_global_rules.py` catches a deleted phrase only.** It misses a
+  negated rule, a phrase moved into another rule or into the HTML comment, and
+  the parts it does not pin (the table row, the clock report, "run in CI").
+  The repo has no CI, so the test runs only when someone runs it.
+- **The size cap leaves under 30 characters of room.** The next added sentence
+  fails the test on purpose: cut a line, or raise the cap in the same commit.
