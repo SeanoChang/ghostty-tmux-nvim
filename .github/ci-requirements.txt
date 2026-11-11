@@ -1,4 +1,5 @@
-# Packages the repo's tests import. CI installs exactly these versions.
+# Packages the repo's tests import. CI installs these four at exactly these
+# versions. The packages they pull in are not pinned.
 # To run the same checks on your machine:
 #   python3 -m pip install -r .github/ci-requirements.txt
 #   python3 -m playwright install chromium

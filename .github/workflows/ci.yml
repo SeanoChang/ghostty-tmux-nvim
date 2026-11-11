@@ -1,14 +1,15 @@
 # Runs the repo's own tests on every pull request, and on each push to the
 # integration branch (dev) and the release branch (main).
 #
-# The merge-gate hook (config/claude/hooks/merge-gate.py) reads the result of
-# this workflow: a pull request merges only when the job below succeeded on
-# its head commit.
+# The merge-gate hook (config/claude/hooks/merge-gate.py) reads the checks on
+# the head commit of a pull request. It lets a merge through only when every
+# check is green and at least one succeeded. The job below is that check. The
+# gate does not ask for it by name; see docs/known-limits.md.
 #
 # Not run here, because a hosted runner cannot run them:
 #   - the mod tests (config/claude/mods/*/tests), which need the Claude Code CLI;
-#   - the live tests behind an environment switch (COACH_LIVE, CODEX_PROMPT,
-#     WORKER_CAST_SOURCE), which need a signed-in agent CLI or a private file.
+#   - a test behind an environment switch (WORKER_CAST_SOURCE), which needs a
+#     file that is not in the repo.
 # The job runs on macOS only, the system these dotfiles are for.
 name: ci
 

@@ -88,9 +88,11 @@ workflow file.
   least one that succeeded. It does not ask for a check by name. A
   `pull_request` run uses the pull request's own version of the workflow
   file. So a pull request that takes a test step out of the workflow is
-  still green. What stands against this: a change under `.github/` is
-  tier 2, so a verifier and an adversary read the diff before the review
-  line is written. To close it further: name `checks` as a required status
+  still green. What stands against this: by the rule in
+  `config/claude/CLAUDE.md` a change to CI is tier 2, so a verifier and an
+  adversary read the diff before the review line is written. The gate does
+  not hold a pull request to that tier: it does not read which files
+  changed. To close it further: name `checks` as a required status
   check in the branch protection of `dev` and `main` (a setting of the
   owner), and let the gate ask for that check by name. A required name
   stops a pull request that drops or renames the job. It does not stop one
