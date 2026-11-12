@@ -1,0 +1,9 @@
+# Packages the repo's tests import. CI installs these four at exactly these
+# versions. The packages they pull in are not pinned.
+# To run the same checks on your machine:
+#   python3 -m pip install -r .github/ci-requirements.txt
+#   python3 -m playwright install chromium
+pytest==9.0.3
+pyyaml==6.0.3
+markdown-it-py==4.2.0
+playwright==1.48.0
