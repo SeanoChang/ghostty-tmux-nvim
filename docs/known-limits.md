@@ -388,8 +388,9 @@ lines in `config/claude/CLAUDE.md`. None is fixed.
   "continue" rows have the same weakness.
 - **`tests/test_global_rules.py` catches a deleted phrase only.** It misses a
   negated rule, a phrase moved into another rule, and the parts it does not
-  pin (the table row, the clock report, "run in CI"). The repo has no CI, so
-  the test runs only when someone runs it.
+  pin (the table row, the clock report, "run in CI"). Since 2026-11-11 CI
+  runs the test on each pull request and on each push to `dev` and `main`.
+  A commit that reaches neither is checked only when someone runs the test.
 - **The size cap counts the file without its HTML comments.** Claude Code
   2.1.319 leaves them out when it loads the file. If a later version loads
   them, the cap undercounts by the size of the comment (302 characters today).
@@ -538,7 +539,8 @@ check" rule was typed again at least eight times.
 
 Two checks run a real headless session on a fixture (a ring buffer lab in C).
 They run only with `COACH_LIVE=1`. The pair takes about a minute and a half
-and costs two model calls. The repo has no CI, so nothing runs them by itself.
+and costs two model calls. CI does not set that switch, so nothing runs them
+by itself.
 
 What they show:
 
@@ -752,9 +754,13 @@ the run may change.
 
 ### Not enforced
 
-- **Nothing runs the build or the tests by itself.** The repo has no CI and no
-  git hook. A change to `CLAUDE.md` that is committed without a build leaves
-  `AGENTS.md` stale until someone runs the tests.
+- **No git hook runs the build or the tests.** CI runs `pytest tests` on each
+  pull request and on each push to `dev` and `main`, and two tests in
+  `tests/test_codex_rules.py` (`test_the_built_file_is_current`,
+  `test_the_check_mode_agrees`) fail when `AGENTS.md` is stale. So a change
+  to `CLAUDE.md` that is committed without a build leaves `AGENTS.md` stale
+  until the commit reaches a pull request or one of those two branches, or
+  until someone runs the tests.
 - **A hash forces a look, not agreement.** When a rule that Codex has in its
   own wording changes in the root, the build stops and prints the new hash.
   Setting the hash without reading both texts gets past it. The same holds for
