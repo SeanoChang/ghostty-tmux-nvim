@@ -725,3 +725,227 @@ The record of the runs while the test was written:
   A second start in `session()` through `subprocess.Popen`, `os.system` or
   `os.spawn*` is not recorded, and the test passes. Found by the same pass.
 - **The skill is linked into `~/.claude/skills` by hand** on this machine.
+
+## Codex harness (`config/codex/`, `codex-exec`, 2026-11-11)
+
+Three changes: `config/codex/AGENTS.md` is built from `config/claude/CLAUDE.md`
+and `config/codex/AGENTS.src.md`; Codex has a builder, a verifier and an
+adversary agent; and `codex-run` takes a role, a worktree and a list of files
+the run may change.
+
+### By design
+
+- **`CLAUDE.md` is the root, and `AGENTS.md` is never edited by hand.** A hand
+  edit fails `tests/test_codex_rules.py`. What is only for Codex goes in
+  `AGENTS.src.md`.
+- **The rule names in `CLAUDE.md` are HTML comments.** Claude Code leaves HTML
+  comments out when it loads the file (seen in 2.1.319; see
+  `tests/test_global_rules.py`), so the names cost a session nothing. The size
+  test leaves a name line out whole, line end included.
+- **Codex never merges.** `AGENTS.md` says so, and on this machine
+  `~/.codex/rules/default.rules` forbids `gh pr merge`. That rules file is not
+  tracked here.
+- **The Codex reviewers never write the merge gate's lines.** A Codex review is
+  a second opinion. The review for the tier runs on Claude.
+- **The builder runs on GPT-6.1 Sol at `high`.** The numbers are in the
+  `codex-exec` skill, under Evidence.
+
+### Not enforced
+
+- **Nothing runs the build or the tests by itself.** The repo has no CI and no
+  git hook. A change to `CLAUDE.md` that is committed without a build leaves
+  `AGENTS.md` stale until someone runs the tests.
+- **A hash forces a look, not agreement.** When a rule that Codex has in its
+  own wording changes in the root, the build stops and prints the new hash.
+  Setting the hash without reading both texts gets past it. The same holds for
+  the three agent files.
+- **`--allow` is checked after the run, and only on the worktree.** It does
+  not see a write outside the worktree; the sandbox (`-s workspace-write`) is
+  what keeps Codex inside.
+- **`--allow` catches a run that strays; it is not a wall against a run that
+  tries to hide a change.** The cheap cases fail closed: a changed `.git`
+  entry, a path that cannot be read, a compare that did not finish. The wall
+  is the sandbox, together with the lead's review of the
+  diff in its own tree, which a process of the run cannot write. A stronger
+  check would compare what is taken in with the allowed files at the take-in
+  step; that is not built.
+- **A process the run left behind can write after the compare.** When Codex
+  ends, `codex-run` kills what is left of its process group first. A process
+  that left that group (a new group, or a new session) is not reached.
+  Whether `codex exec` runs its tool commands in groups of their own was not
+  tested; if it does, this kill reaches few of them. The kill comes after
+  bash has collected Codex's exit, so it trusts that the group's number was
+  not given to another group in between.
+- **The check reads the disk, not git.** `codex-run` records each file's kind,
+  size and content hash before Codex starts, keeps the record in its own
+  memory, and compares after the run. Two earlier versions asked git, and git
+  reads what the run can write. The first, in `f9adeb2`, left out four cache
+  folder names (found by the automated security check). The second trusted
+  ignore rules, so a run could add an ignore file and hide what it made
+  (the same check, on `bd5bf1f`), and a run that committed its change showed
+  "0 file(s) changed" (the verifier, on `bd5bf1f`). What the compare does not
+  count: a new folder with no file in it, and a change of mode other than the
+  executable bit.
+- **Two things end with exit 3 whatever `--allow` says:** a changed `.git`
+  entry of the worktree, and a path that cannot be read. Each stands for more
+  than one file. In `c42069b` a folder that could not be read was one record
+  that a pattern could allow, with what is under it unseen (found by the
+  automated security check). A long list of either kind names the first 50
+  and counts the rest.
+- **A file name with a control character is printed in quoted form**
+  (`$'a\nb'`), so a name cannot add a line to the report that the lead reads.
+  The names in the event log and in git's own output are not changed by this.
+  U+2028 and U+0085, which some readers take as line breaks, are not control
+  characters to bash: U+2028 is printed as it is, and U+0085 comes out only
+  half quoted (found by the verifier, a nit).
+- **A run that commits is listed but not taken in.** The check lists the
+  files it changed. The take-in recipe of the skill compares with the
+  worktree's HEAD, which the run moved, so it takes nothing in.
+- **`codex-run` does not stop when `setsid` fails.** The line that starts
+  Codex in a session of its own is older than this change; were `setsid` to
+  fail, the kills of the process group would reach nothing (found by the
+  automated security check, older code).
+- **An allowed file is not checked, and an ignored file stays in the
+  worktree.** `git add -A` in the take-in step leaves an ignored file behind.
+  Such a file can still sway a check that is rerun in the worktree, so the
+  full check in the lead's tree is the last word.
+- **A Python run leaves cache files, and they count.** A builder that runs
+  `pytest` without `PYTHONDONTWRITEBYTECODE=1` and `-p no:cacheprovider` ends
+  with exit 3 and a list of cache files. The lead reads the list.
+- **The record costs time on a large repository.** Every file of the new
+  worktree is hashed once before the run. After the run, a file is hashed
+  only when it was there before with the same size. One measurement: a tree
+  of 31,438 files, most of them build output that a new worktree does not
+  hold, took 10 seconds to record on this machine.
+- **The merge rule sees the command words only.** `codex execpolicy check`
+  gives `forbidden` for `gh pr merge ...` and for `/opt/homebrew/bin/gh pr
+  merge ...`. It finds no rule for `env X=1 gh pr merge ...` and for `bash -lc
+  "gh pr merge ..."`. The Codex docs say the runtime splits a simple `bash
+  -lc` script; that was not tested. Branch protection on GitHub is the hard
+  stop.
+- **A Codex agent has the permissions of its session.** "Report, do not fix" is
+  an instruction to the Codex verifier and adversary, not a limit on them.
+  `codex-run --worktree` gives them a tree of their own.
+- **A worktree starts from HEAD.** Work that is not committed is not in it.
+- **`codex-run --role` needs `python3` 3.11 or later** on PATH, to read the
+  agent file. `--worktree` needs `python3` too (3.9 was tested).
+- **A word in the prompt can drop the role's effort.** `codex-run` looks for
+  `model_reasoning_effort` in every codex argument, the prompt included. A
+  brief that only names that word makes the role's effort go unsent, with no
+  message (`codex-run`, the `has_effort` line; found by the verifier, a nit).
+- **The build takes only lines that it and Claude Code read the same way.**
+  The build reads `CLAUDE.md` line by line; Claude Code reads it as Markdown.
+  Up to `95252c9` the build dropped three kinds of text that Claude Code
+  loads, and asked for no decision: text after a comment's end on the same
+  line (found by the verifier), a line that starts with `#` and is not a
+  heading, such as `#1 rule: ...` (found by the adversary), and what follows
+  a comment that is never closed (the adversary). Each now stops the build. A
+  test checks random files against a reading that shares no code with the
+  build. It does not run Claude Code's own Markdown reader, so a line that
+  the two read differently in a way nobody has thought of is still possible.
+- **Where the build and Claude Code still read `CLAUDE.md` differently**
+  (found at `6220dc9` by the adversary, with marked 4.3.0, and by the
+  verifier, with marked 17; each used the comment stripping of Claude Code
+  2.1.319; all nits, not changed). The first three need Markdown that is
+  broken or characters nobody types, and the repo's own test cannot catch
+  them: it knows no code fences and no HTML blocks, and it parts lines the
+  way the build does.
+  - A code fence that is still open at the next heading or rule name line. A
+    `# ...` line in it is code to Claude Code; the build takes it as a
+    heading and drops it. A fence that closes inside its rule, or outside
+    any rule, stops the build.
+  - An HTML block that is not closed (`<details>` with no end), in the same
+    way.
+  - A line separator other than a line feed: U+2028, U+2029, vertical tab
+    (`\x0b`), form feed, `\x1c` to `\x1e`, `\x85`. The build parts the line
+    there; Claude Code does not.
+  - A line that is only `<!-->` or `<!--->`. The build takes it as a comment.
+    Claude Code 2.1.319 keeps it as text, because its stripping step finds no
+    match in it. The line holds no instruction.
+  - A heading can hold an instruction (`## Never push to main`) and needs no
+    decision. This is by design: a heading is not a rule.
+  - Whether a rule name line reaches a session depends on the Markdown
+    reader. With marked 17 all 26 comments of the file were taken out (the
+    verifier, in its first round; the file is as it was at `81d8e8e`). With
+    marked 4.3.0, 13 of the 25 name lines are not a comment at the top level
+    of the file: each follows rule text with no blank line between, and that
+    version keeps it inside the list above it. A reader that takes out only
+    top-level comments leaves those 13 as text (the adversary named the
+    case; the count is from `marked.lexer` on the same file, which gives 12
+    name lines in top-level comments). In random files of the verifier, a
+    name line after an open
+    code fence, a `<div>` line or a `>` quote also stayed. No rule text is
+    lost by this; a session reads a few more words.
+- **Small faults in `codex-run` that the adversary found at `95252c9`, not
+  changed:**
+  - `-Cx`, `-mfoo` and `-m=foo` in the codex args are not seen as a folder or
+    a model, so `--worktree` or the role adds its own; codex 0.167 then
+    refuses the repeated flag. A worktree is left behind.
+  - A model given as `-c model=...` or by `-p profile` loses to the role's
+    `-m`.
+  - An agent file with `model = ""` starts Codex, which refuses it. A DEL
+    character in the instructions is sent as it is and is not valid TOML.
+    Under a Latin-1 locale a character outside ASCII in the instructions
+    arrives changed.
+  - A `--worktree` path that ends in a line break is made without it. With
+    `--repo` set to a linked worktree, a `--worktree` path inside the main
+    checkout is accepted.
+  - A path deeper than 1,024 bytes gives exit 3 ("could not be read").
+  - The build joins two or more blank lines into one, inside a placed rule
+    too.
+- **Older faults in `codex-run`, there before this change (the adversary):**
+  - When `codex` is not on PATH, the exit code is 0 and the log is empty;
+    with `--worktree` it prints "0 file(s) changed".
+  - A `--idle` or `--max` value that is not a number (`5m`) turns that limit
+    off, with only a shell warning.
+  - Killing `codex-run` itself leaves Codex running with no watchdog.
+
+### Tested (2026-11-11, codex-cli 0.167.0)
+
+The commit names in this section are on the branch `claude/codex-harness`.
+A number here names the commit it was measured at, because the next commit
+changes it.
+
+- The suite (`python3 -m pytest tests -q -p no:cacheprovider`) passed at each
+  of the seven commits up to `f16b180`, where it gave 319 passed, 4 skipped.
+  Three of the skipped tests ask the real `codex` program to render a prompt;
+  with `CODEX_PROMPT=1` they pass.
+- Deliberate breaks of `build_agents_md.py` and `codex-run`, one at a time,
+  made by a script that is not in the repo. At `f16b180`: 62 breaks, and the
+  tests failed for 61 of them. The one they passed took out the second, hard
+  kill of a process the run left behind. The commit after `f16b180` adds the
+  test for it: a child that does not end when it is asked to.
+- At `f16b180` the `--worktree` tests also pass under macOS `/bin/bash` 3.2
+  with `python3` 3.9.
+- The message of `c42069b` says 31 of its new cases failed before the change.
+  A rerun gives 32 (found by the verifier).
+- Three live runs through the `codex-run` of that hour, which asked git and
+  left cache folders out (the check that is in `f9adeb2`), with the built
+  rules in place as `~/.codex/AGENTS.override.md` for the time of the runs.
+  They were not run again with the check that reads the disk:
+  - `--role builder --worktree --allow` on a cache with three bugs, of which
+    the given test shows one: the reply was "done", `codex-run` printed
+    "1 file(s) changed", the lead's tree stayed clean during the run, and
+    all 12 tests of the grading folder passed (the given test and the hidden
+    ones).
+  - A task whose fix sits in a file under "must not touch": the reply was
+    "blocked" and named the file; `codex-run` printed "0 file(s) changed".
+    The run's `pytest` left nine `__pycache__` files, which today's check
+    would list (exit 3).
+  - `--role verifier` on a commit that passes its test and breaks its
+    contract: verdict fail, one Important finding with the line and the
+    sequence that shows it, "tier too low" raised, no file changed, and no
+    `review: pass` line.
+- Twelve graded runs for the choice of the builder's model: see the skill.
+
+### Not tested
+
+- **Codex spawning one of the agents itself** (`agent_type`) in a live
+  session. The prompt test shows only that Codex offers the three.
+- **The adversary role** in a live run.
+- **Main worker mode under the new rules:** the short prompts, the tiers, the
+  time box. Only the subagent path ran live.
+- **Several `codex-run` worktrees at one time.**
+- **Which model is better on hard work.** No graded task failed in either arm.
+- **The install step.** `./install.sh --dry-run --only codex` lists the three
+  agent links; the real run waits for the merge.

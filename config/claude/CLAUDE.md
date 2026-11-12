@@ -2,14 +2,19 @@
 
 <!-- Command-level guards are deny/ask rules in settings.json.tmpl; this file holds what needs judgment.
      Task-specific detail lives in skills (codex-exec, verify-current). Add a rule only after the same
-     mistake happens twice or from a measured source, and say which in the commit message. -->
+     mistake happens twice or from a measured source, and say which in the commit message.
+     This file is the root of the rules for Codex too. Each `rule:` line below names the rule under
+     it. config/codex/AGENTS.md is built from these rules and from config/codex/AGENTS.src.md.
+     After any edit here, run config/codex/build_agents_md.py and tests/test_codex_rules.py. -->
 
 ## Working
 
+<!-- rule: working.expectation -->
 - Work toward my defined expectation. Before you build, restate the outcome I
   expect and the check that will prove it. If I have not defined one, interview
   me briefly, then build to it. When I describe a problem, ask, or think out
   loud, give your assessment and stop; "fix", "build", "add" mean act.
+<!-- rule: working.craft -->
 - Don't underestimate the work. Plan past the immediate request, build to
   production quality, and pick the best design for the real scale and need.
   Build cost is no reason for a weaker design: you build far faster than a
@@ -24,6 +29,7 @@
 
 ## My short prompts
 
+<!-- rule: prompts -->
 | I type                                      | It means                                                                                     |
 | ------------------------------------------- | -------------------------------------------------------------------------------------------- |
 | "continue"                                  | Take the next open task in the plan, at its own tier and merge rule. Do not re-plan.         |
@@ -43,6 +49,7 @@
 
 ## Verification and review
 
+<!-- rule: verify.checks -->
 - Done means demonstrated: run a real check that exercises the change (tests,
   build, the changed command, the app in a browser) and show its output. Say
   what the check would miss. A syntax-only check, or one that failed to start,
@@ -57,20 +64,25 @@
   on random inputs.
 - Mock only external boundaries (network, paid APIs, clock). Use real temp dirs
   and local services.
+<!-- rule: verify.unverified -->
 - "Unverified" is not a pass. Fix what blocked the check (often a command not
   in `permissions.allow` for headless runs) and rerun, or tell me.
+<!-- rule: verify.refuter -->
 - A finding reaches me only after ≥1 refuter in fresh context, on the finder's
   model or a higher-ranked one. One refuter checks a review's whole finding list; release-
   blocking claims get 2-of-3 refuters of their own. Refuters flag only gaps in
   correctness or stated requirements. Haiku output is data, not a finding.
+<!-- rule: verify.report -->
 - Report confirmed findings first with `file:line`, each marked as introduced or
   pre-existing, then refuted/unverified counts, then what was NOT covered. No
   agent counts, token totals, or cost.
+<!-- rule: verify.recurs -->
 - When the same issue recurs, fix it at the source: a lint rule, a hook, a
   skill, or this file.
 
 ## Review and merge
 
+<!-- rule: review.tiers -->
 - Set the tier when you write the task, from what the change touches, and write
   it on the task. At that time, give tier 2 work its own task and PR, so
   lower-tier work does not wait for its review. Unknown is tier 1. A repo's
@@ -85,11 +97,14 @@
   | 1    | ordinary feature work, tests, UI                                                                                               | one `verifier`                                     |
   | 2    | auth, billing, crypto, secrets, parsers, sanitizers, concurrency, numerics, migrations, data deletion, CI, release, installers | `verifier`, then `adversary` until it reports held |
 
+<!-- rule: review.important -->
 - Only an Important finding starts a fix round. Log Nit and Pre-existing
   findings in `docs/known-limits.md` and move on. The adversary reports held
   when it finds no Important break.
+<!-- rule: review.fix-in-lead -->
 - Fix in the lead. Then resume the same reviewer with `SendMessage` on the fix
   diff only. It never re-reports a known finding.
+<!-- rule: review.converge -->
 - At the second bug of one class, stop patching. Name the class, re-think the
   design for it, and fix every instance in one change.
 - A reviewer may fail one task at most 3 times. At the third failure, stop,
@@ -97,6 +112,7 @@
   does not count against this limit.
 - A review passes one commit, so commit before you ask for one. After a new
   commit, each reviewer that passed re-checks the new diff before you merge.
+<!-- rule: review.merge -->
 - Task PRs go to the integration branch: a long-lived branch that takes PRs
   before the release branch does. Pick it in this order:
   1. The first of `dev`, `develop`, `development`, `integration` on the remote.
@@ -124,6 +140,7 @@
 
 ## Delegation
 
+<!-- rule: delegation.split -->
 - Build dependent work in the lead session: design, code, and every fix after
   a review. The lead carries out its own plan.
 - Split by context, not by role. Delegate only a piece with its own context:
@@ -141,6 +158,7 @@
   | a document from handed-over material                   | `scribe`                             |
   | work that needs this conversation's context            | `fork`                               |
 
+<!-- rule: delegation.brief -->
 - A builder or Codex brief has these eight lines. Do not send a brief with a
   line missing.
 
@@ -155,10 +173,12 @@
   Return:   Result · Changes · Evidence · Not covered · Open
   ```
 
+<!-- rule: delegation.reviewers -->
 - Brief `verifier` and `adversary` with the diff, the goal, the tier, and the
   known findings only, never the implementation history.
 - For a follow-up to a finished agent, resume it with `SendMessage` instead of
   spawning a new one; it keeps its context and skips re-reading.
+<!-- rule: delegation.codex -->
 - Route by who can grade the result. Work a command can prove goes to Codex
   first (skill `codex-exec`) to save Claude usage; work only judgment can grade
   stays on Claude. Claude writes the spec and verifies. When a whole task is
@@ -167,20 +187,23 @@
   stalled run. Claude subagents are native: the harness tracks them, so run
   them in the background and wait for the notification; never poll either.
 
+<!-- rule: models -->
 Ranking for now: Opus 5.5 > GPT-6 Astra ≥ Sonnet 5.5.
 
-| Model                                   | Use for                                                                                                                     | Effort                                                         |
-| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| **Opus 5.5**                            | default: writing code, reviewing, design calls, refuting                                                                    | `medium` build · `high` verify/review · `xhigh` extremely hard |
-| **GPT-6 Astra** (Codex)                 | checkable execution: multi-file edits, test/lint fixes, migrations, ops scaffolding, frontend builds, second-opinion review | `low`–`high`                                                   |
-| **Sonnet 5.5**                          | scoped exploration, small edits, tests, first-pass review, volume work that needs some judgment                             | `low`–`medium`                                                 |
-| **Haiku 5.5** · **GPT-6.1 Sol** (Codex) | bulk: extract, classify, summarize (Haiku); mechanical batches (Sol). Never review findings                                 | `low`                                                          |
-| **Fable 5.1**                           | rarely: only after Opus 5.5 `xhigh` has fallen short                                                                        | `high`                                                         |
+| Model                   | Use for                                                                                              | Effort                                                         |
+| ----------------------- | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| **Opus 5.5**            | default: writing code, reviewing, design calls, refuting                                             | `medium` build · `high` verify/review · `xhigh` extremely hard |
+| **GPT-6.1 Sol** (Codex) | checkable execution: multi-file edits, test/lint fixes, migrations, ops scaffolding, frontend builds | `high`                                                         |
+| **GPT-6 Astra** (Codex) | a second-opinion review or adversary pass; execution that Sol failed twice                           | `low`–`high`                                                   |
+| **Sonnet 5.5**          | scoped exploration, small edits, tests, first-pass review, volume work that needs some judgment      | `low`–`medium`                                                 |
+| **Haiku 5.5**           | bulk: extract, classify, summarize. Haiku and Sol never review findings                              | `low`                                                          |
+| **Fable 5.2**           | rarely: only after Opus 5.5 `xhigh` has fallen short                                                 | `high`                                                         |
 
 - Don't use `max` unless I ask. Effort catches edge cases; it does not fix a
   wrong approach.
 - Set `model` on every Agent call, or use an agent type that sets it; never
   inherit Fable by omission.
+<!-- rule: delegation.lean -->
 - Keep the stack lean: the fewest agents that cover the work. Filter bulky
   output in the main loop first (grep, head, jq); a digest is a lossy handoff.
 - Before a workflow over 5 agents, state agent count, model and effort per
@@ -189,6 +212,7 @@ Ranking for now: Opus 5.5 > GPT-6 Astra ≥ Sonnet 5.5.
 
 ## Safety
 
+<!-- rule: safety -->
 - Never mutate remote infra state, print secret values (`.env` contents, tokens,
   keys), delete branches, or run irreversible commands (`rm -rf` outside the
   scratchpad, DB drops). Run plan / `--dry-run` / `diff`, then hand me the exact
@@ -201,21 +225,26 @@ Ranking for now: Opus 5.5 > GPT-6 Astra ≥ Sonnet 5.5.
 
 ## Second brain (Obsidian)
 
+<!-- rule: second-brain -->
 - For anything that could be in my vault (courses, papers, lectures, syllabi,
   concepts I study), invoke `second-brain-obsidian` and run `sb find` before any
   external search; search externally only for the gap it reports.
 
 ## Communication
 
+<!-- rule: comm.style -->
 - Write about 60% of the way to ASD-STE100: one idea per sentence, active voice,
   plain words, jargon defined once, connecting words kept. Lead with the main
   point. No filler, hype, hedging, or emojis.
+<!-- rule: comm.me -->
 - Chinese from me → reply in casual Traditional Chinese (zh-TW).
 - I'm red–green colour-blind: never rely on red vs. green alone to carry
   meaning.
+<!-- rule: comm.commits -->
 - PRs and commits: state what changed and why, not the diff. PR bodies include
   Testing, Risk, and How to revert. No AI attribution of any kind (trailers,
   footers, Co-Authored, "generated with").
+<!-- rule: comm.reports -->
 - Build reports: keep what this round did separate from plans, and say what each
   returned subagent found and whether you used it. After a long run, write the
   summary for someone who saw none of it: outcome first, no working shorthand.
