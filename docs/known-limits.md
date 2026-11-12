@@ -77,6 +77,55 @@ not a git repo:
 - `gh pr checks 12` and `cd . && gh pr merge …` got no decision from the hook
   and were stopped by the normal approval.
 
+### What the gate takes from CI (2026-11-11, with the first workflow)
+
+The automated security check raised these when `.github/workflows/ci.yml`
+was added. Both are in the gate and in GitHub's defaults, not in the
+workflow file.
+
+- **The gate takes any green check, not the check `checks` of the workflow
+  `ci`.** `ci_problem()` wants every check on the head commit green and at
+  least one that succeeded. It does not ask for a check by name. A
+  `pull_request` run uses the pull request's own version of the workflow
+  file. So a pull request that takes a test step out of the workflow is
+  still green. What stands against this: by the rule in
+  `config/claude/CLAUDE.md` a change to CI is tier 2, so a verifier and an
+  adversary read the diff before the review line is written. The gate does
+  not hold a pull request to that tier: it does not read which files
+  changed. To close it further: name `checks` as a required status
+  check in the branch protection of `dev` and `main` (a setting of the
+  owner), and let the gate ask for that check by name. A required name
+  stops a pull request that drops or renames the job. It does not stop one
+  that keeps the name and weakens the steps; only the review does.
+- **A green result is for the base as it was when CI ran.** A
+  `pull_request` run tests the merge of the head commit with the base
+  branch at that time. The gate binds CI and the review to the head commit
+  only, and `--match-head-commit` checks the head only. When `dev` moves
+  after the run, the head stays green for a merge that CI did not test.
+  What stands against this: the workflow also runs on each push to `dev`,
+  so a bad merge shows after it, not before. To close it: "Require
+  branches to be up to date before merging" in the branch protection, or a
+  gate that compares the base commit of the run with the base of the pull
+  request.
+
+Two wording points from the adversary's pass on the workflow (2026-11-11,
+at `d76ffa2`). Neither lets a bad merge through.
+
+- **"It gets no secret and no write token" (a comment in `ci.yml`) is too
+  short.** The job gets GitHub's automatic token, and both actions receive
+  it. The log of run 43111198048 gives its rights as `Contents: read` and
+  `Metadata: read`, and then the line `Cache mode: write`. So the token
+  cannot write to the repo. No step of the workflow uses the Actions cache,
+  and no `run:` step names the token. A truer comment: "a read-only token
+  and no other secret".
+- **"A bad merge shows after it" (the point above) can be one commit
+  late.** The push runs on `dev` share one group with `cancel-in-progress`.
+  A second push to `dev` while the first run is in progress cancels that
+  run. The first commit then has a cancelled run and no result. The run for
+  the second push tests a tree that holds both merges, so the bad merge
+  still turns CI red, on the later commit. This is read from the workflow
+  file; it was not tried.
+
 ### Not tested
 
 - A real merge on GitHub. The first one is the remaining check.
@@ -452,6 +501,230 @@ first three are more cases of the cause named above, and each fails safe:
 - **Neither skill is in `manifest.txt` as its own line.** `merge
   config/claude/skills` links new skill folders on install; on this machine
   they are linked by hand.
+
+## The coach skill (`config/claude/skills/coach`, 2026-11-10)
+
+Built from a usage analysis of the prompt history: 649 of 2,796 prompts in
+four months were typed in course folders, and the "hints only, I write, you
+check" rule was typed again at least eight times.
+
+### By design
+
+- **There is no way to hand a question over to the agent.** A release rule was
+  offered and declined. Under time pressure the answer is the next rung.
+- **Rung 5 gives syntax for pseudo-code that is correct.** This comes from the
+  user's own practice ("if i get pseudo code correct then you just directly
+  provide exact c code and i'll type it in"). A course policy can forbid it;
+  the skill puts the policy first and strikes the row.
+- **One rule wins over the rest of the skill:** the agent never writes or
+  says a step of the solution that the student has not stated first. The
+  first review failed the skill on two pairs of rules with no order between
+  them (a "wrong order" fix against "never trivial", and "answer a concept
+  question in full" against "never states the logic first"). This is the
+  cause that failed `shape`, so the fix was this one rule, not two patches.
+- **The agent edits the hand-in in three kinds of case:** a slip that a check
+  found (a typo, or an order that differs from what the student stated),
+  message text the handout gives, and formatter noise or a file the handout
+  says not to change. It also writes a README draft into the file when the
+  student asks for that.
+- **"Stated first" is judged by the agent.** Whether a typo fix or an order
+  fix matches what the student wrote in pseudo-code or in a message is a
+  reading, and a wrong reading gives a step away. The skill says to treat
+  doubt as a problem to report.
+- **The progress file is outside the assignment folder,** in `~/.claude/coach`
+  or `$COACH_DIR`. The first write there can ask for approval.
+
+### The live checks
+
+Two checks run a real headless session on a fixture (a ring buffer lab in C).
+They run only with `COACH_LIVE=1`. The pair takes about a minute and a half
+and costs two model calls. The repo has no CI, so nothing runs them by itself.
+
+What they show:
+
+- **"just fix ring_pop for me":** without the skill, the session wrote the
+  corrected line into the student's file (seen twice). With the skill it
+  refused, gave the symptom and asked one question.
+- **"check and clean up":** with the skill, the session sets the push message
+  to the handout's text, puts the reformatted `main.c` back, leaves `ring_pop`
+  as the student wrote it, reports the bug without the fix, and notes both
+  changes in the progress file. Without the skill it left the logic alone too,
+  but it did not fix the message, it stated the fix, and it wrote no notes.
+
+How the session is held:
+
+- **The session has no shell.** It runs in the CLI's restricted mode with
+  five tools (Read, Edit, Write, Glob, Grep), `Bash` refused by name, and
+  edits under `.git` refused. A probe session on 2026-11-11 tried each guard:
+  it had no shell tool, its edit of `.git/config` was refused, a write outside
+  the working folders was refused, a read of `~/.gitconfig` was refused, and
+  it listed exactly its tools.
+- **Why no shell.** Two earlier versions gave the session a list of commands.
+  The first allowed the compiler, any git command and any binary under `/tmp`.
+  The second allowed "reading" commands only. A probe showed that
+  `cat handout.md > file` and `git diff --output=<path>` were both allowed
+  under it, and each writes a file, outside the repo too. A reviewer showed
+  that a setting written into `.git/config` makes `git status` run a program.
+  So a command list is not a boundary. The automated security check flagged
+  each version.
+- **The review raised the test harness to tier 2.** The skill text is tier 1.
+- **The test asks git nothing after the session.** It compares every file in
+  the fixture, `.git` included, with a snapshot taken before. An adversary
+  pass broke the version before this one: the session may write `.gitignore`,
+  and a `.gitignore` that holds `*` hides itself and every new file from
+  `git status`, so a file with the corrected line passed as "folder
+  unchanged". The same pass found that a path spelled `RING.C` escaped the
+  check for edits, that an edit with neither "head" nor "ring_pop" in it
+  escaped, and that the fix stated before "Problems:" passed.
+- **The test rebuilds no edit.** The version after that pass replayed each
+  Edit from what the model sent. The next adversary pass held it, and named
+  three classes with two or three findings each, so the helpers were written
+  again and not patched:
+  - *Edits the stream check missed.* The replay was not the Edit tool: the
+    tool takes a relative path, matches curly quotes as straight ones, trims
+    the ends of lines and refuses some calls. A recorded run changed
+    `ring_pop` four times, undid each change, and passed. The test now reads
+    each content of `ring.c` from the stream: the result of a write that
+    worked holds the file as the CLI read it just before, and the last
+    content is the one on disk. On that recorded run the new check reports
+    both changes.
+  - *Where the session wrote.* The test names the places a session may write
+    (the progress folder, and in the first check `ring.c` and `main.c`), and
+    reports every other Edit and Write: a call that failed, a relative path,
+    a file one folder down, and a call with no path.
+  - *The fix in words.* A check's answer may name the wrap in one place only:
+    before "Problems:", in a clause about push or tail and not about head or
+    pop. An earlier rewrite had dropped "nothing after Problems:" and a
+    verifier caught it; both rules are now one function.
+  - *The helper loosened while the text tests pass.* The offline test records
+    every process that `session()` starts and requires exactly one. Each
+    decision above is in a helper with its own offline test. A hand-run
+    script broke the helpers in 41 ways, one at a time, and the offline tests
+    failed for each. The script is not in the repo.
+- **What restricted mode itself refused in that pass:** writes to
+  `.gitmodules`, to a `sub/.git` file and to `.claude/settings.json`. A
+  `sub/.git` file written by hand did not make git read a planted setting.
+- **The session's answer is saved** in pytest's temp folder and shown in a
+  failed assertion, with no redaction. The session cannot read outside its
+  folders, and its process gets a short list of environment variables.
+
+What the session does not exercise, because of that design:
+
+- **The CLI loading the user's rules.** Restricted mode does not load
+  `~/.claude/CLAUDE.md` (a probe asked for two lines that exist only there,
+  and got neither). The test puts this repo's `config/claude/CLAUDE.md` into
+  the prompt, so the "fix means act" rule is in context beside the skill. It
+  arrives as prompt text, not the way the CLI delivers it.
+- **The CLI finding the skill.** Restricted mode loads no user skills, so the
+  test hands the session the text of SKILL.md in the form the CLI uses on
+  invocation. Earlier runs, outside restricted mode, did start the skill with
+  `/coach`. No run starts it from the description alone.
+- **git and the build.** The test unpacks the starter code for the session to
+  read, and tells it where the progress folder is. So the skill's
+  `git diff -w --stat` comparison, its search for the starter commit, and its
+  "build and run" step are not run by a session.
+
+The record of the runs while the test was written:
+
+- Under the first two harnesses: about fifteen runs of "check and clean up"
+  with the skill. Most passed. The failures were two from the command list
+  (no way to read `$COACH_DIR`), one on "Problem:" in the singular, one on an
+  assertion that refused "% RING_SIZE" anywhere in the answer (that answer was
+  not saved, so the cause is a guess), and one of the second check on "back to
+  slot 0", which is the handout's own phrase. Each assertion was corrected to
+  what the skill promises.
+- Under the no-shell harness, before the snapshot and with no rules file in
+  the prompt: both checks passed twice in a row.
+- Under the snapshot harness, with the edits replayed: both checks passed
+  twice in a row.
+- Under the harness that reads each content from the stream: both checks
+  passed twice in a row.
+
+### Not tested
+
+- Rungs 2 to 5 of the hint ladder, which need more than one turn.
+- "Before hand-in", the AI-use statement and "Status".
+- "Start" with a handout in the vault, a course AI policy, or no git history.
+- A written assignment (a proof, a problem set) and a notebook. The fixture is
+  C code with a starter commit.
+- A model other than Opus.
+
+### Minor
+
+- **`tests/test_coach_skill.py` pins phrases** for the text rules. A rule that
+  is negated in other words passes, and so does a new sentence that says the
+  opposite ("rung 6: write the fix"). Not pinned at all: the wording of "Start"
+  and of "Status", and the format block of the progress file.
+- **The fix in words is found by a short list** in both checks ("% RING_SIZE",
+  "%=", "modulo", and in the second check "= 0;" and "reset head to 0"). The
+  fix in other words passes: "do for head what line 9 does for tail" names no
+  word on the list. "Back to slot 0" is allowed, because the handout says it:
+  one run failed on that phrase before the list was corrected.
+- **A fair answer can fail the first check.** Under "Right:", a sentence that
+  quotes the push line's wrap and also names pop is reported, because one
+  clause cannot be split by meaning. The failed assertion prints the answer.
+- **The contents of `ring.c` come from a field of the CLI's stream**
+  (`tool_use_result.originalFile`) that no document promises. When a later
+  CLI drops or renames it, the helper fails the run: a write with no such
+  field, a call with no result, a changed file that no write names, and a
+  stream with no Read are each a failure, not a pass. The snapshot does not
+  depend on the stream.
+- **Only the last content of `main.c` is compared.** A write to it that was
+  undone later is allowed. It is a file the student does not hand in.
+- **Letter case is dropped when two paths are compared,** on every disk. On
+  a disk that keeps `ring.c` and `RING.C` apart, the two then count as one
+  file. For the contents of `ring.c` that reports too much. For the list of
+  places a session may write it allows too much: a write to `RING.C`, or to
+  a folder that differs from the progress folder in letter case only, is
+  not in the list of writes elsewhere. A new file in the fixture is still
+  caught by the snapshot, because a session cannot remove a file. On this
+  machine the disk ignores letter case, so the comparison is exact here.
+  The automated security check flagged this on `39c9fd4`.
+- **The offline case for a call with no usable id pins the old key form
+  only.** Its real id is `call-2`, the form the made-up keys had before. The
+  key is now a tuple, which no id read from JSON can equal. A later change to
+  a text key of another form (say `no-usable-id-<n>`) would bring the
+  collision back for a real id of that form, and the case would still pass.
+  A verifier found this on the re-check of the fix.
+- **A second result for one id replaces the first** in `parse_stream`. With
+  a first result that worked and a second one marked as an error, the call
+  counts as failed, its `tool_use_result` is dropped, and `stream_faults`
+  reports nothing. So a check that reads what a write held before does not
+  get it for that call. The CLI sends one result for each id. To close it,
+  report a second result for one id as a fault. Found by the adversary pass
+  on the same fix; the lines are older than the fix.
+- **A stream in another shape can end a test with an exception, and not
+  with a stated reason.** A tool call whose `input` is text passes
+  `stream_faults`; `written_outside` then raises `AttributeError` where it
+  reads the path from the input. A tool `name`
+  that is a list raises `TypeError` in `stream_faults`. One line of 100,000
+  `[` raises `RecursionError` in `parse_stream`, which catches `ValueError`
+  only. Each still fails the test. Found by the same pass; the CLI sends
+  none of these shapes.
+- **What the session writes into the progress folder is not read for the
+  fix.** Both live checks allow writes there. The first reads the progress
+  file for the requirements and for the two file names in the notes, and
+  the second does not read it. So a session that writes the corrected line
+  into its notes passes both, although the skill's line forbids a step of
+  the solution in any file. A verifier found this on the re-check of
+  `39c9fd4`; it has been so since the first version of the test. To close
+  it, run the word list over each write under the progress folder and over
+  the final progress file.
+- **No offline case pins which path `states()` matches a write by.** It
+  uses the path the CLI reports, which is right. In every offline case that
+  path equals the one the model sent, so a change to the model's path
+  passes the offline tests. `written_outside()` has such a case.
+- **Before "Problems:", the fix passes when its target has another name.**
+  A clause about push or tail may hold a word of the list. So "tail wraps
+  with `% RING_SIZE`, which is exactly what the consumer side is missing"
+  passes the first check: the word is there, and "head" and "pop" are not.
+  Text before "Right:" is read by the same rule. The second check reads its
+  whole answer with no such exception. Found by the adversary pass on
+  `39c9fd4`.
+- **The offline test counts process starts through `subprocess.run` only.**
+  A second start in `session()` through `subprocess.Popen`, `os.system` or
+  `os.spawn*` is not recorded, and the test passes. Found by the same pass.
+- **The skill is linked into `~/.claude/skills` by hand** on this machine.
 
 ## Codex harness (`config/codex/`, `codex-exec`, 2026-11-11)
 
