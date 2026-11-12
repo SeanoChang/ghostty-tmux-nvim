@@ -1,25 +1,20 @@
 ---
 name: visual-artifacts
 description: >-
-  Use whenever building an HTML page or Artifact: a visual, interactive way to
-  learn a concept (3D model, simulation, chart, data visualization), a working
-  product prototype with no backend to try out, or a research guide or report
-  meant for learning, or a development plan for code work (architecture map,
-  behaviour claims, decision records, call trees, code cited from the repo, a
-  task graph linked to the files; "write up the design",
-  "make the plan page", "architecture doc"). Picks one format
-  (Quick, Guide, Learn, Explorable, Prototype, Plan), builds on the Claude-docs-style design
-  system in assets/, and publishes as an Artifact. Use this even when the request only says "make an html",
-  "visualize this", "build me an interactive", "3D", "chart this", "let me try
-  it", "mock up the app", "make a guide or report on X", "walkthrough", "walk me
-  through", "homework solutions", "step by step", "quick overview", or "explain X
-  from simple to deep so I can teach it". Also use when a chat explanation has not
-  landed after a couple of rounds: offer (do not build) an interactive
-  step-through; and when a design and plan settle in chat or a plan
-  has three or more tasks: offer (do not build) a Plan page. A learning request that names no medium comes here.
-  Not for documents asked for as markdown, a doc, notes, a file in the repo or a vault note (learn docs, designs,
-  plans, task cards, reports, handoffs, runbooks): writing-markdown-docs owns those. Not for a decision brief
-  or a short build or review report with a Copy response button: brief-artifact owns those.
+  Use whenever building an HTML page or Artifact: an interactive way to learn a
+  concept (3D, simulation, chart, data visualization), a product prototype with
+  no backend, a learning guide or report, or a development plan page
+  (architecture map, decisions, call trees, task graph). Picks one format
+  (Quick, Guide, Learn, Explorable, Prototype, Plan) and publishes an Artifact.
+  Use even for a bare "make an html", "visualize this", "3D", "chart this", "let
+  me try it", "mock up the app", "walk me through", "homework solutions", "step
+  by step", "quick overview", "explain X so I can teach it", "write up the
+  design", "make the plan page" or "architecture doc". Offer (do not build) a
+  step-through when a chat explanation has not landed after two rounds, and a
+  Plan page when a plan has three or more tasks. A learning request that names
+  no medium comes here. Not for markdown docs, notes, repo files or vault notes
+  (writing-markdown-docs), nor for a decision brief or a short report with a
+  Copy response button (brief-artifact).
 ---
 
 # Visual artifacts

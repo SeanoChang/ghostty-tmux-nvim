@@ -2,33 +2,278 @@
 # Run `codex exec` under a watchdog. Kills the whole Codex process group when
 # the event log stops growing for --idle seconds or the run passes --max seconds.
 #
-# usage: codex-run --log <file> [--idle 300] [--max 1800] -- <codex exec args...>
-# exit:  Codex's own exit code, 124 when the watchdog killed it, 2 on bad usage.
+# usage: codex-run --log <file> [--idle 300] [--max 1800]
+#                  [--role <name>]
+#                  [--worktree <new-dir> [--repo <dir>] [--allow <pattern>]...]
+#                  -- <codex exec args...>
+#
+#   --role      run as the Codex agent of that name (builder, verifier,
+#               adversary): its instructions, model and effort come from
+#               ~/.codex/agents/<name>.toml. A model or an effort in the
+#               codex args wins over the file's.
+#   --worktree  make a new git worktree at <new-dir> from the HEAD of --repo
+#               (default: the current folder) and run Codex there. <new-dir>
+#               is read from the caller's folder and must be outside the
+#               repository, so the lead's tree is never touched. Uncommitted
+#               work is not in it: commit what the run needs first. The
+#               worktree stays for review. Needs python3.
+#   --allow     with --worktree: a path pattern the run may change (`*` also
+#               crosses `/`). When a changed file fits no pattern, the files
+#               are listed and the exit code is 3. Give it once per pattern.
+#               "Changed" is read from the disk, not from git: a file whose
+#               bytes, kind or executable bit differ from before the run, a
+#               new file and a removed file. A cache file, a file that git
+#               ignores and a file the run committed count like any other.
+#
+# exit: Codex's own exit code; 124 when the watchdog killed it; 3 when Codex
+#       ended well but changed a file outside --allow, changed the worktree's
+#       .git entry, left a folder that cannot be read, or the files could not
+#       be compared; 127 when codex is not on PATH or cannot be started;
+#       2 on bad usage.
 set -u
 
-idle=300 max=1800 log=""
+idle=300 max=1800 log="" role="" worktree="" repo="" allow=()
+poll="${CODEX_RUN_POLL:-5}"
+usage() {
+  echo "usage: codex-run --log <file> [--idle S] [--max S] [--role NAME] [--worktree DIR [--repo DIR] [--allow PATTERN]...] -- <codex exec args...>" >&2
+  exit 2
+}
+fail() { echo "codex-run: $1" >&2; exit 2; }
+# A path for the report. The lead reads the report, so a name with a line
+# break or another control character is printed in bash's quoted form
+# ($'a\nb'): it cannot add a line that looks like one of this script's own.
+shown() {
+  case "$1" in
+    *[[:cntrl:]]*) printf '%q' "$1" ;;
+    *)             printf '%s' "$1" ;;
+  esac
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
-    --log)  log="$2"; shift 2 ;;
-    --idle) idle="$2"; shift 2 ;;
-    --max)  max="$2"; shift 2 ;;
-    --)     shift; break ;;
-    *)      echo "codex-run: unknown option $1" >&2; exit 2 ;;
+    --log|--idle|--max|--role|--worktree|--repo|--allow)
+      [ $# -ge 2 ] || usage
+      # An empty value is what a variable that was never set gives. Taking it
+      # as "not given" would run Codex with no worktree, in the caller's folder.
+      [ -n "$2" ] || fail "$1 needs a value that is not empty"
+      case "$1" in
+        --log)      log="$2" ;;
+        --idle)     idle="$2" ;;
+        --max)      max="$2" ;;
+        --role)     role="$2" ;;
+        --worktree) worktree="$2" ;;
+        --repo)     repo="$2" ;;
+        --allow)    allow+=("$2") ;;
+      esac
+      shift 2 ;;
+    --) shift; break ;;
+    *)  echo "codex-run: unknown option $1" >&2; exit 2 ;;
   esac
 done
-if [ -z "$log" ] || [ $# -eq 0 ]; then
-  echo "usage: codex-run --log <file> [--idle S] [--max S] -- <codex exec args...>" >&2
-  exit 2
+if [ -z "$log" ] || [ $# -eq 0 ]; then usage; fi
+if [ -z "$worktree" ] && { [ -n "$repo" ] || [ ${#allow[@]} -gt 0 ]; }; then
+  fail "--repo and --allow need --worktree"
+fi
+# Before a log or a worktree is made: a run that cannot start leaves nothing.
+if ! command -v codex >/dev/null 2>&1; then
+  echo "codex-run: codex is not on PATH" >&2
+  exit 127
+fi
+
+# What the caller already chose in the codex args.
+has_model=0 has_effort=0 has_cd=0
+for arg in "$@"; do
+  case "$arg" in
+    -m|--model|--model=*)        has_model=1 ;;
+    *model_reasoning_effort*)    has_effort=1 ;;
+    -C|--cd|--cd=*)              has_cd=1 ;;
+  esac
+done
+
+extra=()
+
+if [ -n "$role" ]; then
+  # grep in the C locale: in other locales a bash range such as a-z also takes capitals.
+  printf '%s' "$role" | LC_ALL=C grep -q -x '[a-z0-9][a-z0-9-]*' || fail "bad role name: $role"
+  agents="${CODEX_AGENTS_DIR:-${CODEX_HOME:-$HOME/.codex}/agents}"
+  file="$agents/$role.toml"
+  [ -f "$file" ] || fail "no agent file for the role '$role': $file"
+  # One codex argument per line. A JSON string is also a TOML string, and it
+  # has no raw line end, so the instructions stay on one line.
+  # -I: python looks for what it imports in its own library only, never in
+  # the caller's folder, which a run may be able to write.
+  role_lines=$(python3 -I - "$file" "$has_model" "$has_effort" <<'PY'
+import json, sys
+try:
+    import tomllib
+except ImportError:
+    sys.exit("python3 3.11 or later is needed to read an agent file")
+path, has_model, has_effort = sys.argv[1], sys.argv[2] == "1", sys.argv[3] == "1"
+with open(path, "rb") as fh:
+    agent = tomllib.load(fh)
+text = agent.get("developer_instructions")
+if not isinstance(text, str) or not text.strip():
+    sys.exit(f"{path}: no developer_instructions")
+for key in ("model", "model_reasoning_effort"):
+    if key in agent and (not isinstance(agent[key], str) or "\n" in agent[key]):
+        sys.exit(f"{path}: {key} must be one line of text")
+if "model" in agent and not has_model:
+    print("-m"); print(agent["model"])
+if "model_reasoning_effort" in agent and not has_effort:
+    print("-c"); print("model_reasoning_effort=" + json.dumps(agent["model_reasoning_effort"]))
+print("-c"); print("developer_instructions=" + json.dumps(text.strip("\n"), ensure_ascii=False))
+PY
+  ) || fail "cannot read the agent file $file"
+  while IFS= read -r line; do
+    [ -z "$line" ] || extra+=("$line")
+  done <<EOF
+$role_lines
+EOF
+fi
+
+# The files of a folder, as they are on the disk. `before` prints one line for
+# each: the path in hex, its kind, its size, and a hash of its content. `after`
+# reads those lines and prints each path that is not as it was, new or gone,
+# with a NUL after each and the record //end last. A path that cannot be read
+# is printed as //noread/<path>: what is under it was not seen, so it is not
+# one changed file that a pattern could allow.
+#
+# It reads no git state, because the run can write all of it: ignore rules,
+# the index, HEAD, the .git entry. For the same reason the caller keeps the
+# `before` lines in its own memory and not in a file: the Codex docs say that
+# a run in the workspace-write sandbox can write to /tmp.
+# The .git entry at the top is one record and is not walked.
+read -r -d '' files_py <<'PY'
+import hashlib, os, stat, sys
+
+def walk(root):
+    """Each path under root that is not a folder that can be read."""
+    todo = [b""]
+    while todo:
+        rel = todo.pop()
+        try:
+            names = os.listdir(os.path.join(root, rel))
+        except OSError:
+            yield rel, None                      # a folder that cannot be read
+            continue
+        for name in names:
+            path = os.path.join(rel, name)
+            try:
+                st = os.lstat(os.path.join(root, path))
+            except OSError:
+                yield path, None
+                continue
+            if stat.S_ISDIR(st.st_mode) and path != b".git":
+                todo.append(path)
+            else:
+                yield path, st
+
+def shape(st):
+    """Kind and size, with no read of the content."""
+    if st is None:
+        return "noread", 0
+    if stat.S_ISREG(st.st_mode):
+        return ("exec" if st.st_mode & 0o111 else "file"), st.st_size
+    if stat.S_ISLNK(st.st_mode):
+        return "link", 0
+    if stat.S_ISDIR(st.st_mode):
+        return "dir", 0
+    return "other%o" % stat.S_IFMT(st.st_mode), 0
+
+def content(full, kind):
+    if kind == "link":
+        return os.readlink(full).hex() or "-"
+    if kind not in ("file", "exec"):
+        return "-"
+    try:                                         # never wait on a pipe put in the file's place
+        fd = os.open(full, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    except OSError:
+        return "noread"
+    with os.fdopen(fd, "rb") as fh:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return "noread"
+        digest = hashlib.sha256()
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+mode, root = sys.argv[1], os.fsencode(sys.argv[2])
+if mode == "before":
+    for rel, st in walk(root):
+        kind, size = shape(st)
+        print(rel.hex(), kind, size, content(os.path.join(root, rel), kind))
+else:
+    was = {}
+    for line in sys.stdin:
+        if line.strip():
+            path, kind, size, text = line.split()
+            was[bytes.fromhex(path)] = (kind, int(size), text)
+    changed, unread, seen = [], [], set()
+    for rel, st in walk(root):
+        seen.add(rel)
+        if st is None:
+            unread.append(rel)
+            continue
+        kind, size = shape(st)
+        old = was.get(rel)
+        # A new size is a change with no read: the hash is for the same size only.
+        if old is None or old[:2] != (kind, size) or old[2] != content(os.path.join(root, rel), kind):
+            changed.append(rel)
+    changed += [rel for rel in was if rel not in seen]
+    out = sys.stdout.buffer
+    for rel in sorted(changed):
+        out.write(rel + b"\0")
+    for rel in sorted(unread):
+        out.write(b"//noread/" + rel + b"\0")
+    out.write(b"//end\0")
+PY
+
+before=""
+if [ -n "$worktree" ]; then
+  [ "$has_cd" -eq 0 ] || fail "--worktree sets the folder; leave -C out of the codex args"
+  command -v python3 >/dev/null || fail "--worktree needs python3 on PATH"
+  if [ -e "$worktree" ] || [ -L "$worktree" ]; then
+    fail "--worktree needs a path that does not exist yet: $worktree"
+  fi
+  top=$(git -C "${repo:-.}" rev-parse --show-toplevel 2>/dev/null) || fail "not a git repository: ${repo:-.}"
+  # The path in full, with every link followed. This reads a relative path
+  # from the caller's folder; git would read it from the repository top.
+  # "Inside the repository" is asked of the disk, folder by folder upwards, and
+  # not of the spelling: on a disk that takes LEAD and lead as one folder, the
+  # two are one folder here as well.
+  worktree=$(python3 -I -c '
+import os, sys
+path, top = os.path.realpath(sys.argv[1]), os.path.realpath(sys.argv[2])
+here = path
+while True:
+    if os.path.exists(here) and os.path.samefile(here, top):
+        sys.exit(3)
+    up = os.path.dirname(here)
+    if up == here:
+        break
+    here = up
+print(path)' "$worktree" "$top")
+  case $? in
+    0) ;;
+    3) fail "--worktree must be outside the repository $top, so the lead's tree stays as it is" ;;
+    *) fail "cannot read the path of the worktree" ;;
+  esac
+  git -C "$top" worktree add --quiet --detach "$worktree" HEAD >&2 || fail "git could not make the worktree $worktree"
+  worktree=$(cd "$worktree" && pwd -P) || fail "cannot enter the new worktree"
+  before=$(python3 -I -c "$files_py" before "$worktree") || fail "cannot read the files of the new worktree $worktree"
+  extra+=("-C" "$worktree")
 fi
 
 : > "$log"
 # New session so the group id equals the pid and one kill reaches every child.
-perl -MPOSIX=setsid -e 'setsid; exec @ARGV' codex exec --json "$@" >> "$log" 2>&1 < /dev/null &
+# When exec fails, perl goes on to the next statement. Without the exit there,
+# the starter would end with 0 and the run would look clean.
+perl -MPOSIX=setsid -e 'setsid; exec @ARGV; print STDERR "codex-run: cannot start codex: $!\n"; exit 127' codex exec --json ${extra[@]+"${extra[@]}"} "$@" >> "$log" 2>&1 < /dev/null &
 pid=$!
 
 start=$(date +%s) last_size=0 last_change=$start reason=""
 while kill -0 "$pid" 2>/dev/null; do
-  sleep 5
+  sleep "$poll"
   now=$(date +%s)
   size=$(wc -c < "$log")
   if [ "$size" -ne "$last_size" ]; then last_size=$size; last_change=$now; fi
@@ -41,13 +286,81 @@ if [ -n "$reason" ]; then
   exec 3>&2
   {
     kill -TERM -- "-$pid"
-    sleep 5
+    sleep "$poll"
     kill -KILL -- "-$pid"
     wait "$pid"
     echo "codex-run: watchdog killed Codex: $reason. Last events:" >&3
     tail -n 5 "$log" | cut -c1-300 >&3
   } 2>/dev/null
+  [ -z "$worktree" ] || echo "codex-run: the worktree is still at $worktree" >&2
   exit 124
 fi
 
 wait "$pid"
+code=$?
+if [ "$code" -eq 127 ]; then
+  echo "codex-run: codex did not start, or ended with 127 itself. See the end of $log" >&2
+fi
+
+# Codex has ended. A process it left behind could still write into the
+# worktree after the files are compared, so what is left of its group ends
+# here too. (A process that made a session of its own is not reached.)
+if kill -0 -- "-$pid" 2>/dev/null; then
+  kill -TERM -- "-$pid" 2>/dev/null
+  sleep "$poll"
+  kill -KILL -- "-$pid" 2>/dev/null
+fi
+
+if [ -n "$worktree" ]; then
+  # Every file that is not as it was before the run, new or gone: the disk
+  # against the record from before. No path is left out by its name, by an
+  # ignore rule or by what git holds. The last record must be //end: a compare
+  # that broke on the way has checked nothing, and that is not a pass.
+  count=0 outside="" n_outside=0 ended=0 git_entry=0 unread="" n_unread=0
+  while IFS= read -r -d '' path; do
+    if [ "$path" = "//end" ]; then ended=1; continue; fi
+    if [ "$path" = ".git" ]; then git_entry=1; continue; fi
+    case "$path" in //noread/*)
+      n_unread=$((n_unread + 1))
+      [ "$n_unread" -gt 50 ] || unread="$unread  $(shown "${path#//noread/}")"$'\n'
+      continue ;;
+    esac
+    count=$((count + 1))
+    [ ${#allow[@]} -gt 0 ] || continue
+    ok=0
+    for pattern in "${allow[@]}"; do
+      # shellcheck disable=SC2053  # the right side is a pattern on purpose
+      if [[ "$path" == $pattern ]]; then ok=1; break; fi
+    done
+    if [ "$ok" -ne 1 ]; then
+      n_outside=$((n_outside + 1))
+      # A build folder can hold tens of thousands of files: name the first 50, count the rest.
+      [ "$n_outside" -gt 50 ] || outside="$outside  $(shown "$path")"$'\n'
+    fi
+  done < <(printf '%s\n' "$before" | python3 -I -c "$files_py" after "$worktree")
+  if [ "$ended" -ne 1 ]; then
+    echo "codex-run: could not compare the worktree $worktree with its files before the run. No file was checked." >&2
+    [ "$code" -ne 0 ] || code=3
+  else
+    echo "codex-run: worktree $worktree, $count file(s) changed" >&2
+  fi
+  if [ "$git_entry" -eq 1 ]; then
+    # No pattern allows this: the entry says which repository git reads here.
+    echo "codex-run: the run changed the worktree's .git entry. Do not trust a git command in $worktree." >&2
+    [ "$code" -ne 0 ] || code=3
+  fi
+  if [ -n "$outside" ]; then
+    echo "codex-run: changed outside the allowed files:" >&2
+    printf '%s' "$outside" >&2
+    [ "$n_outside" -le 50 ] || echo "codex-run: and $((n_outside - 50)) more, $n_outside in all" >&2
+    [ "$code" -ne 0 ] || code=3
+  fi
+  if [ -n "$unread" ]; then
+    # No pattern allows this either: the name of a folder says nothing of what is in it.
+    echo "codex-run: could not be read, so what is under them was not checked:" >&2
+    printf '%s' "$unread" >&2
+    [ "$n_unread" -le 50 ] || echo "codex-run: and $((n_unread - 50)) more, $n_unread in all" >&2
+    [ "$code" -ne 0 ] || code=3
+  fi
+fi
+exit "$code"

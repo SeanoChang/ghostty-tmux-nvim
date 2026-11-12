@@ -1,0 +1,75 @@
+# Runs the repo's own tests on every pull request, and on each push to the
+# integration branch (dev) and the release branch (main).
+#
+# The merge-gate hook (config/claude/hooks/merge-gate.py) reads the checks on
+# the head commit of a pull request. It lets a merge through only when every
+# check is green and at least one succeeded. The job below is that check. The
+# gate does not ask for it by name; see docs/known-limits.md.
+#
+# Not run here:
+#   - the mod tests (config/claude/mods/*/tests), which need the Claude Code CLI;
+#   - the tests behind an environment switch. The job sets none of them, so
+#     pytest reports these tests as skipped:
+#       WORKER_CAST_SOURCE  needs a file that is not in the repo;
+#       COACH_LIVE          starts a live Claude session, which costs model calls;
+#       CODEX_PROMPT        needs the Codex CLI.
+# The job runs on macOS only, the system these dotfiles are for.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [dev, main]
+
+# The job only reads the repo. It gets no secret and no write token.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: checks
+    runs-on: macos-latest
+    timeout-minutes: 25
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      # Each action is pinned to a commit, so a moved tag cannot change what runs.
+      - name: Check out the repo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the test packages
+        run: python3 -m pip install -r .github/ci-requirements.txt
+
+      - name: Install Chromium for the page tests
+        run: python3 -m playwright install chromium
+
+      - name: Rules, skills and workers (tests/)
+        run: python3 -m pytest tests -q -p no:cacheprovider
+
+      - name: Hooks (pytest)
+        run: python3 -m pytest config/claude/hooks/tests -q -p no:cacheprovider
+
+      - name: Hooks (shell)
+        run: |
+          bash config/claude/hooks/tests/test-second-brain-hooks.sh
+          bash config/claude/hooks/tests/test-visual-artifacts-hook.sh
+
+      - name: Skill writing-markdown-docs
+        run: python3 -m pytest config/claude/skills/writing-markdown-docs/scripts -q -p no:cacheprovider
+
+      - name: Skill brief-artifact
+        run: python3 -m pytest config/claude/skills/brief-artifact/tests -q -p no:cacheprovider
+
+      - name: Skill visual-artifacts
+        run: python3 -m pytest config/claude/skills/visual-artifacts/tests -q -p no:cacheprovider

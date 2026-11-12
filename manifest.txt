@@ -46,3 +46,4 @@ merge  config/claude/mods                    ~/.claude/mods
 
 # ── codex ──────────────────────────────────────────────────────────────────────
 link   config/codex/AGENTS.md               ~/.codex/AGENTS.md
+merge  config/codex/agents                  ~/.codex/agents

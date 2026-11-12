@@ -53,9 +53,9 @@ def test_a_colon_inside_a_plain_scalar_is_caught(tmp_path):
 
 DESCRIPTION_LIMIT = 1024  # the Agent Skills limit; the list can cut a longer one
 
-# Skills that were over the limit before this test existed, each held at its
-# size so that it cannot grow. Shorten one, then lower or remove its line.
-OVER_LIMIT = {"writing-markdown-docs": 1039, "visual-artifacts": 1565}
+# A skill that is over the limit gets a line here with its size, so that it
+# cannot grow. None is over it now (the last two were shortened on 2026-11-11).
+OVER_LIMIT = {}
 
 
 @pytest.mark.parametrize("path", SKILLS, ids=lambda p: p.parent.name)

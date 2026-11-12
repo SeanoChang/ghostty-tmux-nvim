@@ -138,7 +138,8 @@ Groups are the path segment after `config/`: `ghostty`, `tmux`, `nvim`, `zsh`,
     ├── git/                gitconfig.tmpl (placeholders), ignore
     ├── claude/             CLAUDE.md, settings.json.tmpl, statusline-command.sh,
     │                       commands/, skills/, hooks/, mods/
-    ├── codex/AGENTS.md     Codex rules: main-worker and subagent modes
+    ├── codex/              AGENTS.md (Codex rules, built from claude/CLAUDE.md and AGENTS.src.md
+    │                       by build_agents_md.py), agents/ (builder, verifier, adversary)
     └── mermaid/            TokyoNight mermaid theme
 ```
 

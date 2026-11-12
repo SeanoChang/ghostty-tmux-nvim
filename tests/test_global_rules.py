@@ -44,8 +44,15 @@ BRIEF_LINES = ["Goal:", "Tier:", "Files:", "Done:", "Context:", "Budget:", "Do n
 
 
 def text():
-    """The rules as a session loads them: the file without its HTML comments."""
-    return re.sub(r"<!--.*?-->", "", RULES.read_text(encoding="utf-8"), flags=re.S)
+    """The rules as a session loads them: the file without its HTML comments.
+
+    A line that holds only a rule name (`<!-- rule: x -->`, read by the build
+    of the Codex file) goes out whole, with its line end, so that naming the
+    rules does not count as growth. Every other comment leaves its line ends
+    behind, as before."""
+    raw = RULES.read_text(encoding="utf-8")
+    raw = re.sub(r"^<!-- rule: [a-z0-9.-]+ -->\n", "", raw, flags=re.M)
+    return re.sub(r"<!--.*?-->", "", raw, flags=re.S)
 
 
 def flat():
