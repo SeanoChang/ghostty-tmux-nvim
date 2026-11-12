@@ -6,10 +6,13 @@
 # check is green and at least one succeeded. The job below is that check. The
 # gate does not ask for it by name; see docs/known-limits.md.
 #
-# Not run here, because a hosted runner cannot run them:
+# Not run here:
 #   - the mod tests (config/claude/mods/*/tests), which need the Claude Code CLI;
-#   - a test behind an environment switch (WORKER_CAST_SOURCE), which needs a
-#     file that is not in the repo.
+#   - the tests behind an environment switch. The job sets none of them, so
+#     pytest reports these tests as skipped:
+#       WORKER_CAST_SOURCE  needs a file that is not in the repo;
+#       COACH_LIVE          starts a live Claude session, which costs model calls;
+#       CODEX_PROMPT        needs the Codex CLI.
 # The job runs on macOS only, the system these dotfiles are for.
 name: ci
 
