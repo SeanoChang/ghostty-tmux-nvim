@@ -903,9 +903,22 @@ the run may change.
   - A path deeper than 1,024 bytes gives exit 3 ("could not be read").
   - The build joins two or more blank lines into one, inside a placed rule
     too.
+- **Left by the fix for a missing `codex` (the adversary, at `4672c7d`).**
+  With `codex` missing or not startable, `codex-run` ends with 127. Three
+  cases are not as clean as that:
+  - A `codex` file that is marked as a program and has no `#!` line (an
+    empty file, such as a download that broke) is run by `/bin/sh`, as the
+    shell itself would run it. An empty one ends with 0: the run looks
+    clean, with an empty log and "0 file(s) changed". To close it, look for
+    a `#!` line or a program header before the run.
+  - A bash function named `codex` that is exported into the environment,
+    with no `codex` on PATH, passes the first check, because `command -v`
+    finds functions too. The run still ends with 127, but a log and a
+    worktree are made. `type -P` would look at PATH only.
+  - The check for `codex` comes before the checks of the role and of the
+    worktree path. So with `codex` missing, a bad role name ends with 127
+    and not with 2. Nothing is started and nothing is made.
 - **Older faults in `codex-run`, there before this change (the adversary):**
-  - When `codex` is not on PATH, the exit code is 0 and the log is empty;
-    with `--worktree` it prints "0 file(s) changed".
   - A `--idle` or `--max` value that is not a number (`5m`) turns that limit
     off, with only a shell warning.
   - Killing `codex-run` itself leaves Codex running with no watchdog.

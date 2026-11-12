@@ -28,6 +28,7 @@ import json
 import os
 import random
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -95,8 +96,8 @@ def box(tmp_path):
     args_file = tmp_path / "args.json"
     child_file = tmp_path / "child.pid"
 
-    def run(*argv, do="ok", agents=None, cwd=None, poll="0.2"):
-        env = dict(os.environ, PATH=f"{bindir}{os.pathsep}{os.environ['PATH']}", FAKE_CODEX_ARGS=str(args_file),
+    def run(*argv, do="ok", agents=None, cwd=None, poll="0.2", path=None):
+        env = dict(os.environ, PATH=path or f"{bindir}{os.pathsep}{os.environ['PATH']}", FAKE_CODEX_ARGS=str(args_file),
                    FAKE_CODEX_DO=do, FAKE_CODEX_CHILD=str(child_file), CODEX_RUN_POLL=poll,
                    CODEX_AGENTS_DIR=str(agents or tmp_path / "no-agents"))
         return subprocess.run([str(RUN), *argv], capture_output=True, text=True, env=env, cwd=cwd or tmp_path, timeout=60)
@@ -145,6 +146,35 @@ def test_the_codex_arguments_pass_through(box):
 
 def test_the_exit_code_of_codex_passes_through(box):
     assert box("--log", box.log, "--", "prompt", do="exit:7").returncode == 7
+
+
+# The system folders only: every tool the script needs, and no codex.
+BARE_PATH = "/usr/bin:/bin"
+
+
+def test_with_no_codex_on_path_the_run_ends_with_127_and_makes_nothing(box, lead):
+    """Before, the starter went on after the exec that failed, and the run
+    ended with 0, an empty log and "0 file(s) changed"."""
+    assert shutil.which("codex", path=BARE_PATH) is None, "this test needs system folders with no codex in them"
+    done = box("--log", box.log, "--worktree", str(box.tmp / "wt"), "--repo", str(lead), "--", "prompt", path=BARE_PATH)
+    assert done.returncode == 127, done.stderr
+    assert "codex is not on PATH" in done.stderr
+    assert not (box.tmp / "wt").exists(), "a worktree was made for a run that cannot start"
+    assert not Path(box.log).exists(), "a log was made for a run that cannot start"
+    assert box("--log", box.log, "--", "prompt", path=BARE_PATH).returncode == 127
+
+
+def test_a_codex_that_cannot_be_started_ends_with_127_and_says_so(box):
+    """The file is on PATH and marked as a program, so the first check finds
+    it. The start itself fails: its interpreter does not exist."""
+    broken = box.tmp / "bin" / "codex"
+    broken.write_text("#!/no/such/interpreter\n")
+    # No other folder that could hold a real codex: the system would try it next.
+    done = box("--log", box.log, "--", "prompt", path=f"{broken.parent}{os.pathsep}{BARE_PATH}")
+    assert done.returncode == 127, done.stderr
+    assert "cannot start codex" in Path(box.log).read_text()
+    assert "codex did not start" in done.stderr
+    assert box.args() is None
 
 
 @pytest.mark.parametrize("argv", [
